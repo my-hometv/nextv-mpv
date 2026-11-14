@@ -29,9 +29,11 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
     ANativeWindow* next = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
     if (p.window) ANativeWindow_release(p.window);
     p.window = next;
-    if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink))
+    if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink)) {
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p.sink),
                                              reinterpret_cast<guintptr>(p.window));
+        gst_video_overlay_expose(GST_VIDEO_OVERLAY(p.sink));
+    }
 }
 GstPadProbeReturn onBuffer(GstPad*, GstPadProbeInfo* info, gpointer data) {
     auto* p = static_cast<Player*>(data);
@@ -106,6 +108,12 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         return;
     }
     if (p->sink) {
+        // Do not claim a successful first frame until the Android surface exists.
+        if (!p->window) {
+            p->status = 3;
+            p->error = "Android video surface is not ready";
+            return;
+        }
         g_object_set(p->pipeline, "video-sink", p->sink, nullptr);
         if (p->window && GST_IS_VIDEO_OVERLAY(p->sink))
             gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p->sink),
