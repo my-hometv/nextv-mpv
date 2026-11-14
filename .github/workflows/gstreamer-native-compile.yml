@@ -35,6 +35,14 @@ jobs:
           if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
             ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
           fi
+      - name: Restore verified GStreamer SDK archive cache
+        id: gst-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ runner.temp }}/gstreamer-1.0-android-universal-${{ env.GST_VERSION }}.tar.xz
+            ${{ runner.temp }}/gstreamer-1.0-android-universal-${{ env.GST_VERSION }}.tar.xz.sha256sum
+          key: gstreamer-android-universal-${{ env.GST_VERSION }}-sha256-v1
       - name: Download and checksum official GStreamer Android SDK
         shell: bash
         run: |
@@ -42,7 +50,11 @@ jobs:
           mkdir -p "$GSTREAMER_ROOT_ANDROID"
           BASE="https://gstreamer.freedesktop.org/pkg/android/$GST_VERSION"
           ARCHIVE="gstreamer-1.0-android-universal-$GST_VERSION.tar.xz"
-          curl --fail --location --show-error --progress-bar --connect-timeout 20 --max-time 420 --speed-time 45 --speed-limit 20480 --retry 2 --retry-delay 5 --output "$RUNNER_TEMP/$ARCHIVE" "$BASE/$ARCHIVE"
+          if [ ! -s "$RUNNER_TEMP/$ARCHIVE" ]; then
+            curl --fail --location --show-error --progress-bar --connect-timeout 20 --max-time 900 --speed-time 60 --speed-limit 10240 --retry 2 --retry-delay 5 --output "$RUNNER_TEMP/$ARCHIVE" "$BASE/$ARCHIVE"
+          else
+            echo "Using cached GStreamer SDK archive"
+          fi
           curl --fail --location --show-error --connect-timeout 20 --max-time 45 --retry 2 --output "$RUNNER_TEMP/$ARCHIVE.sha256sum" "$BASE/$ARCHIVE.sha256sum"
           echo "Downloaded SDK bytes: $(stat -c %s "$RUNNER_TEMP/$ARCHIVE")"
           (cd "$RUNNER_TEMP" && sha256sum -c "$ARCHIVE.sha256sum")
@@ -51,6 +63,14 @@ jobs:
           tar -tJf "$RUNNER_TEMP/$ARCHIVE" | head -30 || true
           tar -xJf "$RUNNER_TEMP/$ARCHIVE" -C "$GSTREAMER_ROOT_ANDROID" --wildcards 'arm64/*'
           test -f "$GSTREAMER_ROOT_ANDROID/arm64/share/gst-android/ndk-build/gstreamer-1.0.mk"
+      - name: Save verified GStreamer SDK archive cache
+        if: steps.gst-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp }}/gstreamer-1.0-android-universal-${{ env.GST_VERSION }}.tar.xz
+            ${{ runner.temp }}/gstreamer-1.0-android-universal-${{ env.GST_VERSION }}.tar.xz.sha256sum
+          key: gstreamer-android-universal-${{ env.GST_VERSION }}-sha256-v1
       - name: Compile GStreamer JNI against official Android SDK (arm64)
         shell: bash
         run: |
