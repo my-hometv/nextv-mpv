@@ -12,7 +12,10 @@ permissions:
 jobs:
   native-gstreamer:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 35
+    concurrency:
+      group: gstreamer-native-sdk-main
+      cancel-in-progress: true
     env:
       GST_VERSION: '1.28.8'
       GSTREAMER_ROOT_ANDROID: ${{ github.workspace }}/.gstreamer/android
@@ -39,8 +42,9 @@ jobs:
           mkdir -p "$GSTREAMER_ROOT_ANDROID"
           BASE="https://gstreamer.freedesktop.org/pkg/android/$GST_VERSION"
           ARCHIVE="gstreamer-1.0-android-universal-$GST_VERSION.tar.xz"
-          curl --fail --location --retry 3 --retry-delay 10 --output "$RUNNER_TEMP/$ARCHIVE" "$BASE/$ARCHIVE"
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/$ARCHIVE.sha256sum" "$BASE/$ARCHIVE.sha256sum"
+          curl --fail --location --show-error --progress-bar --connect-timeout 20 --max-time 420 --speed-time 45 --speed-limit 20480 --retry 2 --retry-delay 5 --output "$RUNNER_TEMP/$ARCHIVE" "$BASE/$ARCHIVE"
+          curl --fail --location --show-error --connect-timeout 20 --max-time 45 --retry 2 --output "$RUNNER_TEMP/$ARCHIVE.sha256sum" "$BASE/$ARCHIVE.sha256sum"
+          echo "Downloaded SDK bytes: $(stat -c %s "$RUNNER_TEMP/$ARCHIVE")"
           (cd "$RUNNER_TEMP" && sha256sum -c "$ARCHIVE.sha256sum")
           # The official universal tarball contains four architectures. Only
           # arm64 is extracted for this first native compilation gate.
