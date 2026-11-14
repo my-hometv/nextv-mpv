@@ -4,7 +4,7 @@
 #include <gst/video/videooverlay.h>
 #include <mutex>
 #include <string>
-#include <memory>
+#include <atomic>
 
 // Requires the official GStreamer Android SDK and its transitive libraries.
 // JNI calls are serialized with the same lock as the nonblocking bus poll.
@@ -16,7 +16,7 @@ struct Player {
     ANativeWindow* window = nullptr;
     std::string error;
     int status = 0;
-    bool firstBuffer = false;
+    std::atomic<bool> firstBuffer{false};
 };
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
@@ -30,8 +30,7 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
 GstPadProbeReturn onBuffer(GstPad*, GstPadProbeInfo* info, gpointer data) {
     auto* p = static_cast<Player*>(data);
     if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) {
-        std::lock_guard<std::mutex> guard(p->mutex);
-        p->firstBuffer = true;
+        p->firstBuffer.store(true, std::memory_order_release);
     }
     return GST_PAD_PROBE_OK;
 }
@@ -43,7 +42,7 @@ void stop(Player& p) {
         p.sink = nullptr;
     }
     p.status = 0;
-    p.firstBuffer = false;
+    p.firstBuffer.store(false, std::memory_order_release);
     p.error.clear();
 }
 }
@@ -160,7 +159,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
         }
         gst_object_unref(bus);
     }
-    if (p->firstBuffer && p->status != 3 && p->status != 2) return 5;
+    if (p->firstBuffer.load(std::memory_order_acquire) && p->status != 3 && p->status != 2) return 5;
     return p->status;
 }
 extern "C" JNIEXPORT jstring JNICALL
