@@ -8750,10 +8750,12 @@ class MainActivity: Activity() {
             screen.addView(view,0,FrameLayout.LayoutParams(-1,-1))
             view.listener={status,error->
                 if(gstreamerPlayer===view && active==index && videoScreen===screen &&
-                    generation==playbackGeneration && status==3){
+                    generation==playbackGeneration && (status==3 || status==2)){
                     handler.removeCallbacks(startupTimeout)
                     gstreamerFailedUrls.add(c.url)
-                    HomeTvDiagnostics.w("GStreamer",error ?: "Native playback failed")
+                    HomeTvDiagnostics.w("GStreamer",
+                        if(status==2) "Stream ended; switching to MPV"
+                        else error ?: "Native playback failed")
                     gstreamerPlayer=null
                     try{view.release()}catch(_:Throwable){}
                     screen.removeView(view)
