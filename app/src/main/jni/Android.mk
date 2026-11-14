@@ -33,7 +33,7 @@ include $(GSTREAMER_NDK_BUILD_PATH)/plugins.mk
 # MPEG-TS, HLS, DASH, RTSP, MP4, and Matroska without bundling every codec.
 GSTREAMER_PLUGINS := \
     coreelements playback typefindfunctions autodetect app \
-    videoconvert videoscale videoconvertscale videorate audioconvert audioresample volume \
+    videoconvertscale videorate audioconvert audioresample volume \
     opengl androidmedia opensles \
     tcp udp soup rtsp rtp rtpmanager hls dash isomp4 matroska mpegtsdemux \
     videoparsersbad audioparsers
