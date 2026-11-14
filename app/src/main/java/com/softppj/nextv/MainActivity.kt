@@ -3199,68 +3199,12 @@ class MainActivity: Activity() {
                 settings()
             }.setNegativeButton("Cancel",null).show()
     }
-    // Media3 is the normal engine; LibVLC remains first for RTMP/VLC-only protocols.
-    // The MPV edition deliberately ignores legacy per-channel engine pins.
+    // MPV edition ignores legacy per-channel engine pins.
     private fun initialEngines(c:Channel):List<String> = listOf("MPV")
     private fun engineFor(c:Channel):String = "MPV"
-    private fun chooseChannelEngine(i:Int){
-        if(i !in channels.indices)return
-        val returnToPlaybackDrawer=videoScreen?.findViewWithTag<View>("settings_drawer")!=null
-        val c=channels[i]
-        val universal=(prefs.getString("engine","Media3") ?: "Media3")
-            .takeIf(::engineEnabled) ?: "Auto"
-        val available=enabledEngines()
-        val choices=(listOf("Auto (Universal: "+playbackEngineLabel(universal)+")")+
-            available.map(::playbackEngineLabel)).toTypedArray()
-        val selected=(available.indexOf(prefs.getString("manual_engine_"+channelKey(c),null))+1)
-            .coerceAtLeast(0)
-        var pending=selected
-        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — Player")
-            .setSingleChoiceItems(choices,selected){_,which->pending=which}
-            .setPositiveButton("OK"){_,_->
-                prefs.edit().apply{
-                    if(pending==0)remove("manual_engine_"+channelKey(c))
-                    else putString("manual_engine_"+channelKey(c),available[pending-1])
-                }.apply()
-                engineAttempts.clear();fallbackEngineOverride=null;unavailableChannels.remove(channelKey(c))
-                if(active==i){
-                    if(returnToPlaybackDrawer)pendingPlaybackDrawerChannelKey=channelKey(c)
-                    playIndex(i)
-                }
-            }.setNeutralButton("Restore defaults"){_,_->
-                // Reset only this logical channel's playback choices. Do not
-                // change global engine settings, favorites, locks or visibility.
-                val key=channelKey(c)
-                prefs.edit()
-                    .remove("manual_engine_"+key)
-                    .remove("manual_url_"+key)
-                    .remove("working_url_"+key)
-                    .remove("confirmed_engine_"+key)
-                    .remove("auto_alternative_"+key)
-                    .apply()
-                engineAttempts.clear()
-                fallbackEngineOverride=null
-                unavailableChannels.remove(key)
-                alternativeAttempted.clear()
-                alternativeSessionKey=null
-                if(oneShotAlternativeKey==key)oneShotAlternativeKey=null
-                if(active==i){
-                    if(returnToPlaybackDrawer)pendingPlaybackDrawerChannelKey=key
-                    playIndex(i)
-                }else{
-                    Toast.makeText(this,"Default playback restored for "+c.name,Toast.LENGTH_SHORT).show()
-                }
-            }.setNegativeButton("Cancel",null).create()
-        dialog.setOnShowListener{
-            val list=dialog.listView ?:return@setOnShowListener
-            list.choiceMode=android.widget.ListView.CHOICE_MODE_SINGLE
-            list.setItemChecked(selected,true);list.setSelection(selected)
-            list.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
-                override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){pending=position;list.setItemChecked(position,true)}
-                override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
-            }
-        }
-        showSideDialog(dialog)
+    // MPV edition: channel player selection controls decoder mode, not obsolete engines.
+    private fun chooseChannelEngine(i:Int) {
+        chooseMpvDecoder(i)
     }
     private fun channelOptions(i:Int){
         if(i !in channels.indices)return

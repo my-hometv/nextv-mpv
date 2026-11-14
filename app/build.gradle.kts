@@ -13,14 +13,14 @@ android {
     }
 
     defaultConfig {
-        // Beta 4 application ID: installs independently beside the stable NexTV app.
+        // MPV edition application ID: installs independently beside stable NexTV.
         applicationId = "com.softppj.nextv.mpv"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0-mpv-experiment"
-        // Exactly one experimental LibVLC version is packaged in this APK.
-        // Other native versions require separate JNI isolation.
+        // Legacy BuildConfig field retained until unused VLC source is fully removed;
+        // no LibVLC runtime is packaged in the MPV APK.
         buildConfigField("String", "LIBVLC_VERSION", "\"3.5.1\"")
     }
 
@@ -72,9 +72,8 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.12.0-beta01")
     // OpenGL video effects used by the optional Media3 picture presets.
     implementation("androidx.media3:media3-effect:1.12.0-beta01")
-    // Use the updated LibVLC engine in the independent Beta application.
-    // GPLv3 decoder; retain only with appropriate distribution/licensing compliance.
-    // Compile legacy unreachable code without packaging LibVLC native binaries.
+    // Compile-only legacy VLC API bridge: never included in runtime APK.
+    // Remove after extracting legacy player classes from MainActivity.
     // Remove this compile-only bridge after deleting legacy player classes.
     compileOnly("org.videolan.android:libvlc-all:3.5.1")
 
