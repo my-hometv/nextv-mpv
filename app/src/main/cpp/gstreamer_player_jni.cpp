@@ -124,9 +124,15 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
     if (!p->sink) {
         p->status = 3;
         p->error = "No GStreamer video sink plugin is available";
+        stop(*p);
+        p->status = 3;
+        p->error = "No GStreamer video sink plugin is available";
         return;
     }
     if (!GST_IS_VIDEO_OVERLAY(p->sink)) {
+        gst_object_unref(p->sink);
+        p->sink = nullptr;
+        stop(*p);
         p->status = 3;
         p->error = "Video sink does not support Android surface overlay";
         return;
