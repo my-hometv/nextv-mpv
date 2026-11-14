@@ -21,6 +21,8 @@ struct Player {
     int bufferingPercent = 100;
     double volume = 1.0;
     bool paused = false;
+    gulong videoProbeId = 0;
+    GstPad* videoProbePad = nullptr;
 };
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
@@ -41,6 +43,13 @@ GstPadProbeReturn onBuffer(GstPad*, GstPadProbeInfo* info, gpointer data) {
 void stop(Player& p) {
     if (p.pipeline) {
         gst_element_set_state(p.pipeline, GST_STATE_NULL);
+        // Remove the pad callback before the Player can be destroyed.
+        if (p.videoProbePad) {
+            if (p.videoProbeId) gst_pad_remove_probe(p.videoProbePad, p.videoProbeId);
+            gst_object_unref(p.videoProbePad);
+            p.videoProbePad = nullptr;
+            p.videoProbeId = 0;
+        }
         gst_object_unref(p.pipeline);
         p.pipeline = nullptr;
         p.sink = nullptr;
@@ -91,6 +100,11 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         p->error = "No GStreamer video sink plugin is available";
         return;
     }
+    if (!GST_IS_VIDEO_OVERLAY(p->sink)) {
+        p->status = 3;
+        p->error = "Video sink does not support Android surface overlay";
+        return;
+    }
     if (p->sink) {
         g_object_set(p->pipeline, "video-sink", p->sink, nullptr);
         if (p->window && GST_IS_VIDEO_OVERLAY(p->sink))
@@ -98,8 +112,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
                                                  reinterpret_cast<guintptr>(p->window));
         GstPad* pad = gst_element_get_static_pad(p->sink, "sink");
         if (pad) {
-            gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, onBuffer, p, nullptr);
-            gst_object_unref(pad);
+            p->videoProbeId = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, onBuffer, p, nullptr);
+            p->videoProbePad = pad;
         }
     }
     g_object_set(p->pipeline, "uri", url.c_str(), nullptr);
