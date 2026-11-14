@@ -31,8 +31,11 @@ jobs:
         run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
       - name: Verify Gradle wrapper
         run: test -f gradlew && chmod +x gradlew
-      - name: Compile and run checks without creating an APK
-        run: ./gradlew --no-daemon :app:compileDebugKotlin :app:check
+      - name: Compile Kotlin, NDK probes and run regression checks without creating an APK
+        run: ./gradlew --no-daemon :app:compileDebugKotlin :app:externalNativeBuildDebug :app:check
+      - name: Verify native GStreamer SDK integration when provisioned
+        if: ${{ env.NEXTV_GSTREAMER_SDK != '' }}
+        run: ./gradlew --no-daemon :app:verifyGstreamerNativeBridge :app:externalNativeBuildDebug
       - name: Confirm no APK was generated
         run: |
           if find app/build/outputs/apk -type f -name '*.apk' 2>/dev/null | grep -q .; then
