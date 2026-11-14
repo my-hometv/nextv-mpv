@@ -518,6 +518,8 @@ class MainActivity: Activity() {
     private var vlcCore:LibVLC?=null
     private var mpvPlayer:MpvPlaybackView?=null
     private var gstreamerPlayer:GstreamerPlaybackView?=null
+    // A missing optional JNI bridge must be detected once, not retried for every channel.
+    private var gstreamerNativeUnavailable=false
     private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
@@ -8245,7 +8247,8 @@ class MainActivity: Activity() {
                 }
             }
         }else if(engineFor(c)=="MPV"){
-            if (prefs.getBoolean("gstreamer_experimental",false) && c.headers.isEmpty() &&
+            if (prefs.getBoolean("gstreamer_experimental",false) && !gstreamerNativeUnavailable &&
+                c.headers.isEmpty() &&
                 youtubeNativeStreamUrl==null && c.url.startsWith("http")) {
                 startGstreamer(c,index,screen)
             } else startMpv(c,index,screen)
@@ -8757,6 +8760,7 @@ class MainActivity: Activity() {
             view.setVolume(prefs.getInt(channelVolumeKey(c),100))
             view.play(c.url)
         }catch(e:Throwable){
+            if(e is LinkageError) gstreamerNativeUnavailable=true
             HomeTvDiagnostics.w("GStreamer","Native startup unavailable; using MPV",e)
             if(gstreamerPlayer===view){
                 gstreamerPlayer=null
