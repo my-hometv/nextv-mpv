@@ -242,3 +242,30 @@ val verifyGstreamerNativeSource by tasks.registering {
     }
 }
 tasks.named("check") { dependsOn(verifyGstreamerNativeSource) }
+
+
+/**
+ * Optional native runtime staging. The official GStreamer SDK is not downloaded
+ * or redistributed by this project. When supplied, stage its arm64 shared
+ * libraries for Android packaging, preserving the ABI directory structure.
+ * This does not claim the SDK plugin registry is complete or playback tested.
+ */
+val stageGstreamerRuntime by tasks.registering(Sync::class) {
+    group = "build"
+    description = "Stage supplied GStreamer arm64 native libraries for the optional player."
+    val sdk = providers.gradleProperty("nextvGstreamerSdk")
+        .orElse(providers.environmentVariable("NEXTV_GSTREAMER_SDK"))
+    val source = sdk.map { file("$it/lib/arm64-v8a") }
+    onlyIf { sdk.isPresent && source.get().isDirectory }
+    from(source) {
+        include("*.so")
+        into("arm64-v8a")
+    }
+    into(layout.buildDirectory.dir("gstreamer-jniLibs"))
+    doFirst {
+        check(source.get().listFiles()?.any { it.name == "libgstreamer-1.0.so" } == true) {
+            "Supplied GStreamer SDK does not contain arm64 libgstreamer-1.0.so"
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(stageGstreamerRuntime) }
