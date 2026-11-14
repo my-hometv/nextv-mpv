@@ -22,6 +22,10 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     var onFirstVideoBuffer: ((elapsedMs: Long) -> Unit)? = null
     private var startedAtMs = 0L
     private var firstBufferReported = false
+    private var slowStartupReported = false
+    /** Diagnostic threshold only; does not stop or restart the stream. */
+    var slowStartupThresholdMs: Long = 10_000L
+    var onSlowStartup: ((elapsedMs: Long) -> Unit)? = null
 
     private val statusPoll = object : Runnable {
         override fun run() {
@@ -30,6 +34,11 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
             if (status == 5 && !firstBufferReported) {
                 firstBufferReported = true
                 onFirstVideoBuffer?.invoke((SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L))
+            }
+            val elapsed = (SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L)
+            if (!firstBufferReported && !slowStartupReported && elapsed >= slowStartupThresholdMs.coerceAtLeast(1L) && status != 2 && status != 3) {
+                slowStartupReported = true
+                onSlowStartup?.invoke(elapsed)
             }
             if (status != lastReportedStatus) {
                 lastReportedStatus = status
@@ -44,6 +53,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         mainHandler.removeCallbacks(statusPoll)
         lastReportedStatus = null
         firstBufferReported = false
+        slowStartupReported = false
         startedAtMs = SystemClock.elapsedRealtime()
         polling = true
         mainHandler.post(statusPoll)
@@ -101,7 +111,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         stopStatusPolling()
         listener = null
         onFirstVideoBuffer = null
-        generation++
+        onSlowStartup = null
         if (handle != 0L) {
             nativeRelease(handle)
             handle = 0
