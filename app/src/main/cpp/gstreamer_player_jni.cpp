@@ -221,12 +221,13 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
                     gint percent = 0;
                     gst_message_parse_buffering(msg, &percent);
                     p->bufferingPercent = percent;
-                    if (p->status != 3 && p->status != 2)
+                    if (p->status != 3 && p->status != 2 && !p->waitingForSurface)
                         p->status = percent < 100 ? 1 : (p->paused ? 0 : 4);
                     break;
                 }
                 case GST_MESSAGE_STATE_CHANGED:
-                    if (GST_MESSAGE_SRC(msg) == GST_OBJECT(p->pipeline) && p->status != 3) {
+                    if (GST_MESSAGE_SRC(msg) == GST_OBJECT(p->pipeline) &&
+                        p->status != 3 && p->status != 2 && !p->waitingForSurface) {
                         GstState oldState, newState, pending;
                         gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
                         if (newState == GST_STATE_PLAYING && p->bufferingPercent == 100)
@@ -241,6 +242,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
         }
         gst_object_unref(bus);
     }
+    if (p->status == 2 || p->status == 3) return p->status;
     if (p->firstBuffer.load(std::memory_order_acquire) &&
         !p->firstBufferDelivered && p->status != 3 && p->status != 2 &&
         !p->waitingForSurface) {
