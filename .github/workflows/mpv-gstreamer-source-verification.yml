@@ -51,6 +51,20 @@ jobs:
       - name: Verify native GStreamer SDK integration when provisioned
         if: ${{ env.NEXTV_GSTREAMER_SDK != '' }}
         run: gradle --no-daemon :app:verifyGstreamerNativeBridge :app:externalNativeBuildDebug
+      - name: Upload Android Lint and test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gstreamer-source-verification-reports
+          path: |
+            app/build/reports/lint-results-*.html
+            app/build/reports/lint-results-*.xml
+            app/build/reports/lint-results-*.txt
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/problems/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Confirm no APK was generated
         run: |
           if find app/build/outputs/apk -type f -name '*.apk' 2>/dev/null | grep -q .; then
