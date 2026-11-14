@@ -15,6 +15,7 @@ struct Player {
     GstBus *bus = nullptr;
     bool ended = false;
     bool buffering = false;
+    bool playing = false;
     std::string lastError;
 };
 static Player* fromHandle(jlong value) { return reinterpret_cast<Player*>(value); }
@@ -64,6 +65,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         gst_element_set_state(p->pipeline, GST_STATE_NULL);
         p->ended = false;
         p->buffering = false;
+        p->playing = false;
         p->lastError.clear();
         while (GstMessage *stale = gst_bus_pop(p->bus)) gst_message_unref(stale);
         g_object_set(p->pipeline, "uri", value, nullptr);
@@ -111,7 +113,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeRelease(JNIEnv*, jobject, jlo
     delete p;
 }
 
-// Non-blocking bus status: 0=playing/idle, 1=buffering, 2=EOS, 3=error.
+// Non-blocking bus status: 0=waiting, 1=buffering, 2=EOS, 3=error, 4=playing.
 // Caller polls from a worker or lifecycle-aware timer; never blocks the UI thread.
 extern "C" JNIEXPORT jint JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, jlong handle) {
@@ -119,7 +121,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
     if (!p) return 3;
     std::lock_guard<std::mutex> guard(p->lock);
     if (!p->bus) return 3;
-    int status = !p->lastError.empty() ? 3 : (p->ended ? 2 : (p->buffering ? 1 : 0));
+    // 0=waiting, 1=buffering, 2=EOS, 3=error, 4=playing.
+    int status = !p->lastError.empty() ? 3 : (p->ended ? 2 : (p->buffering ? 1 : (p->playing ? 4 : 0)));
     while (GstMessage *msg = gst_bus_pop(p->bus)) {
         switch (GST_MESSAGE_TYPE(msg)) {
             case GST_MESSAGE_ERROR: {
@@ -142,7 +145,17 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
                 gint percent = 100;
                 gst_message_parse_buffering(msg, &percent);
                 p->buffering = percent < 100;
-                if (p->lastError.empty() && !p->ended) status = p->buffering ? 1 : 0;
+                if (p->lastError.empty() && !p->ended) status = p->buffering ? 1 : (p->playing ? 4 : 0);
+                break;
+            }
+            case GST_MESSAGE_STATE_CHANGED: {
+                if (GST_MESSAGE_SRC(msg) == GST_OBJECT(p->pipeline)) {
+                    GstState oldState, newState, pending;
+                    gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
+                    p->playing = newState == GST_STATE_PLAYING;
+                    if (p->lastError.empty() && !p->ended && !p->buffering)
+                        status = p->playing ? 4 : 0;
+                }
                 break;
             }
             default: break;

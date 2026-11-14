@@ -3,6 +3,8 @@ package com.softppj.nextv
 import android.content.Context
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.os.Handler
+import android.os.Looper
 
 /**
  * Standalone GStreamer playbin adapter. This class is deliberately not routed
@@ -11,6 +13,35 @@ import android.view.SurfaceView
 internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
     private var handle: Long = 0
     private var closed = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var polling = false
+    private var lastReportedStatus: Int? = null
+    var listener: ((status: Int, error: String?) -> Unit)? = null
+
+    private val statusPoll = object : Runnable {
+        override fun run() {
+            if (!polling || closed || handle == 0L) return
+            val status = pollStatus()
+            if (status != lastReportedStatus) {
+                lastReportedStatus = status
+                listener?.invoke(status, if (status == 3) lastError() else null)
+            }
+            if (status != 2 && status != 3 && polling) mainHandler.postDelayed(this, 250L)
+            else polling = false
+        }
+    }
+
+    private fun startStatusPolling() {
+        mainHandler.removeCallbacks(statusPoll)
+        lastReportedStatus = null
+        polling = true
+        mainHandler.post(statusPoll)
+    }
+
+    private fun stopStatusPolling() {
+        polling = false
+        mainHandler.removeCallbacks(statusPoll)
+    }
 
     init { holder.addCallback(this) }
 
@@ -30,6 +61,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
             "Unsupported stream scheme"
         }
         nativePlay(handle, url)
+        startStatusPolling()
     }
 
     /** Non-blocking native bus snapshot; call from a lifecycle-aware polling loop. */
@@ -51,6 +83,8 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     fun release() {
         if (closed) return
         closed = true
+        stopStatusPolling()
+        listener = null
         if (handle != 0L) {
             nativeRelease(handle)
             handle = 0
