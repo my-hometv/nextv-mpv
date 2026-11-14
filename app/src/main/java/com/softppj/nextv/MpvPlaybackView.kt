@@ -241,6 +241,27 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         if (!closed && property == "hwdec-current") Log.i("NexTV-mpv", "decoder=$value")
     }
 
+    /** Read-only, credential-free diagnostics for TV troubleshooting. */
+    fun diagnosticSnapshot(): String {
+        val engine=mpv ?: return "MPV is not initialized"
+        if(closed) return "MPV is closed"
+        fun str(name:String)=runCatching { engine.getPropertyString(name) }.getOrNull().orEmpty().ifBlank { "unknown" }
+        fun num(name:String)=runCatching { engine.getPropertyDouble(name) }.getOrNull()?.toString() ?: "unknown"
+        fun count(name:String)=runCatching { engine.getPropertyInt(name) }.getOrNull()?.toString() ?: "unknown"
+        return listOf(
+            "Decoder: "+str("hwdec-current"),
+            "Video codec: "+str("video-codec"),
+            "Video format: "+str("video-params/pixelformat"),
+            "Video size: "+count("video-params/w")+" x "+count("video-params/h"),
+            "Video FPS: "+num("estimated-vf-fps"),
+            "Dropped frames: "+count("frame-drop-count"),
+            "Decoder dropped frames: "+count("decoder-frame-drop-count"),
+            "Video output: "+str("current-vo"),
+            "Playback started: "+started,
+            "Surface attached: "+attached
+        ).joinToString("\\n")
+    }
+
     fun release() {
         if (closed) return
         closed = true

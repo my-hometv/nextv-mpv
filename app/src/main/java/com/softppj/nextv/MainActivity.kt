@@ -3305,7 +3305,7 @@ class MainActivity: Activity() {
                     13->liveSettings()
                     14->confirmExit()
                     15->addChannelToFavoriteGroups(c)
-                    16->chooseMpvDecoder(active)
+                    16->chooseMpvDecoder(i)
                 }
             }
             .setNegativeButton("Back",null).create()
@@ -8760,6 +8760,27 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
     private val mpvDecoderOptions=arrayOf("Automatic","Hardware copy","Software")
+    private fun chooseMpvDecoderForCurrentChannel(){
+        val i=active
+        if(i !in channels.indices){
+            showBanner("Play a channel first to choose its MPV decoder",true)
+            return
+        }
+        chooseMpvDecoder(i)
+    }
+    private fun showMpvPlaybackDiagnostics(){
+        val player=mpvPlayer
+        if(player==null){
+            showBanner("Play a channel to view MPV decoder diagnostics",true)
+            return
+        }
+        val details=player.diagnosticSnapshot()
+        HomeTvDiagnostics.i("MPV",details.replace("\\n","; "))
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("MPV playback diagnostics")
+            .setMessage(details)
+            .setPositiveButton("OK",null).create())
+    }
     private fun mpvDecoderKey(c:Channel)="mpv_decoder_"+hash(c.url)
     private fun selectedMpvDecoder(c:Channel)=prefs.getString(mpvDecoderKey(c),"Automatic")
         ?.takeIf{it in mpvDecoderOptions} ?: "Automatic"
@@ -9508,19 +9529,13 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
         root.addView(label("Planned for a later release: Instant Switching, Smart Logos and MultiView. No unfinished feature is enabled."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
-        root.addView(button("Enabled playback engines: "+enabledEngines().joinToString()){configureEnabledEngines()})
-        root.addView(settingsToggle("LibVLC enhanced stall recovery (off = VLC-compatible)", "nextv_libvlc_enhanced_recovery", false))
-        root.addView(label("VLC-compatible mode avoids forced restarts based on custom frame/time watchdogs. LibVLC errors and stopped-stream recovery remain active. Applies to the next channel."))
-        root.addView(label("Disable engines for crash isolation. At least one must remain enabled. Changes apply on the next channel; automatic recovery also respects these switches."))
+        root.addView(label("MPV is the only playback engine in this edition. Decoder modes are independent of the engine."))
+        root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
+        root.addView(button("MPV decoder and frame diagnostics"){showMpvPlaybackDiagnostics()})
+        root.addView(label("For distorted colours or jerky motion, select Software first, then compare Hardware copy on the same channel. Decoder changes restart that channel."))
         root.addView(button("Info panel opacity: "+prefs.getInt("information_opacity",65)+"%"){chooseInformationTransparency()})
         root.addView(settingsToggle("Show programme information in channel details","show_channel_epg",true))
-        root.addView(button("Default playback engine: "+(prefs.getString("engine","Media3")?:"Media3")){
-            val choices=(listOf("Auto")+enabledEngines()).toTypedArray()
-            AlertDialog.Builder(this).setTitle("Default playback engine").setSingleChoiceItems(choices,choices.indexOf(prefs.getString("engine","Media3"))){dialog,i->
-                prefs.edit().putString("engine",choices[i]).apply()
-                dialog.dismiss();settings()
-            }.setNegativeButton("Cancel",null).show()
-        })
+        root.addView(label("Playback engine: MPV (fixed for this edition)"))
         root.addView(label("Live preview can be switched ON/OFF in NexTV Feature Controls above."))
         root.addView(button("Startup buffering profile: "+bufferProfile()){chooseBufferProfile()})
         root.addView(label("Ultra Fast = quickest switching; Balanced = recommended; Stable / Maximum Buffer = fewer pauses on uneven networks. Changes apply to the next channel."))
