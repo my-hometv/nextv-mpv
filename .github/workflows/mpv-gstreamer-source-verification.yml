@@ -2,6 +2,15 @@ name: MPV GStreamer source verification
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "gradle/**"
+      - "gradlew"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - ".github/workflows/mpv-gstreamer-source-verification.yml"
 
 permissions:
   contents: read
