@@ -3193,7 +3193,7 @@ class MainActivity: Activity() {
             "Settings",
             "Exit",
             "Manage Favorites Groups",
-            "MPV playback diagnostics""
+            "MPV playback diagnostics"
         )
         val dialog=AlertDialog.Builder(this)
             .setTitle(numberFor(i).toString()+". "+c.name+" Settings")
@@ -9040,7 +9040,7 @@ class MainActivity: Activity() {
     private fun liveSettings(){
         if(active<0){settings();return}
         val items=arrayOf(
-            "Playback engine: "+(prefs.getString("engine","Media3")?:"Media3"),
+            "Playback engine: MPV",
             "Buffering profile: "+bufferProfile(),
             "Default stream quality: "+(prefs.getString("quality_global","Auto")?:"Auto"),
             "Default screen fit: "+(prefs.getString("screen_mode","Fit")?:"Fit"),
@@ -9055,15 +9055,7 @@ class MainActivity: Activity() {
         val liveDialog=AlertDialog.Builder(this).setTitle("NexTV Settings — Live TV")
             .setItems(items){_,choice->
                 when(choice){
-                    0->{
-                        val choices=(listOf("Auto")+enabledEngines()).toTypedArray()
-                        AlertDialog.Builder(this).setTitle("Default playback engine")
-                            .setSingleChoiceItems(choices,choices.indexOf(prefs.getString("engine","Media3")).coerceAtLeast(0)){dialog,i->
-                                prefs.edit().putString("engine",choices[i]).apply()
-                                dialog.dismiss()
-                                showBanner("Playback engine saved for next channel")
-                            }.setNegativeButton("Cancel",null).show()
-                    }
+                    0->showBanner("MPV is the only playback engine in this edition")
                     1->chooseBufferProfile()
                     2->selectQuality(null)
                     3->selectScreenMode(null)
