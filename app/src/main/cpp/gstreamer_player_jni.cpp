@@ -37,7 +37,7 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
     }
     if (p.window && p.waitingForSurface && p.pipeline) {
         p.waitingForSurface = false;
-        if (gst_element_set_state(p.pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+        if (gst_element_set_state(p.pipeline, p.paused ? GST_STATE_PAUSED : GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
             p.status = 3;
             p.error = "GStreamer failed to start after surface creation";
         } else p.status = 1;
@@ -145,7 +145,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePause(JNIEnv*, jobject, jlong
     auto* p = player(h); if (!p) return;
     std::lock_guard<std::mutex> guard(p->mutex);
     p->paused = paused;
-    if (p->pipeline) gst_element_set_state(p->pipeline, paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
+    if (p->pipeline && !p->waitingForSurface)
+        gst_element_set_state(p->pipeline, paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativeStop(JNIEnv*, jobject, jlong h) {
