@@ -21,6 +21,12 @@ android {
     }
 
     defaultConfig {
+        // The supplied optional GStreamer sysroot currently supports arm64 only.
+        // Without this filter Gradle may configure x86/armeabi native targets
+        // and fail even though the arm64 SDK is valid.
+        if (nextvGstreamerSdkPath != null) {
+            ndk { abiFilters += "arm64-v8a" }
+        }
         if (nextvGstreamerSdkPath != null) {
             externalNativeBuild {
                 cmake { arguments("-DNEXTV_GSTREAMER_SDK=$nextvGstreamerSdkPath") }
