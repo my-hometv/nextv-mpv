@@ -47,6 +47,8 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                 else -> "auto-safe"
             })
             engine.setOptionString("video-sync", "audio")
+            // Avoid changing video output backends during Android surface transitions.
+            engine.setOptionString("vd-lavc-dr", "no")
             engine.setOptionString("interpolation", "no")
             engine.setOptionString("keep-open", "no")
             engine.setOptionString("force-window", "no")
@@ -59,6 +61,10 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             engine.addObserver(this)
             engine.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
             engine.observeProperty("video-params/w", MPVLib.MpvFormat.MPV_FORMAT_INT64)
+            engine.observeProperty("estimated-vf-fps", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
+            engine.observeProperty("frame-drop-count", MPVLib.MpvFormat.MPV_FORMAT_INT64)
+            engine.observeProperty("decoder-frame-drop-count", MPVLib.MpvFormat.MPV_FORMAT_INT64)
+            engine.observeProperty("hwdec-current", MPVLib.MpvFormat.MPV_FORMAT_STRING)
             mpv = engine
             holder.addCallback(this)
             if (holder.surface?.isValid == true) surfaceCreated(holder)
@@ -182,8 +188,8 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         val engine = mpv ?: return
         engine.attachSurface(holder.surface)
         attached = true
-        engine.setPropertyString("vo", "gpu")
-        engine.setPropertyString("force-window", "yes")
+        // Keep the configured GPU output stable; changing vo here tears down
+        // the renderer and can cause a black frame on Android TV.
         if (pendingUrl != null) launchPending()
     }
 
@@ -196,8 +202,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         attached = false
         val engine = mpv ?: return
         try {
-            engine.setPropertyString("vo", "null")
-            engine.setPropertyString("force-window", "no")
+            // Detach only the Android surface; do not replace the active VO.
             engine.detachSurface()
         } catch (e: Exception) {
             Log.w("NexTV-mpv", "Surface detach failed", e)
@@ -223,10 +228,18 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
     }
 
     override fun eventProperty(property: String) {}
-    override fun eventProperty(property: String, value: Long) {}
-    override fun eventProperty(property: String, value: Double) {}
+    override fun eventProperty(property: String, value: Long) {
+        if (!closed && (property == "frame-drop-count" || property == "decoder-frame-drop-count") && value > 0L && value % 30L == 0L)
+            Log.w("NexTV-mpv", "$property=$value")
+    }
+    override fun eventProperty(property: String, value: Double) {
+        if (!closed && property == "estimated-vf-fps" && value > 0.0)
+            Log.d("NexTV-mpv", "estimated-video-fps=$value")
+    }
     override fun eventProperty(property: String, value: Boolean) {}
-    override fun eventProperty(property: String, value: String) {}
+    override fun eventProperty(property: String, value: String) {
+        if (!closed && property == "hwdec-current") Log.i("NexTV-mpv", "decoder=$value")
+    }
 
     fun release() {
         if (closed) return
@@ -242,7 +255,6 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             try { engine.command(arrayOf("stop")) } catch (_: Exception) {}
             try {
                 if (attached) {
-                    engine.setPropertyString("vo", "null")
                     engine.detachSurface()
                 }
             } catch (_: Exception) {}
