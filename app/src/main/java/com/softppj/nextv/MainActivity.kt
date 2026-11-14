@@ -8760,6 +8760,17 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
     private val mpvDecoderOptions=arrayOf("Automatic","Hardware copy","Software")
+    private fun resetMpvPictureForCurrentChannel(){
+        val c=channels.getOrNull(active)
+        if(c==null){
+            showBanner("Play a channel before resetting picture adjustments",true)
+            return
+        }
+        // Preserve the user's stored settings; neutralize the active MPV
+        // renderer only, to isolate stream colour problems from picture presets.
+        mpvPlayer?.setPicture(1f,1f,1f)
+        showBanner("MPV picture adjustments neutralized for this playback")
+    }
     private fun chooseMpvDecoderForCurrentChannel(){
         val i=active
         if(i !in channels.indices){
@@ -9520,7 +9531,7 @@ class MainActivity: Activity() {
         root.addView(tvSection("NEXTV FEATURE CONTROLS"))
         root.addView(label("Each available feature can be switched ON or OFF. Features still in development are not presented as working switches."))
         root.addView(settingsToggle("SmartPlay — automatic playback recovery","nextv_smartplay_enabled",true))
-        root.addView(label("ON allows automatic recovery to try other installed engines after repeated failures. OFF disables SmartPlay engine rotation. Manually selected engines remain respected."))
+        root.addView(label("MPV edition: SmartPlay recovers interrupted streams and alternative URLs without switching to an uninstalled playback engine."))
         root.addView(settingsToggle("EPG and programme guide","nextv_epg_enabled",true))
         root.addView(settingsToggle("Personalized Home screen","nextv_home_enabled",true))
         root.addView(settingsToggle("Household profiles","nextv_profiles_enabled",true))
@@ -9532,7 +9543,8 @@ class MainActivity: Activity() {
         root.addView(label("MPV is the only playback engine in this edition. Decoder modes are independent of the engine."))
         root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
         root.addView(button("MPV decoder and frame diagnostics"){showMpvPlaybackDiagnostics()})
-        root.addView(label("For distorted colours or jerky motion, select Software first, then compare Hardware copy on the same channel. Decoder changes restart that channel."))
+        root.addView(button("Neutralize MPV picture adjustments (current playback)"){resetMpvPictureForCurrentChannel()})
+        root.addView(label("For distorted colours or jerky motion: neutralize picture adjustments, then compare Software and Hardware copy on the same channel. Decoder changes restart that channel."))
         root.addView(button("Info panel opacity: "+prefs.getInt("information_opacity",65)+"%"){chooseInformationTransparency()})
         root.addView(settingsToggle("Show programme information in channel details","show_channel_epg",true))
         root.addView(label("Playback engine: MPV (fixed for this edition)"))
