@@ -14,6 +14,7 @@ struct Player {
     std::mutex lock;
     GstBus *bus = nullptr;
     bool ended = false;
+    bool buffering = false;
     std::string lastError;
 };
 static Player* fromHandle(jlong value) { return reinterpret_cast<Player*>(value); }
@@ -62,6 +63,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         std::lock_guard<std::mutex> guard(p->lock);
         gst_element_set_state(p->pipeline, GST_STATE_NULL);
         p->ended = false;
+        p->buffering = false;
         p->lastError.clear();
         while (GstMessage *stale = gst_bus_pop(p->bus)) gst_message_unref(stale);
         g_object_set(p->pipeline, "uri", value, nullptr);
@@ -117,7 +119,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
     if (!p) return 3;
     std::lock_guard<std::mutex> guard(p->lock);
     if (!p->bus) return 3;
-    int status = p->ended ? 2 : (!p->lastError.empty() ? 3 : 0);
+    int status = !p->lastError.empty() ? 3 : (p->ended ? 2 : (p->buffering ? 1 : 0));
     while (GstMessage *msg = gst_bus_pop(p->bus)) {
         switch (GST_MESSAGE_TYPE(msg)) {
             case GST_MESSAGE_ERROR: {
@@ -127,11 +129,22 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
                 p->lastError = error && error->message ? error->message : "GStreamer playback error";
                 if (error) g_error_free(error);
                 g_free(debug);
+                p->buffering = false;
                 status = 3;
                 break;
             }
-            case GST_MESSAGE_EOS: p->ended = true; status = 2; break;
-            case GST_MESSAGE_BUFFERING: if (status == 0) status = 1; break;
+            case GST_MESSAGE_EOS:
+                p->ended = true;
+                p->buffering = false;
+                if (p->lastError.empty()) status = 2;
+                break;
+            case GST_MESSAGE_BUFFERING: {
+                gint percent = 100;
+                gst_message_parse_buffering(msg, &percent);
+                p->buffering = percent < 100;
+                if (p->lastError.empty() && !p->ended) status = p->buffering ? 1 : 0;
+                break;
+            }
             default: break;
         }
         gst_message_unref(msg);
