@@ -32,6 +32,10 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         nativePlay(handle, url)
     }
 
+    /** Non-blocking native bus snapshot; call from a lifecycle-aware polling loop. */
+    fun pollStatus(): Int = if (handle != 0L && !closed) nativePollStatus(handle) else 3
+    fun lastError(): String = if (handle != 0L && !closed) nativeLastError(handle) else "GStreamer player released"
+
     fun pause() { if (handle != 0L && !closed) nativePause(handle, true) }
     fun resume() { if (handle != 0L && !closed) nativePause(handle, false) }
     fun seekTo(ms: Long) { if (handle != 0L && !closed) nativeSeek(handle, ms.coerceAtLeast(0)) }
@@ -61,4 +65,6 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private external fun nativeSeek(handle: Long, ms: Long)
     private external fun nativeVolume(handle: Long, volume: Int)
     private external fun nativeRelease(handle: Long)
+    private external fun nativePollStatus(handle: Long): Int
+    private external fun nativeLastError(handle: Long): String
 }

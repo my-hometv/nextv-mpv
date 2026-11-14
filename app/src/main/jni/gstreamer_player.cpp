@@ -3,6 +3,7 @@
 #include <gst/video/videooverlay.h>
 #include <android/native_window_jni.h>
 #include <mutex>
+#include <string>
 
 // Standalone GStreamer playbin adapter; enabled only when the official SDK is packaged.
 // Bus polling and playback callbacks must be integrated before routing live TV here.
@@ -11,6 +12,9 @@ struct Player {
     GstElement *videoSink = nullptr;
     ANativeWindow *window = nullptr;
     std::mutex lock;
+    GstBus *bus = nullptr;
+    bool ended = false;
+    std::string lastError;
 };
 static Player* fromHandle(jlong value) { return reinterpret_cast<Player*>(value); }
 
@@ -29,6 +33,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeCreate(JNIEnv*, jobject) {
         return 0;
     }
     g_object_set(p->pipeline, "video-sink", p->videoSink, nullptr);
+    p->bus = gst_element_get_bus(p->pipeline);
     // playbin owns a reference; keep our own until teardown.
     return reinterpret_cast<jlong>(p);
 }
@@ -56,6 +61,9 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
     {
         std::lock_guard<std::mutex> guard(p->lock);
         gst_element_set_state(p->pipeline, GST_STATE_NULL);
+        p->ended = false;
+        p->lastError.clear();
+        while (GstMessage *stale = gst_bus_pop(p->bus)) gst_message_unref(stale);
         g_object_set(p->pipeline, "uri", value, nullptr);
         gst_element_set_state(p->pipeline, GST_STATE_PLAYING);
     }
@@ -94,8 +102,47 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeRelease(JNIEnv*, jobject, jlo
         gst_element_set_state(p->pipeline, GST_STATE_NULL);
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p->videoSink), 0);
         if (p->window) ANativeWindow_release(p->window);
+        if (p->bus) gst_object_unref(p->bus);
         gst_object_unref(p->pipeline);
         gst_object_unref(p->videoSink);
     }
     delete p;
+}
+
+// Non-blocking bus status: 0=playing/idle, 1=buffering, 2=EOS, 3=error.
+// Caller polls from a worker or lifecycle-aware timer; never blocks the UI thread.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, jlong handle) {
+    auto *p = fromHandle(handle);
+    if (!p) return 3;
+    std::lock_guard<std::mutex> guard(p->lock);
+    if (!p->bus) return 3;
+    int status = p->ended ? 2 : (!p->lastError.empty() ? 3 : 0);
+    while (GstMessage *msg = gst_bus_pop(p->bus)) {
+        switch (GST_MESSAGE_TYPE(msg)) {
+            case GST_MESSAGE_ERROR: {
+                GError *error = nullptr;
+                gchar *debug = nullptr;
+                gst_message_parse_error(msg, &error, &debug);
+                p->lastError = error && error->message ? error->message : "GStreamer playback error";
+                if (error) g_error_free(error);
+                g_free(debug);
+                status = 3;
+                break;
+            }
+            case GST_MESSAGE_EOS: p->ended = true; status = 2; break;
+            case GST_MESSAGE_BUFFERING: if (status == 0) status = 1; break;
+            default: break;
+        }
+        gst_message_unref(msg);
+    }
+    return status;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_softppj_nextv_GstreamerPlaybackView_nativeLastError(JNIEnv* env, jobject, jlong handle) {
+    auto *p = fromHandle(handle);
+    if (!p) return env->NewStringUTF("GStreamer player released");
+    std::lock_guard<std::mutex> guard(p->lock);
+    return env->NewStringUTF(p->lastError.c_str());
 }
