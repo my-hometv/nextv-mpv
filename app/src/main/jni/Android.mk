@@ -2,7 +2,9 @@ LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := nextv_gst_player
-LOCAL_SRC_FILES := gstreamer_player.cpp
+# Compile the same JNI implementation used by CMake source verification.
+# Keeping two divergent implementations caused inconsistent lifecycle behaviour.
+LOCAL_SRC_FILES := ../cpp/gstreamer_player_jni.cpp
 LOCAL_SHARED_LIBRARIES := gstreamer_android
 LOCAL_LDLIBS := -llog -landroid
 include $(BUILD_SHARED_LIBRARY)
