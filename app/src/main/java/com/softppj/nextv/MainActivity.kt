@@ -1758,9 +1758,10 @@ class MainActivity: Activity() {
             // clears the attempted URLs, so a broken playlist cannot loop.
             if(oneShotAlternativeKey==key && tryNextAlternative(index))return true
             recoveryPending.add(key)
-            // Only a confirmed failure initiates a background alternative search.
-            // It must not change the active playback or saved preferences.
-            checkFailedChannelAlternatives(index,screen)
+            // A previously confirmed URL is still the preferred source after a
+            // transient interruption. Retry it quietly; do not interrupt the
+            // viewer with an unverified alternative-URL dialog.
+            // Alternative selection remains available manually in channel settings.
             if(!prefs.getBoolean("auto_reconnect",true))return true
             val fixedEngine=pinnedEngine?.takeIf(::engineEnabled) ?:current
             val count=((recoveryAttempts[key] ?:0)+1).coerceAtMost(10)
