@@ -173,8 +173,16 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePause(JNIEnv*, jobject, jlong
     auto* p = player(h); if (!p) return;
     std::lock_guard<std::mutex> guard(p->mutex);
     p->paused = paused;
-    if (p->pipeline && !p->waitingForSurface)
-        gst_element_set_state(p->pipeline, paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
+    if (p->pipeline && !p->waitingForSurface && p->status != 2 && p->status != 3) {
+        if (gst_element_set_state(p->pipeline,
+                paused ? GST_STATE_PAUSED : GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+            stop(*p);
+            p->status = 3;
+            p->error = "GStreamer failed to change pause state";
+        } else if (paused) {
+            p->status = 0;
+        }
+    }
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativeStop(JNIEnv*, jobject, jlong h) {
