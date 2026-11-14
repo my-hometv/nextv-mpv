@@ -49,6 +49,7 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
         p.waitingForSurface = false;
         if (gst_element_set_state(p.pipeline,
                 p.paused ? GST_STATE_PAUSED : GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+            stop(p);
             p.status = 3;
             p.error = "GStreamer failed to resume after surface creation";
         } else p.status = p.paused ? 0 : 1;
@@ -159,6 +160,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         p->waitingForSurface = true;
         p->status = 0;
     } else if (gst_element_set_state(p->pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+        stop(*p);
         p->status = 3;
         p->error = "GStreamer failed to start pipeline";
     } else p->status = 1;
