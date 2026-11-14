@@ -191,8 +191,11 @@ val verifyGstreamerNativeBridge by tasks.registering {
     doLast {
         val cmake = file("src/main/cpp/CMakeLists.txt").readText()
         val adapter = file("src/main/java/com/softppj/nextv/GstreamerPlaybackView.kt").readText()
+        check(adapter.contains("System.loadLibrary(\"nextv_gst_player\")")) {
+            "GStreamer adapter no longer loads the required JNI player"
+        }
         if (adapter.contains("System.loadLibrary(\"nextv_gst_player\")")) {
-            check(Regex("""add_library\\s*\\(\\s*nextv_gst_player\\s+SHARED""").containsMatchIn(cmake)) {
+            check(Regex("""add_library\s*\(\s*nextv_gst_player\s+SHARED""").containsMatchIn(cmake)) {
                 "GStreamer JNI bridge missing from CMake: nextv_gst_player is loaded by Kotlin but not built. " +
                     "Do not approve an APK until the native player implementation and SDK packaging are present."
             }
