@@ -23,6 +23,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
     private val main = Handler(Looper.getMainLooper())
     private var mpv: MPVLib? = null
     private var pendingUrl: String? = null
+    private var selectedDecoder = "Automatic"
     private var started = false
     private var liveStream = false
     private var failureReported = false
@@ -33,6 +34,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
 
     fun initialize(decoder: String = "Automatic") {
         check(mpv == null && !closed)
+        selectedDecoder = decoder
         val engine = MPVLib.create(context.applicationContext)
             ?: throw IllegalStateException("Cannot initialize libmpv")
         try {
@@ -41,20 +43,11 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             engine.setOptionString("gpu-context", "android")
             engine.setOptionString("opengl-es", "yes")
             engine.setOptionString("ao", "audiotrack,opensles")
-            engine.setOptionString("hwdec", when (decoder) {
-                "Software" -> "no"
-                "Hardware copy" -> "mediacodec-copy"
-                // Avoid direct MediaCodec GPU surfaces on TVs with broken YUV output.
-                // Copy decoded frames through mpv's colour-managed GPU renderer.
-                else -> "mediacodec-copy"
-            })
-            // Keep video synced to audio without interpolation or forced frame repeats.
+            engine.setOptionString("hwdec", MpvPlaybackPolicy.hardwareDecoder(decoder))
             engine.setOptionString("video-sync", "audio")
             // Use source metadata for matrix, range and transfer. Never force BT.709
             // or full-range on SD broadcasts; that causes washed-out colours.
-            engine.setOptionString("video-output-levels", "auto")
-            engine.setOptionString("target-prim", "auto")
-            engine.setOptionString("target-trc", "auto")
+            // Preserve source colour metadata; avoid forcing a fixed output matrix.
             // Avoid changing video output backends during Android surface transitions.
             engine.setOptionString("vd-lavc-dr", "no")
             engine.setOptionString("interpolation", "no")
@@ -257,6 +250,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         fun num(name:String)=runCatching { engine.getPropertyDouble(name) }.getOrNull()?.toString() ?: "unknown"
         fun count(name:String)=runCatching { engine.getPropertyInt(name) }.getOrNull()?.toString() ?: "unknown"
         return listOf(
+            "Selected mode: "+selectedDecoder,
             "Decoder: "+str("hwdec-current"),
             "Video codec: "+str("video-codec"),
             "Video format: "+str("video-params/pixelformat"),
@@ -268,6 +262,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Output levels: "+str("video-out-params/colorlevels"),
             "Video size: "+count("video-params/w")+" x "+count("video-params/h"),
             "Video FPS: "+num("estimated-vf-fps"),
+            "Container: "+str("file-format"),
             "Dropped frames: "+count("frame-drop-count"),
             "Decoder dropped frames: "+count("decoder-frame-drop-count"),
             "Video output: "+str("current-vo"),
