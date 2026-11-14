@@ -520,6 +520,8 @@ class MainActivity: Activity() {
     private var gstreamerPlayer:GstreamerPlaybackView?=null
     // A missing optional JNI bridge must be detected once, not retried for every channel.
     private var gstreamerNativeUnavailable=false
+    // Do not repeatedly retry a stream that already failed this experimental engine.
+    private val gstreamerFailedUrls=mutableSetOf<String>()
     private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
@@ -8248,6 +8250,7 @@ class MainActivity: Activity() {
             }
         }else if(engineFor(c)=="MPV"){
             if (prefs.getBoolean("gstreamer_experimental",false) && !gstreamerNativeUnavailable &&
+                c.url !in gstreamerFailedUrls &&
                 c.headers.isEmpty() &&
                 youtubeNativeStreamUrl==null && c.url.startsWith("http")) {
                 startGstreamer(c,index,screen)
@@ -8735,6 +8738,7 @@ class MainActivity: Activity() {
         val startupTimeout=Runnable{
             if(gstreamerPlayer===view && active==index && videoScreen===screen &&
                 generation==playbackGeneration){
+                gstreamerFailedUrls.add(c.url)
                 HomeTvDiagnostics.w("GStreamer","No first video buffer within 15 seconds; falling back to MPV")
                 gstreamerPlayer=null
                 try{view.release()}catch(_:Throwable){}
@@ -8748,6 +8752,7 @@ class MainActivity: Activity() {
                 if(gstreamerPlayer===view && active==index && videoScreen===screen &&
                     generation==playbackGeneration && status==3){
                     handler.removeCallbacks(startupTimeout)
+                    gstreamerFailedUrls.add(c.url)
                     HomeTvDiagnostics.w("GStreamer",error ?: "Native playback failed")
                     gstreamerPlayer=null
                     try{view.release()}catch(_:Throwable){}
@@ -8775,6 +8780,7 @@ class MainActivity: Activity() {
         }catch(e:Throwable){
             handler.removeCallbacks(startupTimeout)
             if(e is LinkageError) gstreamerNativeUnavailable=true
+            else gstreamerFailedUrls.add(c.url)
             HomeTvDiagnostics.w("GStreamer","Native startup unavailable; using MPV",e)
             if(gstreamerPlayer===view){
                 gstreamerPlayer=null
