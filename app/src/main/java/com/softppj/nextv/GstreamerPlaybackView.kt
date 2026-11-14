@@ -26,6 +26,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private var firstBufferReported = false
     private var slowStartupReported = false
     private var volumePercent = 100
+    private var nativeFailure: String? = null
     /** Diagnostic threshold only; does not stop or restart the stream. */
     var slowStartupThresholdMs: Long = 10_000L
     var onSlowStartup: ((elapsedMs: Long) -> Unit)? = null
@@ -34,7 +35,14 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         override fun run() {
             if (!polling || closed || handle == 0L) return
             val generationAtPoll = playbackGeneration
-            val status = pollStatus()
+            val status = try {
+                pollStatus()
+            } catch (failure: Throwable) {
+                // Never crash the Android TV UI thread because an experimental
+                // JNI polling call failed; report failure to the MPV recovery route.
+                nativeFailure = failure.message ?: failure.javaClass.simpleName
+                3
+            }
             // Native polling or its future implementation must not let an obsolete
             // stream update callbacks after a channel switch or release.
             if (generationAtPoll != playbackGeneration || !polling || closed || handle == 0L) return
@@ -51,7 +59,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
             }
             if (status != lastReportedStatus) {
                 lastReportedStatus = status
-                listener?.invoke(status, if (status == 3) lastError() else null)
+                listener?.invoke(status, if (status == 3) nativeFailure ?: runCatching { lastError() }.getOrDefault("Native GStreamer error") else null)
                 if (generationAtPoll != playbackGeneration || closed) return
             }
             if (status != 2 && status != 3 && polling) mainHandler.postDelayed(this, 250L)
@@ -63,6 +71,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         mainHandler.removeCallbacks(statusPoll)
         playbackGeneration++
         lastReportedStatus = null
+        nativeFailure = null
         firstBufferReported = false
         slowStartupReported = false
         startedAtMs = SystemClock.elapsedRealtime()
