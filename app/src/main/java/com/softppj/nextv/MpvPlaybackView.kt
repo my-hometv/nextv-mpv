@@ -26,6 +26,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
     private var mpv: MPVLib? = null
     private var pendingUrl: String? = null
     private var selectedDecoder = "Automatic"
+    private var selectedOutputMode = "Auto"
     private var started = false
     private var liveStream = false
     private var failureReported = false
@@ -40,9 +41,10 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         holder.setFormat(PixelFormat.RGBA_8888)
     }
 
-    fun initialize(decoder: String = "Automatic") {
+    fun initialize(decoder: String = "Automatic", outputMode: String = "Auto") {
         check(mpv == null && !closed)
         selectedDecoder = decoder
+        selectedOutputMode = outputMode
         val engine = MPVLib.create(context.applicationContext)
             ?: throw IllegalStateException("Cannot initialize libmpv")
         try {
@@ -53,6 +55,19 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             engine.setOptionString("ao", "audiotrack,opensles")
             engine.setOptionString("hwdec", MpvPlaybackPolicy.hardwareDecoder(decoder))
             engine.setOptionString("video-sync", "audio")
+            // Explicit user-selectable output targets for HDR/SDR comparison.
+            // Auto retains source/display negotiation; forcing HDR cannot make
+            // an SDR-only display HDR-capable.
+            when (outputMode) {
+                "Force HDR10" -> {
+                    engine.setOptionString("target-prim", "bt.2020")
+                    engine.setOptionString("target-trc", "pq")
+                }
+                "Force SDR" -> {
+                    engine.setOptionString("target-prim", "bt.709")
+                    engine.setOptionString("target-trc", "bt.1886")
+                }
+            }
             // Use source metadata for matrix, range and transfer. Never force BT.709
             // or full-range on SD broadcasts; that causes washed-out colours.
             // Preserve source colour metadata; avoid forcing a fixed output matrix.
@@ -282,6 +297,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "MPV version: "+str("mpv-version"),
             "FFmpeg version: "+str("ffmpeg-version"),
             "Selected mode: "+selectedDecoder,
+            "Requested output: "+selectedOutputMode,
             "Decoder: "+str("hwdec-current"),
             "Video codec: "+str("video-codec"),
             "Video format: "+str("video-params/pixelformat"),

@@ -8683,6 +8683,26 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
     private val mpvDecoderOptions=arrayOf("Automatic","Hardware copy","Software")
+    private val mpvOutputOptions=arrayOf("Auto","Force HDR10","Force SDR")
+    private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(c.url)
+    private fun selectedMpvOutput(c:Channel)=prefs.getString(mpvOutputKey(c),"Auto")
+        ?.takeIf{it in mpvOutputOptions} ?: "Auto"
+    private fun chooseMpvOutputForCurrentChannel(){
+        val index=active
+        val c=channels.getOrNull(index)
+        if(c==null){showBanner("Play a channel first to choose HDR/SDR output",true);return}
+        val current=selectedMpvOutput(c)
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle(c.name+" — MPV HDR/SDR output")
+            .setSingleChoiceItems(mpvOutputOptions,mpvOutputOptions.indexOf(current)){dialog,which->
+                val chosen=mpvOutputOptions[which]
+                dialog.dismiss()
+                if(chosen!=current){
+                    prefs.edit().putString(mpvOutputKey(c),chosen).apply()
+                    if(active==index)playIndex(index)
+                }
+            }.setNegativeButton("Cancel",null).create())
+    }
     private fun resetMpvPictureForCurrentChannel(){
         val c=channels.getOrNull(active)
         if(c==null){
@@ -8829,7 +8849,7 @@ class MainActivity: Activity() {
                     handleEngineFailure(index,screen)
                 }
             }
-            view.initialize(selectedMpvDecoder(c))
+            view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c))
             // Preserve original source colors by default.
             val picture=selectedPictureValues(c)
             view.setPicture(picture.brightness,picture.contrast,picture.saturation)
@@ -9522,6 +9542,8 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Experimental GStreamer playback (HTTP streams without custom headers)","gstreamer_experimental",false))
         root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
         root.addView(button("MPV decoder and frame diagnostics"){showMpvPlaybackDiagnostics()})
+        root.addView(button("MPV HDR/SDR output for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvOutput).orEmpty().ifBlank{"No channel selected"}){chooseMpvOutputForCurrentChannel()})
+        root.addView(label("Auto is recommended. Force HDR10 requires HDR-capable display output; Force SDR tests SDR tone mapping. Changing mode restarts this channel."))
         root.addView(button("Neutralize MPV picture adjustments (current playback)"){resetMpvPictureForCurrentChannel()})
         root.addView(label("For distorted colours or jerky motion: neutralize picture adjustments, then compare Software and Hardware copy on the same channel. Decoder changes restart that channel."))
         root.addView(button("Info panel opacity: "+prefs.getInt("information_opacity",65)+"%"){chooseInformationTransparency()})
