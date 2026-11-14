@@ -34,8 +34,13 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
     // A NULL handle must be delivered before the old window is released.
     // Otherwise an asynchronous sink may keep referencing freed native memory.
     if (p.pipeline && !p.window && !p.waitingForSurface) {
-        gst_element_set_state(p.pipeline, GST_STATE_PAUSED);
-        p.waitingForSurface = true;
+        if (gst_element_set_state(p.pipeline, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
+            stop(p);
+            p.status = 3;
+            p.error = "GStreamer failed to suspend playback after surface loss";
+        } else {
+            p.waitingForSurface = true;
+        }
         p.firstBuffer.store(false, std::memory_order_release);
         p.firstBufferDelivered = false;
         p.status = 0;
