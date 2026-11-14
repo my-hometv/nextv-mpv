@@ -34,6 +34,9 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
             if (!polling || closed || handle == 0L) return
             val generationAtPoll = playbackGeneration
             val status = pollStatus()
+            // Native polling or its future implementation must not let an obsolete
+            // stream update callbacks after a channel switch or release.
+            if (generationAtPoll != playbackGeneration || !polling || closed || handle == 0L) return
             if (status == 5 && !firstBufferReported) {
                 firstBufferReported = true
                 onFirstVideoBuffer?.invoke((SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L))
