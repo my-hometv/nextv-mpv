@@ -8,6 +8,12 @@ plugins {
 val nextvGstreamerSdkPath = providers.gradleProperty("nextvGstreamerSdk")
     .orElse(providers.environmentVariable("NEXTV_GSTREAMER_SDK"))
     .orNull?.takeIf { it.isNotBlank() }?.let { file(it).absolutePath }
+// NDK builds may already have compiled and staged an official GStreamer runtime.
+// Only preserve that staging directory on an explicit, validated opt-in.
+val nextvGstreamerPrebuilt = providers.gradleProperty("nextvGstreamerPrebuilt")
+    .orElse(providers.environmentVariable("NEXTV_GSTREAMER_PREBUILT"))
+    .map { it.equals("true", ignoreCase = true) || it == "1" }
+    .getOrElse(false)
 
 android {
     namespace = "com.softppj.nextv"
@@ -284,8 +290,21 @@ val stageGstreamerRuntime by tasks.registering(Sync::class) {
     val source = sdk.map { file("$it/lib/arm64-v8a") }
     onlyIf {
         if (!sdk.isPresent) {
-            // Never silently package native libraries left by a previous SDK build.
-            delete(layout.buildDirectory.dir("gstreamer-jniLibs"))
+            if (nextvGstreamerPrebuilt) {
+                // Native SDK verification compiled these via ndk-build.
+                // Do not erase them just before :app:mergeDebugNativeLibs.
+                val staged = layout.buildDirectory.dir("gstreamer-jniLibs/arm64-v8a")
+                    .get().asFile
+                val required = listOf("libgstreamer_android.so", "libnextv_gst_player.so")
+                val missing = required.filterNot { staged.resolve(it).isFile }
+                check(missing.isEmpty()) {
+                    "Prebuilt GStreamer runtime missing: ${missing.joinToString()}"
+                }
+            } else {
+                // A normal MPV build must never reuse a previous SDK build's
+                // native libraries accidentally.
+                delete(layout.buildDirectory.dir("gstreamer-jniLibs"))
+            }
             false
         } else {
             check(source.get().isDirectory) {
