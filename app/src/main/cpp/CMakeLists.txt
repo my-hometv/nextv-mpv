@@ -18,7 +18,12 @@ target_link_libraries(nextv_gstreamer_probe PRIVATE ${CMAKE_DL_LIBS})
 # Android GStreamer SDK sysroot containing include/ and lib/<ABI>/.
 # The target is deliberately absent without SDK headers/libraries; verification
 # must fail closed instead of producing a misleading "GStreamer-ready" APK.
-set(NEXTV_GSTREAMER_SDK "" CACHE PATH "Prepared GStreamer Android SDK sysroot")
+# Prefer an explicit CMake -D value, then the CI/environment setting.
+# A missing SDK leaves the optional JNI player out of the normal build.
+if(NOT DEFINED NEXTV_GSTREAMER_SDK AND DEFINED ENV{NEXTV_GSTREAMER_SDK})
+    set(NEXTV_GSTREAMER_SDK "$ENV{NEXTV_GSTREAMER_SDK}")
+endif()
+set(NEXTV_GSTREAMER_SDK "${NEXTV_GSTREAMER_SDK}" CACHE PATH "Prepared GStreamer Android SDK sysroot")
 if(NEXTV_GSTREAMER_SDK)
     set(GST_INCLUDE "${NEXTV_GSTREAMER_SDK}/include")
     set(GST_LIB "${NEXTV_GSTREAMER_SDK}/lib/${ANDROID_ABI}")
