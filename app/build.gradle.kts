@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Resolve the optional SDK once and pass the same path to Gradle and CMake.
+// Previously -PnextvGstreamerSdk staged libraries but never built the JNI target.
+val nextvGstreamerSdkPath = providers.gradleProperty("nextvGstreamerSdk")
+    .orElse(providers.environmentVariable("NEXTV_GSTREAMER_SDK"))
+    .orNull?.takeIf { it.isNotBlank() }?.let { file(it).absolutePath }
+
 android {
     namespace = "com.softppj.nextv"
     compileSdk = 37
@@ -15,6 +21,11 @@ android {
     }
 
     defaultConfig {
+        if (nextvGstreamerSdkPath != null) {
+            externalNativeBuild {
+                cmake { arguments("-DNEXTV_GSTREAMER_SDK=$nextvGstreamerSdkPath") }
+            }
+        }
         // MPV edition application ID: installs independently beside stable NexTV.
         applicationId = "com.softppj.nextv.mpv"
         minSdk = 26
