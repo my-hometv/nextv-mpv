@@ -95,6 +95,8 @@ jobs:
           gradle-version: '9.3.1'
       - name: Verify Gradle merges compiled GStreamer libraries (no APK)
         shell: bash
+        env:
+          NEXTV_GSTREAMER_PREBUILT: 'true'
         run: |
           set -euo pipefail
           gradle --no-daemon :app:verifyGstreamerPreservation :app:compileDebugKotlin :app:mergeDebugNativeLibs
