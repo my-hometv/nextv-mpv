@@ -62,14 +62,17 @@ GstPadProbeReturn onBuffer(GstPad*, GstPadProbeInfo* info, gpointer data) {
 }
 void stop(Player& p) {
     if (p.pipeline) {
+        // Stop producing buffers before removing the callback. Do not release
+        // the Player until the callback is detached from its owning pad.
         gst_element_set_state(p.pipeline, GST_STATE_NULL);
-        // Remove the pad callback before the Player can be destroyed.
         if (p.videoProbePad) {
-            if (p.videoProbeId) gst_pad_remove_probe(p.videoProbePad, p.videoProbeId);
+            if (p.videoProbeId != 0)
+                gst_pad_remove_probe(p.videoProbePad, p.videoProbeId);
             gst_object_unref(p.videoProbePad);
             p.videoProbePad = nullptr;
             p.videoProbeId = 0;
         }
+        // The sink is owned by playbin. Do not unref it independently.
         gst_object_unref(p.pipeline);
         p.pipeline = nullptr;
         p.sink = nullptr;
@@ -224,7 +227,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
         gst_object_unref(bus);
     }
     if (p->firstBuffer.load(std::memory_order_acquire) &&
-        !p->firstBufferDelivered && p->status != 3 && p->status != 2) {
+        !p->firstBufferDelivered && p->status != 3 && p->status != 2 &&
+        !p->waitingForSurface) {
         p->firstBufferDelivered = true;
         return 5;
     }
