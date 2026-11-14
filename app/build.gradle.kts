@@ -179,3 +179,24 @@ val verifyGstreamerMainActivityIntegration by tasks.registering {
     }
 }
 tasks.named("check") { dependsOn(verifyGstreamerMainActivityIntegration) }
+
+
+/**
+ * Fail closed: the experimental GStreamer route must not be considered verified
+ * until the actual JNI playback bridge is declared and implemented.
+ */
+val verifyGstreamerNativeBridge by tasks.registering {
+    group = "verification"
+    description = "Require a real nextv_gst_player JNI target before approving GStreamer playback."
+    doLast {
+        val cmake = file("src/main/cpp/CMakeLists.txt").readText()
+        val adapter = file("src/main/java/com/softppj/nextv/GstreamerPlaybackView.kt").readText()
+        if (adapter.contains("System.loadLibrary(\"nextv_gst_player\")")) {
+            check(Regex("""add_library\\s*\\(\\s*nextv_gst_player\\s+SHARED""").containsMatchIn(cmake)) {
+                "GStreamer JNI bridge missing from CMake: nextv_gst_player is loaded by Kotlin but not built. " +
+                    "Do not approve an APK until the native player implementation and SDK packaging are present."
+            }
+        }
+    }
+}
+tasks.named("check") { dependsOn(verifyGstreamerNativeBridge) }
