@@ -1313,9 +1313,58 @@ class MainActivity: Activity() {
                 }
             }
     }
+    // MPV-only fallback: legacy Media3/LibVLC background probes cannot run
+    // in this edition. Offer unverified alternative URLs without claiming that
+    // they have been decoded or tested; foreground MPV confirms playback.
+    private fun offerMpvAlternative(index:Int, screen:FrameLayout) {
+        val original=channels.getOrNull(index) ?: return
+        if(active!=index || videoScreen!==screen || !licenseReady) return
+        val key=channelKey(original)
+        if(key in failureSearches || alternativePromptKey==key) return
+        val candidate=alternateIndices(index).firstOrNull {
+            it!=index && channels.getOrNull(it)?.url!=original.url &&
+                channels.getOrNull(it)?.url !in failedUrlsThisSession
+        } ?: return
+        val target=channels[candidate]
+        if(!failureSearches.add(key)) return
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("Try another stream?")
+            .setMessage(original.name+" has another URL. This URL has not yet been verified by MPV.")
+            .setPositiveButton("Try"){_,_->
+                if(active!=index || videoScreen!==screen ||
+                    channels.getOrNull(index)!==original ||
+                    channels.getOrNull(candidate)!==target || !licenseReady) {
+                    showBanner("Channel list changed; retry recovery",true)
+                    return@setPositiveButton
+                }
+                recoveryPending.remove(key)
+                pendingAlternativeKey=key
+                pendingAlternativeUrl=target.url
+                pendingAlternativeEngine="MPV"
+                pendingAlternativeGeneration=-1
+                fallbackEngineOverride=null
+                recoveryAttempts.remove(key)
+                playIndex(candidate)
+            }
+            .setNegativeButton("Keep current",null)
+            .create()
+        alternativePrompt=dialog
+        alternativePromptKey=key
+        dialog.setOnDismissListener {
+            failureSearches.remove(key)
+            if(alternativePrompt===dialog) {
+                alternativePrompt=null
+                alternativePromptKey=null
+            }
+        }
+        dialog.show()
+    }
     private fun checkFailedChannelAlternatives(index:Int,screen:FrameLayout){
         if(index !in channels.indices || active!=index || videoScreen!==screen)return
-        if(!engineEnabled("Media3") && !engineEnabled("LibVLC"))return
+        if(!engineEnabled("Media3") && !engineEnabled("LibVLC")){
+            offerMpvAlternative(index,screen)
+            return
+        }
         val c=channels[index]
         val key=channelKey(c)
         if(!failureSearches.add(key))return
