@@ -3266,7 +3266,7 @@ class MainActivity: Activity() {
             "Preferred audio language",
             "Subtitle settings",
             "Sleep timer",
-            "Playback engine",
+            "MPV decoder ("+selectedMpvDecoder(c)+")",
             "Select stream source",
             if(favoriteIds.contains(id(c)))"Remove favorite" else "Add favorite",
             "Parental lock",
@@ -3275,7 +3275,7 @@ class MainActivity: Activity() {
             "Settings",
             "Exit",
             "Manage Favorites Groups",
-            "MPV video decoder ("+selectedMpvDecoder(c)+")"
+            "MPV playback diagnostics""
         )
         val dialog=AlertDialog.Builder(this)
             .setTitle(numberFor(i).toString()+". "+c.name+" Settings")
@@ -3289,7 +3289,7 @@ class MainActivity: Activity() {
                     4->choosePreferredAudioLanguage()
                     5->subtitleTracks(i)
                     6->sleepTimer()
-                    7->chooseChannelEngine(i)
+                    7->chooseMpvDecoder(i)
                     8->selectAlternative(i)
                     9->{favorite(c);if(active<0)allChannels()}
                     10->toggleLock(id(c),false)
@@ -3298,7 +3298,7 @@ class MainActivity: Activity() {
                     13->liveSettings()
                     14->confirmExit()
                     15->addChannelToFavoriteGroups(c)
-                    16->chooseMpvDecoder(i)
+                    16->showMpvPlaybackDiagnostics()
                 }
             }
             .setNegativeButton("Back",null).create()
