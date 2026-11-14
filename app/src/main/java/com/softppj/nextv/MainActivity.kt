@@ -517,6 +517,7 @@ class MainActivity: Activity() {
     private var activeChannelGainProcessor:ChannelGainAudioProcessor?=null
     private var vlcCore:LibVLC?=null
     private var mpvPlayer:MpvPlaybackView?=null
+    private var gstreamerPlayer:GstreamerPlaybackView?=null
     private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
@@ -8244,7 +8245,10 @@ class MainActivity: Activity() {
                 }
             }
         }else if(engineFor(c)=="MPV"){
-            startMpv(c,index,screen)
+            if (prefs.getBoolean("gstreamer_experimental",false) && c.headers.isEmpty() &&
+                youtubeNativeStreamUrl==null && c.url.startsWith("http")) {
+                startGstreamer(c,index,screen)
+            } else startMpv(c,index,screen)
         }else if(engineFor(c).startsWith("LibVLC-") && youtubeNativeStreamUrl==null){
             startIsolatedVlc(c,index,screen,engineFor(c))
         }else if(engineFor(c)=="LibVLC" && youtubeNativeStreamUrl==null){
@@ -8719,6 +8723,49 @@ class MainActivity: Activity() {
                 }
             }.setNegativeButton("Cancel",null).create()
         showSideDialog(dialog)
+    }
+    /** Experimental native route. Disabled by default; MPV remains the safe fallback. */
+    private fun startGstreamer(c:Channel,index:Int,screen:FrameLayout){
+        val generation=playbackGeneration
+        val view=GstreamerPlaybackView(this)
+        gstreamerPlayer=view
+        try{
+            screen.addView(view,0,FrameLayout.LayoutParams(-1,-1))
+            view.listener={status,error->
+                if(gstreamerPlayer===view && active==index && videoScreen===screen &&
+                    generation==playbackGeneration && status==3){
+                    HomeTvDiagnostics.w("GStreamer",error ?: "Native playback failed")
+                    gstreamerPlayer=null
+                    try{view.release()}catch(_:Throwable){}
+                    screen.removeView(view)
+                    startMpv(c,index,screen)
+                }
+            }
+            view.onFirstVideoBuffer={elapsed->
+                if(gstreamerPlayer===view && generation==playbackGeneration && active==index){
+                    HomeTvDiagnostics.i("Startup","GStreamer first buffer in "+elapsed+" ms")
+                    rememberWorking(c,generation)
+                    autoBufferHealthy()
+                    updateClock()
+                }
+            }
+            view.onSlowStartup={elapsed->
+                if(gstreamerPlayer===view && generation==playbackGeneration)
+                    HomeTvDiagnostics.w("GStreamer","Slow first buffer: "+elapsed+" ms")
+            }
+            view.initialize()
+            view.setVolume(prefs.getInt(channelVolumeKey(c),100))
+            view.play(c.url)
+        }catch(e:Throwable){
+            HomeTvDiagnostics.w("GStreamer","Native startup unavailable; using MPV",e)
+            if(gstreamerPlayer===view){
+                gstreamerPlayer=null
+                try{view.release()}catch(_:Throwable){}
+                screen.removeView(view)
+            }
+            if(active==index && generation==playbackGeneration && videoScreen===screen)
+                startMpv(c,index,screen)
+        }
     }
     private fun startMpv(c:Channel,index:Int,screen:FrameLayout){
         // MPV Edition has one native video engine for all native video routes.
@@ -9443,7 +9490,8 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
         root.addView(label("Planned for a later release: Instant Switching, Smart Logos and MultiView. No unfinished feature is enabled."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
-        root.addView(label("MPV is the only playback engine in this edition. Decoder modes are independent of the engine."))
+        root.addView(label("MPV is the default engine. GStreamer is an experimental native test route with automatic MPV fallback."))
+        root.addView(settingsToggle("Experimental GStreamer playback (HTTP streams without custom headers)","gstreamer_experimental",false))
         root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
         root.addView(button("MPV decoder and frame diagnostics"){showMpvPlaybackDiagnostics()})
         root.addView(button("Neutralize MPV picture adjustments (current playback)"){resetMpvPictureForCurrentChannel()})
@@ -9898,6 +9946,10 @@ class MainActivity: Activity() {
         try{saveCurrentMediaProgress()}catch(e:Throwable){
             HomeTvDiagnostics.w("Playback","Progress save failed during channel switch",e)
         }
+        try{gstreamerPlayer?.release()}catch(e:Throwable){
+            HomeTvDiagnostics.w("GStreamer","Native playback release failed",e)
+        }
+        gstreamerPlayer=null
         try{mpvPlayer?.release()}catch(e:Throwable){
             HomeTvDiagnostics.w("MPV","Native playback release failed",e)
         }
