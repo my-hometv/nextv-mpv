@@ -19,13 +19,13 @@ Repository: `my-hometv/nextv-mpv`, branch `main`. Reuse this independent app; do
 - [ ] **07 Final audit:** full Gradle compile, unit/regression tests, Android native binary packaging, licensing and settings preservation. Fix failures before APK generation. Commit final fixes.
 - [ ] **08 TV test APK:** build an independent APK only after stage 07 succeeds. Verify real device, especially previously degraded Full HD channel; record actual result rather than assume quality.
 
-## Autonomous iteration rules
-1. At each run, read this file, `GSTREAMER_MIGRATION.md`, current source and latest CI results.
-2. Identify the first unchecked stage; perform the largest safe, coherent implementation slice, then commit it with an informative message.
-3. Wait for/check CI when necessary, repair failures before proceeding; do not declare stage complete without evidence.
-4. Update this checklist and a progress log with commit SHA, verified tests, remaining work, and any blocker.
-5. Continue without asking for routine decisions. Ask the user only for an indispensable external artifact, authorization or TV-only observation.
-6. Do not trigger an APK artifact workflow until the final verification gate is met. Avoid unrelated modifications.
+## Manual development rules
+1. Work only when the user requests continuation; the automatic schedule is disabled.
+2. Read this file, `GSTREAMER_MIGRATION.md`, and `GSTREAMER_PROGRESS.md` before changes.
+3. Group work into substantial, coherent code and test commits rather than many trivial commits.
+4. Verify compilation/CI and update `GSTREAMER_PROGRESS.md` with earned completion percentage, SHA and next steps.
+5. Report results to the user after each package; ask only for blockers or TV-only validation.
+6. Do not trigger an APK workflow until verification gates are satisfied.
 
 ## Current baseline
 The prior MPV integration verification passed at `3cc281b61118da2efc626f7f804a58cd5a24bef9`. GStreamer is not yet integrated; no claim of playback or picture-quality improvement is warranted.
