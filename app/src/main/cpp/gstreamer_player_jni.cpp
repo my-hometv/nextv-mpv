@@ -76,9 +76,11 @@ void stop(Player& p) {
             p.videoProbePad = nullptr;
             p.videoProbeId = 0;
         }
-        // The sink is owned by playbin. Do not unref it independently.
+        // Hold our own sink reference while using the overlay and pad probe.
+        // Release it only after the pipeline has stopped and the probe is gone.
         gst_object_unref(p.pipeline);
         p.pipeline = nullptr;
+        if (p.sink) gst_object_unref(p.sink);
         p.sink = nullptr;
     }
     p.status = 0;
@@ -143,9 +145,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         // A SurfaceView may create its native surface asynchronously.
         // Configure the pipeline now and begin playback when it arrives.
         g_object_set(p->pipeline, "video-sink", p->sink, nullptr);
-        // playbin now holds its own reference; keep a borrowed pointer for
-        // overlay operations and release the factory-created reference.
-        gst_object_unref(p->sink);
+        // Keep the factory-owned sink reference until stop(), so overlay
+        // operations cannot access a sink released by a playbin reconfiguration.
         if (p->window && GST_IS_VIDEO_OVERLAY(p->sink))
             gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p->sink),
                                                  reinterpret_cast<guintptr>(p->window));
