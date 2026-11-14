@@ -40,10 +40,10 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
             p.error = "GStreamer failed to suspend playback after surface loss";
         } else {
             p.waitingForSurface = true;
+            p.firstBuffer.store(false, std::memory_order_release);
+            p.firstBufferDelivered = false;
+            p.status = 0;
         }
-        p.firstBuffer.store(false, std::memory_order_release);
-        p.firstBufferDelivered = false;
-        p.status = 0;
     }
     if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink)) {
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p.sink),
