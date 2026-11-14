@@ -101,3 +101,50 @@ val verifyMpvRuntime by tasks.registering {
     }
 }
 tasks.named("check") { dependsOn(verifyMpvRuntime) }
+
+/**
+ * Migration safety gate: GStreamer must not silently change the app identity,
+ * persisted licensing keys, licence server contract, playlist parser or TV launcher.
+ * This intentionally runs without any GStreamer native SDK being installed.
+ */
+val verifyGstreamerPreservation by tasks.registering {
+    group = "verification"
+    description = "Protect NexTV licensing, settings and TV launcher during engine migration."
+    doLast {
+        val activity = file("src/main/java/com/softppj/nextv/MainActivity.kt").readText()
+        val parser = file("src/main/java/com/softppj/nextv/M3uParser.kt").readText()
+        val license = file("src/main/java/com/softppj/nextv/SignedLicenseCache.kt").readText()
+        val manifest = file("src/main/AndroidManifest.xml").readText()
+        val build = file("build.gradle.kts").readText()
+        val requiredActivity = listOf(
+            "getSharedPreferences(\"nextv\", MODE_PRIVATE)",
+            "https://hometv-license-next.prasanthpjoy.workers.dev",
+            "hometv://licensed-playlist",
+            "license_device", "license_token", "license_expiry",
+            "SignedLicenseCache(", "M3uParser"
+        )
+        requiredActivity.forEach { invariant ->
+            check(activity.contains(invariant)) { "NexTV persistence/licensing contract changed: $invariant" }
+        }
+        listOf("signed_license_lease", "signed_license_server_time",
+            "signed_license_wall_time", "signed_license_elapsed_time",
+            "signed_license_last_seen_wall", "SHA256withRSA").forEach { invariant ->
+            check(license.contains(invariant)) { "Signed license contract changed: $invariant" }
+        }
+        listOf("group-title", "tvg-logo", "tvg-id", "User-Agent", "Referer",
+            "Origin", "media-type").forEach { invariant ->
+            check(parser.contains(invariant)) { "Playlist parser contract changed: $invariant" }
+        }
+        check(manifest.contains("android.intent.category.LEANBACK_LAUNCHER")) {
+            "Android TV launcher entry missing"
+        }
+        check(manifest.contains("android:allowBackup=\"false\"")) {
+            "Unexpected backup security policy change"
+        }
+        check(build.contains("applicationId = \"com.softppj.nextv.mpv\"")) {
+            "Independent app ID changed; would affect existing installations"
+        }
+        println("Verified NexTV licensing, persistence, playlist and TV launcher invariants")
+    }
+}
+tasks.named("check") { dependsOn(verifyGstreamerPreservation) }

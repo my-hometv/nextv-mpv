@@ -8,7 +8,7 @@ Implementation completion starts at **0%**. Planning and migration documentation
 
 | Stage | Weight | Completed | Acceptance gate |
 | --- | ---: | ---: | --- |
-| 01 Source audit and licensing/settings preservation tests | 10% | 0% | Audit and regression safeguards committed |
+| 01 Source audit and licensing/settings preservation tests | 10% | 10% | Audit and regression safeguards committed |
 | 02 GStreamer Android SDK and JNI/native integration | 15% | 0% | Verified SDK/ABI and CI compilation |
 | 03 GStreamer playback core | 20% | 0% | Surface, stream, lifecycle and playback APIs compiled/tested |
 | 04 TV UI and settings integration | 15% | 0% | Remote, switching, audio/subtitle, picture controls verified |
@@ -16,7 +16,7 @@ Implementation completion starts at **0%**. Planning and migration documentation
 | 06 MPV, Media3 and VLC removal | 10% | 0% | No legacy runtime/compile dependencies or dead playback code |
 | 07 Full audit and regression verification | 10% | 0% | Gradle CI green and licensing/settings preserved |
 | 08 APK readiness | 5% | 0% | APK artifact workflow passes, installable test APK |
-| **TOTAL** | **100%** | **0%** | |
+| **TOTAL** | **100%** | **10%** | |
 
 ## Commit policy
 - Prefer **substantial coherent commits**: a fully integrated feature, major cleanup with replacements, or a meaningful set of regression tests.
@@ -29,7 +29,7 @@ Implementation completion starts at **0%**. Planning and migration documentation
 ## Existing planning commits
 - `c539cb0`: migration contract
 - `553f984`: eight-stage development flow
-- Planning complete; **implementation 0%**.
+- Stage 01 source inventory and automated preservation gate committed; **implementation 10%** (CI verification pending).
 
 ## Next work
-Stage 01: comprehensive source inventory and preservation safeguards. On user instruction, implement as one substantial work package, verify and update this chart.
+Stage 02: integrate a verified GStreamer Android SDK and JNI bridge. Do not remove MPV/Media3/VLC until equivalent native playback is compiled.
