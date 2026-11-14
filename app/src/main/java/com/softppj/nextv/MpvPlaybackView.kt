@@ -2,6 +2,7 @@ package com.softppj.nextv
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -261,7 +262,23 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         fun str(name:String)=runCatching { engine.getPropertyString(name) }.getOrNull().orEmpty().ifBlank { "unknown" }
         fun num(name:String)=runCatching { engine.getPropertyDouble(name) }.getOrNull()?.toString() ?: "unknown"
         fun count(name:String)=runCatching { engine.getPropertyInt(name) }.getOrNull()?.toString() ?: "unknown"
+        // Report display HDR support independently of stream metadata. A playlist
+        // name containing HDR10 does not establish the actual transfer function.
+        val displayHdr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            runCatching {
+                val types = display?.hdrCapabilities?.supportedHdrTypes.orEmpty()
+                if (types.isEmpty()) "none reported" else types.joinToString(",") { type ->
+                    when (type) {
+                        android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"
+                        android.view.Display.HdrCapabilities.HDR_TYPE_HLG -> "HLG"
+                        android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "Dolby Vision"
+                        else -> "type-$type"
+                    }
+                }
+            }.getOrDefault("unknown")
+        } else "unavailable"
         return listOf(
+            "Display HDR capabilities: "+displayHdr,
             "MPV version: "+str("mpv-version"),
             "FFmpeg version: "+str("ffmpeg-version"),
             "Selected mode: "+selectedDecoder,
@@ -272,6 +289,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Source levels: "+str("video-params/colorlevels"),
             "Source primaries: "+str("video-params/primaries"),
             "Source transfer: "+str("video-params/gamma"),
+            "Source signal peak: "+num("video-params/sig-peak"),
             "Output format: "+str("video-out-params/pixelformat"),
             "Output levels: "+str("video-out-params/colorlevels"),
             "Video size: "+count("video-params/w")+" x "+count("video-params/h"),
@@ -284,6 +302,11 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Output colour matrix: "+str("video-out-params/colormatrix"),
             "Output colour primaries: "+str("video-out-params/primaries"),
             "Output transfer: "+str("video-out-params/gamma"),
+            "Output signal peak: "+num("video-out-params/sig-peak"),
+            "Target transfer: "+str("target-trc"),
+            "Target primaries: "+str("target-prim"),
+            "Tone mapping: "+str("tone-mapping"),
+            "HDR compute peak: "+str("hdr-compute-peak"),
             "Active picture brightness: "+count("brightness"),
             "Active picture contrast: "+count("contrast"),
             "Active picture saturation: "+count("saturation"),
