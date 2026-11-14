@@ -1,6 +1,15 @@
 name: NexTV MPV - Integration Verification (No APK)
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/mpv-integration-check.yml'
 permissions:
   contents: read
 jobs:
@@ -31,3 +40,17 @@ jobs:
           gradle-version: '9.3.1'
       - name: Verify MPV integration
         run: gradle --no-daemon :app:verifyMpvRuntime :app:compileDebugKotlin :app:testDebugUnitTest :app:mergeDebugNativeLibs
+      - name: Inspect packaged MPV native binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          find app/build/intermediates -type f \( -name 'libmpv.so' -o -name 'libavcodec.so' -o -name 'libavformat.so' \) -print | sort | head -80
+          test -n "$(find app/build/intermediates -type f -name 'libmpv.so' -print -quit)"
+          echo "Native MPV library present. Codec support and video quality still require device verification."
+      - name: Ensure APK was not generated
+        shell: bash
+        run: |
+          if find app/build/outputs/apk -name '*.apk' -print -quit 2>/dev/null | grep -q .; then
+            echo "Unexpected APK in verification-only workflow" >&2
+            exit 1
+          fi
