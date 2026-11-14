@@ -19,6 +19,8 @@ struct Player {
     std::atomic<bool> firstBuffer{false};
     bool firstBufferDelivered = false;
     int bufferingPercent = 100;
+    double volume = 1.0;
+    bool paused = false;
 };
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
@@ -47,6 +49,7 @@ void stop(Player& p) {
     p.firstBuffer.store(false, std::memory_order_release);
     p.firstBufferDelivered = false;
     p.bufferingPercent = 100;
+    p.paused = false;
     p.error.clear();
 }
 }
@@ -100,6 +103,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         }
     }
     g_object_set(p->pipeline, "uri", url.c_str(), nullptr);
+    g_object_set(p->pipeline, "volume", p->volume, nullptr);
     if (gst_element_set_state(p->pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         p->status = 3;
         p->error = "GStreamer failed to start pipeline";
@@ -110,6 +114,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativePause(JNIEnv*, jobject, jlong h, jboolean paused) {
     auto* p = player(h); if (!p) return;
     std::lock_guard<std::mutex> guard(p->mutex);
+    p->paused = paused;
     if (p->pipeline) gst_element_set_state(p->pipeline, paused ? GST_STATE_PAUSED : GST_STATE_PLAYING);
 }
 extern "C" JNIEXPORT void JNICALL
@@ -129,7 +134,8 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativeVolume(JNIEnv*, jobject, jlong h, jint volume) {
     auto* p = player(h); if (!p) return;
     std::lock_guard<std::mutex> guard(p->mutex);
-    if (p->pipeline) g_object_set(p->pipeline, "volume", static_cast<gdouble>(volume) / 100.0, nullptr);
+    p->volume = static_cast<gdouble>(volume) / 100.0;
+    if (p->pipeline) g_object_set(p->pipeline, "volume", p->volume, nullptr);
 }
 extern "C" JNIEXPORT jint JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, jlong h) {
@@ -157,14 +163,17 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
                     gst_message_parse_buffering(msg, &percent);
                     p->bufferingPercent = percent;
                     if (p->status != 3 && p->status != 2)
-                        p->status = percent < 100 ? 1 : 4;
+                        p->status = percent < 100 ? 1 : (p->paused ? 0 : 4);
                     break;
                 }
                 case GST_MESSAGE_STATE_CHANGED:
                     if (GST_MESSAGE_SRC(msg) == GST_OBJECT(p->pipeline) && p->status != 3) {
                         GstState oldState, newState, pending;
                         gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
-                        if (newState == GST_STATE_PLAYING) p->status = 4;
+                        if (newState == GST_STATE_PLAYING && p->bufferingPercent == 100)
+                            p->status = 4;
+                        else if (newState == GST_STATE_PAUSED && p->paused)
+                            p->status = 0;
                     }
                     break;
                 default: break;
