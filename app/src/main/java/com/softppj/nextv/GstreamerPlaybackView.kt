@@ -16,8 +16,10 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private var closed = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var polling = false
+    private var playbackGeneration = 0L
     private var lastReportedStatus: Int? = null
     var listener: ((status: Int, error: String?) -> Unit)? = null
+    /** Callbacks run on the main thread and may synchronously switch channels or release. */
     /** Called once per stream when a video buffer first reaches the native sink. */
     var onFirstVideoBuffer: ((elapsedMs: Long) -> Unit)? = null
     private var startedAtMs = 0L
@@ -30,19 +32,23 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private val statusPoll = object : Runnable {
         override fun run() {
             if (!polling || closed || handle == 0L) return
+            val generationAtPoll = playbackGeneration
             val status = pollStatus()
             if (status == 5 && !firstBufferReported) {
                 firstBufferReported = true
                 onFirstVideoBuffer?.invoke((SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L))
+                if (generationAtPoll != playbackGeneration || closed) return
             }
             val elapsed = (SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L)
             if (!firstBufferReported && !slowStartupReported && elapsed >= slowStartupThresholdMs.coerceAtLeast(1L) && status != 2 && status != 3) {
                 slowStartupReported = true
                 onSlowStartup?.invoke(elapsed)
+                if (generationAtPoll != playbackGeneration || closed) return
             }
             if (status != lastReportedStatus) {
                 lastReportedStatus = status
                 listener?.invoke(status, if (status == 3) lastError() else null)
+                if (generationAtPoll != playbackGeneration || closed) return
             }
             if (status != 2 && status != 3 && polling) mainHandler.postDelayed(this, 250L)
             else polling = false
@@ -51,6 +57,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
 
     private fun startStatusPolling() {
         mainHandler.removeCallbacks(statusPoll)
+        playbackGeneration++
         lastReportedStatus = null
         firstBufferReported = false
         slowStartupReported = false
@@ -60,6 +67,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     }
 
     private fun stopStatusPolling() {
+        playbackGeneration++
         polling = false
         mainHandler.removeCallbacks(statusPoll)
     }
