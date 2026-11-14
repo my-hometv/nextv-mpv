@@ -46,6 +46,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     init { holder.addCallback(this) }
 
     fun initialize() {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "Initialize GStreamer on the main thread" }
         check(!closed && handle == 0L)
         System.loadLibrary("gstreamer_android")
         System.loadLibrary("nextv_gst_player")
@@ -55,6 +56,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     }
 
     fun play(url: String) {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "Start playback on the main thread" }
         check(!closed && handle != 0L)
         require(url.startsWith("http://") || url.startsWith("https://") ||
             url.startsWith("rtsp://") || url.startsWith("file://")) {
@@ -81,6 +83,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         if (handle != 0L && !closed) nativeSetSurface(handle, null)
     }
     fun release() {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "Release GStreamer on the main thread" }
         if (closed) return
         closed = true
         stopStatusPolling()

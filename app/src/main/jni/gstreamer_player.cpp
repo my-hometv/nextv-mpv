@@ -36,6 +36,12 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeCreate(JNIEnv*, jobject) {
     }
     g_object_set(p->pipeline, "video-sink", p->videoSink, nullptr);
     p->bus = gst_element_get_bus(p->pipeline);
+    if (!p->bus) {
+        gst_object_unref(p->pipeline);
+        gst_object_unref(p->videoSink);
+        delete p;
+        return 0;
+    }
     // playbin owns a reference; keep our own until teardown.
     return reinterpret_cast<jlong>(p);
 }
@@ -69,7 +75,9 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         p->lastError.clear();
         while (GstMessage *stale = gst_bus_pop(p->bus)) gst_message_unref(stale);
         g_object_set(p->pipeline, "uri", value, nullptr);
-        gst_element_set_state(p->pipeline, GST_STATE_PLAYING);
+        const GstStateChangeReturn result = gst_element_set_state(p->pipeline, GST_STATE_PLAYING);
+        if (result == GST_STATE_CHANGE_FAILURE)
+            p->lastError = "GStreamer rejected the playback pipeline";
     }
     env->ReleaseStringUTFChars(url, value);
 }
@@ -148,10 +156,15 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
                 if (p->lastError.empty() && !p->ended) status = p->buffering ? 1 : (p->playing ? 4 : 0);
                 break;
             }
+            case GST_MESSAGE_ASYNC_DONE:
+                // ASYNC_DONE alone is not proof of a decoded video frame.
+                break;
             case GST_MESSAGE_STATE_CHANGED: {
                 if (GST_MESSAGE_SRC(msg) == GST_OBJECT(p->pipeline)) {
                     GstState oldState, newState, pending;
                     gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
+                    (void)oldState;
+                    (void)pending;
                     p->playing = newState == GST_STATE_PLAYING;
                     if (p->lastError.empty() && !p->ended && !p->buffering)
                         status = p->playing ? 4 : 0;
