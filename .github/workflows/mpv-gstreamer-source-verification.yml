@@ -1,0 +1,32 @@
+name: MPV GStreamer source verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Kotlin, native source and regression checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+      - name: Verify Gradle wrapper
+        run: test -f gradlew && chmod +x gradlew
+      - name: Compile and run checks without creating an APK
+        run: ./gradlew --no-daemon :app:compileDebugKotlin :app:check
+      - name: Confirm no APK was generated
+        run: |
+          if find app/build/outputs/apk -type f -name '*.apk' 2>/dev/null | grep -q .; then
+            echo "APK generation is not allowed in this verification workflow"
+            exit 1
+          fi
