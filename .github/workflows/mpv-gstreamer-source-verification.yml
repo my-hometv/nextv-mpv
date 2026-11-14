@@ -41,13 +41,16 @@ jobs:
             ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
           fi
           test -f "$ANDROID_HOME/platforms/android-37/android.jar"
-      - name: Verify Gradle wrapper
-        run: test -f gradlew && chmod +x gradlew
+      # This repository intentionally has no Gradle wrapper. Use the same
+      # pinned Gradle version as the already successful MPV integration CI.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
       - name: Compile Kotlin, NDK probes and run regression checks without creating an APK
-        run: ./gradlew --no-daemon :app:compileDebugKotlin :app:externalNativeBuildDebug :app:check
+        run: gradle --no-daemon :app:compileDebugKotlin :app:externalNativeBuildDebug :app:check
       - name: Verify native GStreamer SDK integration when provisioned
         if: ${{ env.NEXTV_GSTREAMER_SDK != '' }}
-        run: ./gradlew --no-daemon :app:verifyGstreamerNativeBridge :app:externalNativeBuildDebug
+        run: gradle --no-daemon :app:verifyGstreamerNativeBridge :app:externalNativeBuildDebug
       - name: Confirm no APK was generated
         run: |
           if find app/build/outputs/apk -type f -name '*.apk' 2>/dev/null | grep -q .; then
