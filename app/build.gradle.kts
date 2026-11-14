@@ -300,8 +300,17 @@ val stageGstreamerRuntime by tasks.registering(Sync::class) {
     }
     into(layout.buildDirectory.dir("gstreamer-jniLibs"))
     doFirst {
-        check(source.get().listFiles()?.any { it.name == "libgstreamer-1.0.so" } == true) {
-            "Supplied GStreamer SDK does not contain arm64 libgstreamer-1.0.so"
+        val nativeDir = source.get()
+        val required = listOf(
+            "libgstreamer-1.0.so", "libgstvideo-1.0.so",
+            "libgobject-2.0.so", "libglib-2.0.so", "libgstreamer_android.so"
+        )
+        val missing = required.filterNot { nativeDir.resolve(it).isFile }
+        check(missing.isEmpty()) {
+            "GStreamer Android arm64 runtime is incomplete: ${missing.joinToString()}"
+        }
+        check(nativeDir.listFiles()?.any { it.name.startsWith("libgst") && it.extension == "so" } == true) {
+            "No GStreamer plugins or runtime libraries found in the SDK"
         }
     }
 }
