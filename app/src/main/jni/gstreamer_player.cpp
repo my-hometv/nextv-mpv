@@ -3,6 +3,7 @@
 #include <gst/video/videooverlay.h>
 #include <android/native_window_jni.h>
 #include <mutex>
+#include <atomic>
 #include <string>
 
 // Standalone GStreamer playbin adapter; enabled only when the official SDK is packaged.
@@ -16,9 +17,21 @@ struct Player {
     bool ended = false;
     bool buffering = false;
     bool playing = false;
+    std::atomic<bool> videoBufferSeen{false};
+    GstPad *videoSinkPad = nullptr;
+    gulong videoProbeId = 0;
     std::string lastError;
 };
 static Player* fromHandle(jlong value) { return reinterpret_cast<Player*>(value); }
+
+// A buffer reaching the video sink is a stronger signal than PLAYING, but
+// it is not proof that Android displayed the frame on screen.
+static GstPadProbeReturn onVideoBuffer(GstPad*, GstPadProbeInfo *info, gpointer userData) {
+    auto *p = static_cast<Player*>(userData);
+    if (info && (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER))
+        p->videoBufferSeen.store(true, std::memory_order_release);
+    return GST_PAD_PROBE_OK;
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativeCreate(JNIEnv*, jobject) {
@@ -35,8 +48,17 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeCreate(JNIEnv*, jobject) {
         return 0;
     }
     g_object_set(p->pipeline, "video-sink", p->videoSink, nullptr);
+    p->videoSinkPad = gst_element_get_static_pad(p->videoSink, "sink");
+    if (p->videoSinkPad) {
+        p->videoProbeId = gst_pad_add_probe(p->videoSinkPad,
+            GST_PAD_PROBE_TYPE_BUFFER, onVideoBuffer, p, nullptr);
+    }
     p->bus = gst_element_get_bus(p->pipeline);
     if (!p->bus) {
+        if (p->videoSinkPad) {
+            if (p->videoProbeId) gst_pad_remove_probe(p->videoSinkPad, p->videoProbeId);
+            gst_object_unref(p->videoSinkPad);
+        }
         gst_object_unref(p->pipeline);
         gst_object_unref(p->videoSink);
         delete p;
@@ -72,6 +94,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         p->ended = false;
         p->buffering = false;
         p->playing = false;
+        p->videoBufferSeen.store(false, std::memory_order_release);
         p->lastError.clear();
         while (GstMessage *stale = gst_bus_pop(p->bus)) gst_message_unref(stale);
         g_object_set(p->pipeline, "uri", value, nullptr);
@@ -114,6 +137,10 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeRelease(JNIEnv*, jobject, jlo
         gst_element_set_state(p->pipeline, GST_STATE_NULL);
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p->videoSink), 0);
         if (p->window) ANativeWindow_release(p->window);
+        if (p->videoSinkPad) {
+            if (p->videoProbeId) gst_pad_remove_probe(p->videoSinkPad, p->videoProbeId);
+            gst_object_unref(p->videoSinkPad);
+        }
         if (p->bus) gst_object_unref(p->bus);
         gst_object_unref(p->pipeline);
         gst_object_unref(p->videoSink);
@@ -121,7 +148,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativeRelease(JNIEnv*, jobject, jlo
     delete p;
 }
 
-// Non-blocking bus status: 0=waiting, 1=buffering, 2=EOS, 3=error, 4=playing.
+// Non-blocking bus status: 0=waiting, 1=buffering, 2=EOS, 3=error,
+// 4=pipeline PLAYING, 5=video buffer reached sink (not proof of display).
 // Caller polls from a worker or lifecycle-aware timer; never blocks the UI thread.
 extern "C" JNIEXPORT jint JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, jlong handle) {
@@ -175,6 +203,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
         }
         gst_message_unref(msg);
     }
+    if (status == 4 && p->videoBufferSeen.load(std::memory_order_acquire)) status = 5;
     return status;
 }
 

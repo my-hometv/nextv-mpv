@@ -66,7 +66,8 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         startStatusPolling()
     }
 
-    /** Non-blocking native bus snapshot; call from a lifecycle-aware polling loop. */
+    /** Native states: 0 waiting, 1 buffering, 2 EOS, 3 error, 4 PLAYING, 5 video buffer at sink. */
+    /** State 5 is not confirmation that the frame appeared on the display. */
     fun pollStatus(): Int = if (handle != 0L && !closed) nativePollStatus(handle) else 3
     fun lastError(): String = if (handle != 0L && !closed) nativeLastError(handle) else "GStreamer player released"
 
