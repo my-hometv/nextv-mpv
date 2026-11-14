@@ -250,6 +250,8 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         fun num(name:String)=runCatching { engine.getPropertyDouble(name) }.getOrNull()?.toString() ?: "unknown"
         fun count(name:String)=runCatching { engine.getPropertyInt(name) }.getOrNull()?.toString() ?: "unknown"
         return listOf(
+            "MPV version: "+str("mpv-version"),
+            "FFmpeg version: "+str("ffmpeg-version"),
             "Selected mode: "+selectedDecoder,
             "Decoder: "+str("hwdec-current"),
             "Video codec: "+str("video-codec"),

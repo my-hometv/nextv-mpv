@@ -46,7 +46,15 @@ jobs:
           set -euo pipefail
           find app/build/intermediates -type f \( -name 'libmpv.so' -o -name 'libavcodec.so' -o -name 'libavformat.so' \) -print | sort | head -80
           test -n "$(find app/build/intermediates -type f -name 'libmpv.so' -print -quit)"
-          echo "Native MPV library present. Codec support and video quality still require device verification."
+          echo "Native MPV library present. Inspecting architectures and binary identities."
+          find app/build/intermediates -type f -name 'libmpv.so' -print0 | while IFS= read -r -d '' binary; do
+            echo "MPV native binary: $binary"
+            file "$binary"
+            sha256sum "$binary"
+            readelf -h "$binary" | grep -E 'Class:|Machine:' || true
+          done
+          echo "MPV/FFmpeg runtime version is also exposed in TV diagnostics."
+          echo "Native library presence does not prove stream support or picture quality."
       - name: Ensure APK was not generated
         shell: bash
         run: |
