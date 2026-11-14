@@ -1,0 +1,254 @@
+package com.softppj.nextv
+
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.SurfaceHolder
+import android.view.SurfaceView
+import dev.jdtech.mpv.MPVLib
+
+/**
+ * Single-session libmpv Android surface. The native AAR owns codec selection,
+ * FFmpeg MPEG-TS demuxing, colorspace conversion and rendering.
+ * No Media3/LibVLC video player is used by this class.
+ */
+class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Callback,
+    MPVLib.EventObserver {
+    interface Listener {
+        fun onFirstPlayback()
+        fun onError(message: String)
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+    private var mpv: MPVLib? = null
+    private var pendingUrl: String? = null
+    private var started = false
+    private var liveStream = false
+    private var failureReported = false
+    @Volatile private var closed = false
+    private var attached = false
+    @Volatile private var generation = 0
+    var listener: Listener? = null
+
+    fun initialize(decoder: String = "Automatic") {
+        check(mpv == null && !closed)
+        val engine = MPVLib.create(context.applicationContext)
+            ?: throw IllegalStateException("Cannot initialize libmpv")
+        try {
+            engine.setOptionString("config", "no")
+            engine.setOptionString("vo", "gpu")
+            engine.setOptionString("gpu-context", "android")
+            engine.setOptionString("opengl-es", "yes")
+            engine.setOptionString("ao", "audiotrack,opensles")
+            engine.setOptionString("hwdec", when (decoder) {
+                "Software" -> "no"
+                "Hardware copy" -> "mediacodec-copy"
+                else -> "auto-safe"
+            })
+            engine.setOptionString("video-sync", "audio")
+            engine.setOptionString("interpolation", "no")
+            engine.setOptionString("keep-open", "no")
+            engine.setOptionString("force-window", "no")
+            engine.setOptionString("idle", "yes")
+            engine.setOptionString("cache", "yes")
+            engine.setOptionString("demuxer-max-bytes", "32MiB")
+            engine.setOptionString("cache-secs", "3")
+            engine.setOptionString("network-timeout", "8")
+            engine.init()
+            engine.addObserver(this)
+            engine.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
+            engine.observeProperty("video-params/w", MPVLib.MpvFormat.MPV_FORMAT_INT64)
+            mpv = engine
+            holder.addCallback(this)
+            if (holder.surface?.isValid == true) surfaceCreated(holder)
+        } catch (e: Exception) {
+            try { engine.destroy() } catch (_: Exception) {}
+            throw e
+        }
+    }
+
+    fun play(url: String, headers: Map<String, String> = emptyMap(), isLive: Boolean = false) {
+        if (closed) return
+        generation++
+        pendingUrl = url
+        liveStream = isLive
+        started = false
+        failureReported = false
+        pendingHeaders = headers
+        if (attached) launchPending()
+    }
+
+    private var pendingHeaders: Map<String, String> = emptyMap()
+    private fun launchPending() {
+        val url = pendingUrl ?: return
+        val engine = mpv ?: return
+        if (!attached) return
+        pendingUrl = null
+        val headers = pendingHeaders
+        // Do not include URLs or headers in logs: IPTV links may contain credentials.
+        val httpHeaders = headers.entries
+            .filter { (k, v) -> k.matches(Regex("[A-Za-z0-9-]+")) &&
+                !v.contains("\r") && !v.contains("\n") }
+            .joinToString(",") { "${it.key}: ${it.value}" }
+        if (httpHeaders.isNotBlank()) engine.setPropertyString("http-header-fields", httpHeaders)
+        else engine.setPropertyString("http-header-fields", "")
+        engine.command(arrayOf("loadfile", url, "replace"))
+    }
+
+    val hasStarted: Boolean
+        get() = started && !closed
+
+    val isPlaying: Boolean
+        get() = if (closed) false else mpv?.getPropertyBoolean("pause") == false
+
+    val durationMs: Long
+        get() = if (closed) 0L else ((mpv?.getPropertyDouble("duration") ?: 0.0) * 1000).toLong()
+
+    val positionMs: Long
+        get() = if (closed) 0L else ((mpv?.getPropertyDouble("time-pos") ?: 0.0) * 1000).toLong()
+
+    fun pause() { if (!closed) mpv?.setPropertyBoolean("pause", true) }
+    fun resume() { if (!closed) mpv?.setPropertyBoolean("pause", false) }
+    fun togglePause() { if (isPlaying) pause() else resume() }
+    fun seekTo(ms: Long) {
+        if (!closed) mpv?.command(arrayOf("seek", (ms / 1000.0).toString(), "absolute"))
+    }
+
+    data class StreamTrack(val id: Int, val label: String, val selected: Boolean)
+
+    fun tracks(type: String): List<StreamTrack> {
+        val engine = mpv ?: return emptyList()
+        if (closed) return emptyList()
+        val count = (engine.getPropertyInt("track-list/count") ?: 0).coerceIn(0, 100)
+        return buildList {
+            for (i in 0 until count) {
+                if (engine.getPropertyString("track-list/$i/type") != type) continue
+                val id = engine.getPropertyInt("track-list/$i/id") ?: continue
+                val title = engine.getPropertyString("track-list/$i/title").orEmpty()
+                val lang = engine.getPropertyString("track-list/$i/lang").orEmpty()
+                val selected = engine.getPropertyBoolean("track-list/$i/selected") == true
+                add(StreamTrack(id, listOf(lang, title).filter { it.isNotBlank() }
+                    .joinToString(" · ").ifBlank { "$type #$id" }, selected))
+            }
+        }
+    }
+
+    fun chooseAudioTrack(id: Int) {
+        if (!closed) mpv?.setPropertyInt("aid", id)
+    }
+
+    fun chooseSubtitleTrack(id: Int?) {
+        if (closed) return
+        if (id == null) mpv?.setPropertyString("sid", "no")
+        else mpv?.setPropertyInt("sid", id)
+    }
+
+    fun setVolume(level: Int) {
+        if (!closed) mpv?.setPropertyDouble("volume", level.coerceIn(0, 200).toDouble())
+    }
+
+    fun setPictureScale(mode: String) {
+        val engine = mpv ?: return
+        if (closed) return
+        val zoom = when (mode) {
+            "Zoom 110%" -> 1.10
+            "Zoom 125%" -> 1.25
+            "Zoom 150%" -> 1.50
+            else -> 1.0
+        }
+        engine.setPropertyDouble("video-zoom", kotlin.math.ln(zoom) / kotlin.math.ln(2.0))
+        engine.setPropertyString("video-aspect-override", when (mode) {
+            "16:9" -> "16:9"
+            "4:3" -> "4:3"
+            "21:9" -> "21:9"
+            "1:1" -> "1:1"
+            else -> "no"
+        })
+        engine.setPropertyBoolean("video-unscaled", mode == "Original")
+    }
+
+    fun setPicture(brightness: Float, contrast: Float, saturation: Float) {
+        val engine = mpv ?: return
+        if (closed) return
+        // mpv video equalizer values are -100..100; zero is unmodified source.
+        engine.setPropertyInt("brightness", ((brightness - 1f) * 100f).toInt().coerceIn(-50, 50))
+        engine.setPropertyInt("contrast", ((contrast - 1f) * 100f).toInt().coerceIn(-50, 50))
+        engine.setPropertyInt("saturation", ((saturation - 1f) * 100f).toInt().coerceIn(-50, 50))
+    }
+
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        if (closed || attached || !holder.surface.isValid) return
+        val engine = mpv ?: return
+        engine.attachSurface(holder.surface)
+        attached = true
+        engine.setPropertyString("vo", "gpu")
+        engine.setPropertyString("force-window", "yes")
+        if (pendingUrl != null) launchPending()
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        if (!closed) mpv?.setPropertyString("android-surface-size", "${width}x${height}")
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        if (!attached) return
+        attached = false
+        val engine = mpv ?: return
+        try {
+            engine.setPropertyString("vo", "null")
+            engine.setPropertyString("force-window", "no")
+            engine.detachSurface()
+        } catch (e: Exception) {
+            Log.w("NexTV-mpv", "Surface detach failed", e)
+        }
+    }
+
+    override fun event(eventId: Int) {
+        val request = generation
+        when (eventId) {
+            MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> main.post {
+                if (!closed && request == generation && !started) {
+                    started = true
+                    listener?.onFirstPlayback()
+                }
+            }
+            MPVLib.MpvEvent.MPV_EVENT_END_FILE -> main.post {
+                if (!closed && request == generation && !failureReported && (!started || liveStream)) {
+                    failureReported = true
+                    listener?.onError(if (started) "MPV live stream ended" else "MPV stream ended before playing")
+                }
+            }
+        }
+    }
+
+    override fun eventProperty(property: String) {}
+    override fun eventProperty(property: String, value: Long) {}
+    override fun eventProperty(property: String, value: Double) {}
+    override fun eventProperty(property: String, value: Boolean) {}
+    override fun eventProperty(property: String, value: String) {}
+
+    fun release() {
+        if (closed) return
+        closed = true
+        generation++
+        pendingUrl = null
+        pendingHeaders = emptyMap()
+        listener = null
+        val engine = mpv
+        mpv = null
+        try { holder.removeCallback(this) } catch (_: Exception) {}
+        if (engine != null) {
+            try { engine.command(arrayOf("stop")) } catch (_: Exception) {}
+            try {
+                if (attached) {
+                    engine.setPropertyString("vo", "null")
+                    engine.detachSurface()
+                }
+            } catch (_: Exception) {}
+            attached = false
+            try { engine.removeObserver(this) } catch (_: Exception) {}
+            try { engine.destroy() } catch (_: Exception) {}
+        }
+    }
+}
