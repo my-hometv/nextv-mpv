@@ -105,8 +105,15 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
             url.startsWith("rtsp://") || url.startsWith("file://")) {
             "Unsupported stream scheme"
         }
-        nativePlay(handle, url)
+        // Schedule polling before nativePlay: even a synchronous startup failure
+        // must be observed and delivered to MainActivity's MPV fallback.
         startStatusPolling()
+        try {
+            nativePlay(handle, url)
+        } catch (failure: Throwable) {
+            stopStatusPolling()
+            throw failure
+        }
     }
 
     /** Stop playback without releasing the Surface or native player. */
