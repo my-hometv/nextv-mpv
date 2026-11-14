@@ -23,6 +23,7 @@ struct Player {
     bool paused = false;
     gulong videoProbeId = 0;
     GstPad* videoProbePad = nullptr;
+    bool waitingForSurface = false;
 };
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
@@ -32,7 +33,14 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
     if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink)) {
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p.sink),
                                              reinterpret_cast<guintptr>(p.window));
-        gst_video_overlay_expose(GST_VIDEO_OVERLAY(p.sink));
+        if (p.window) gst_video_overlay_expose(GST_VIDEO_OVERLAY(p.sink));
+    }
+    if (p.window && p.waitingForSurface && p.pipeline) {
+        p.waitingForSurface = false;
+        if (gst_element_set_state(p.pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+            p.status = 3;
+            p.error = "GStreamer failed to start after surface creation";
+        } else p.status = 1;
     }
 }
 GstPadProbeReturn onBuffer(GstPad*, GstPadProbeInfo* info, gpointer data) {
@@ -61,6 +69,7 @@ void stop(Player& p) {
     p.firstBufferDelivered = false;
     p.bufferingPercent = 100;
     p.paused = false;
+    p.waitingForSurface = false;
     p.error.clear();
 }
 }
@@ -108,12 +117,8 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         return;
     }
     if (p->sink) {
-        // Do not claim a successful first frame until the Android surface exists.
-        if (!p->window) {
-            p->status = 3;
-            p->error = "Android video surface is not ready";
-            return;
-        }
+        // A SurfaceView may create its native surface asynchronously.
+        // Configure the pipeline now and begin playback when it arrives.
         g_object_set(p->pipeline, "video-sink", p->sink, nullptr);
         if (p->window && GST_IS_VIDEO_OVERLAY(p->sink))
             gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p->sink),
@@ -126,7 +131,10 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
     }
     g_object_set(p->pipeline, "uri", url.c_str(), nullptr);
     g_object_set(p->pipeline, "volume", p->volume, nullptr);
-    if (gst_element_set_state(p->pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+    if (!p->window) {
+        p->waitingForSurface = true;
+        p->status = 0;
+    } else if (gst_element_set_state(p->pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         p->status = 3;
         p->error = "GStreamer failed to start pipeline";
     } else p->status = 1;
