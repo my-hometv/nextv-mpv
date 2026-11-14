@@ -141,6 +141,9 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
         // A SurfaceView may create its native surface asynchronously.
         // Configure the pipeline now and begin playback when it arrives.
         g_object_set(p->pipeline, "video-sink", p->sink, nullptr);
+        // playbin now holds its own reference; keep a borrowed pointer for
+        // overlay operations and release the factory-created reference.
+        gst_object_unref(p->sink);
         if (p->window && GST_IS_VIDEO_OVERLAY(p->sink))
             gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p->sink),
                                                  reinterpret_cast<guintptr>(p->window));
