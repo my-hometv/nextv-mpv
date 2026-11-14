@@ -7,6 +7,8 @@ android {
     namespace = "com.softppj.nextv"
     compileSdk = 37
     buildFeatures { buildConfig = true; aidl = true }
+    // Native SDK verification builds deposit GStreamer libraries here before Gradle merge.
+    sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("gstreamer-jniLibs"))
     // Small real NDK/JNI runtime probe. It is not a relocated LibVLC.
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt") }
