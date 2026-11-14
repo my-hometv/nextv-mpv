@@ -8732,11 +8732,22 @@ class MainActivity: Activity() {
         val generation=playbackGeneration
         val view=GstreamerPlaybackView(this)
         gstreamerPlayer=view
+        val startupTimeout=Runnable{
+            if(gstreamerPlayer===view && active==index && videoScreen===screen &&
+                generation==playbackGeneration){
+                HomeTvDiagnostics.w("GStreamer","No first video buffer within 15 seconds; falling back to MPV")
+                gstreamerPlayer=null
+                try{view.release()}catch(_:Throwable){}
+                screen.removeView(view)
+                startMpv(c,index,screen)
+            }
+        }
         try{
             screen.addView(view,0,FrameLayout.LayoutParams(-1,-1))
             view.listener={status,error->
                 if(gstreamerPlayer===view && active==index && videoScreen===screen &&
                     generation==playbackGeneration && status==3){
+                    handler.removeCallbacks(startupTimeout)
                     HomeTvDiagnostics.w("GStreamer",error ?: "Native playback failed")
                     gstreamerPlayer=null
                     try{view.release()}catch(_:Throwable){}
@@ -8746,6 +8757,7 @@ class MainActivity: Activity() {
             }
             view.onFirstVideoBuffer={elapsed->
                 if(gstreamerPlayer===view && generation==playbackGeneration && active==index){
+                    handler.removeCallbacks(startupTimeout)
                     HomeTvDiagnostics.i("Startup","GStreamer first buffer in "+elapsed+" ms")
                     rememberWorking(c,generation)
                     autoBufferHealthy()
@@ -8759,7 +8771,9 @@ class MainActivity: Activity() {
             view.initialize()
             view.setVolume(prefs.getInt(channelVolumeKey(c),100))
             view.play(c.url)
+            handler.postDelayed(startupTimeout,15000L)
         }catch(e:Throwable){
+            handler.removeCallbacks(startupTimeout)
             if(e is LinkageError) gstreamerNativeUnavailable=true
             HomeTvDiagnostics.w("GStreamer","Native startup unavailable; using MPV",e)
             if(gstreamerPlayer===view){
