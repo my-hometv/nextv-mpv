@@ -35,6 +35,13 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
                                              reinterpret_cast<guintptr>(p.window));
         if (p.window) gst_video_overlay_expose(GST_VIDEO_OVERLAY(p.sink));
     }
+    if (!p.window && p.pipeline && !p.waitingForSurface) {
+        // Surface destruction must not leave video decoding running into a
+        // detached native window. A later surfaceCreated resumes playback.
+        gst_element_set_state(p.pipeline, GST_STATE_PAUSED);
+        p.waitingForSurface = true;
+        p.status = 0;
+    }
     if (p.window && p.waitingForSurface && p.pipeline) {
         p.waitingForSurface = false;
         if (gst_element_set_state(p.pipeline, p.paused ? GST_STATE_PAUSED : GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
