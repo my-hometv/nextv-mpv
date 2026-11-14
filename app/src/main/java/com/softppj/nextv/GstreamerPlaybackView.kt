@@ -8,8 +8,8 @@ import android.os.Looper
 import android.os.SystemClock
 
 /**
- * Standalone GStreamer playbin adapter. This class is deliberately not routed
- * from MainActivity until official SDK packaging, bus events and device tests pass.
+ * Experimental GStreamer playbin adapter. MainActivity can opt into this route,
+ * but native SDK packaging and device playback have not yet been verified.
  */
 internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
     private var handle: Long = 0
@@ -25,6 +25,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private var startedAtMs = 0L
     private var firstBufferReported = false
     private var slowStartupReported = false
+    private var volumePercent = 100
     /** Diagnostic threshold only; does not stop or restart the stream. */
     var slowStartupThresholdMs: Long = 10_000L
     var onSlowStartup: ((elapsedMs: Long) -> Unit)? = null
@@ -84,6 +85,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         System.loadLibrary("nextv_gst_player")
         handle = nativeCreate()
         check(handle != 0L) { "GStreamer playbin unavailable" }
+        nativeVolume(handle, volumePercent)
         if (holder.surface.isValid) nativeSetSurface(handle, holder.surface)
     }
 
@@ -116,7 +118,10 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     fun pause() { if (handle != 0L && !closed) nativePause(handle, true) }
     fun resume() { if (handle != 0L && !closed) nativePause(handle, false) }
     fun seekTo(ms: Long) { if (handle != 0L && !closed) nativeSeek(handle, ms.coerceAtLeast(0)) }
-    fun setVolume(volume: Int) { if (handle != 0L && !closed) nativeVolume(handle, volume.coerceIn(0, 200)) }
+    fun setVolume(volume: Int) {
+        volumePercent = volume.coerceIn(0, 200)
+        if (handle != 0L && !closed) nativeVolume(handle, volumePercent)
+    }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
         if (handle != 0L && !closed) nativeSetSurface(handle, holder.surface)
