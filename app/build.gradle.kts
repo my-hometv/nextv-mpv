@@ -227,16 +227,13 @@ val verifyGstreamerNativeBridge by tasks.registering {
             "Missing GStreamer SDK headers"
         }
         val abi = "arm64-v8a"
-        check(file("$sdk/include/gst/video/videooverlay.h").isFile ||
-            file("$sdk/include/gstreamer-1.0/gst/video/videooverlay.h").isFile) {
+        check(file("$sdk/include/gstreamer-1.0/gst/video/videooverlay.h").isFile) {
             "Missing GStreamer video overlay headers"
         }
-        check(file("$sdk/lib/$abi/glib-2.0/include/glibconfig.h").isFile ||
-            file("$sdk/lib/glib-2.0/include/glibconfig.h").isFile) {
+        check(file("$sdk/lib/$abi/glib-2.0/include/glibconfig.h").isFile) {
             "Missing ABI-specific GLib configuration headers"
         }
-        check(file("$sdk/lib/$abi/libgstreamer_android.so").isFile ||
-            file("$sdk/lib/$abi/libgstreamer_android.so").isFile) {
+        check(file("$sdk/lib/$abi/libgstreamer_android.so").isFile) {
             "Missing libgstreamer_android.so required by the Kotlin loader"
         }
         listOf("gstreamer-1.0", "gstvideo-1.0", "gobject-2.0", "glib-2.0").forEach { lib ->
