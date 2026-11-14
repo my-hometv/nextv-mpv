@@ -3223,6 +3223,7 @@ class MainActivity: Activity() {
                     13->liveSettings()
                     14->confirmExit()
                     15->addChannelToFavoriteGroups(c)
+                    16->chooseMpvOutputForCurrentChannel()
                     16->showMpvPlaybackDiagnostics()
                 }
             }
@@ -5993,13 +5994,14 @@ class MainActivity: Activity() {
             "Audio tracks",
             "Subtitles",
             "Sleep timer",
-            "Playback Engine ("+(prefs.getString("manual_engine_"+channelKey(c),null) ?: prefs.getString("engine","Media3"))+")",
+            "MPV decoder ("+selectedMpvDecoder(c)+")",
             "Channel list",
             "Channel volume ("+prefs.getInt("channel_volume_"+hash(c.url),100)+"%)",
             "Buffering ("+(prefs.getString("buffer_channel_"+channelKey(c),null) ?: "Universal")+")",
             "Color Presets ("+selectedPicturePreset(c)+")",
             "Audio Presets ("+selectedAudioPreset(c)+")",
-            "Manage Favorites Groups"
+            "Manage Favorites Groups",
+            "MPV HDR/SDR output ("+selectedMpvOutput(c)+")"
         )
         val dialog=AlertDialog.Builder(this).setTitle(numberFor(active).toString()+". "+c.name+" Settings")
             .setItems(opts){_,choice->
@@ -7165,12 +7167,13 @@ class MainActivity: Activity() {
         val options=arrayOf(
             "Default screen fit: "+(prefs.getString("screen_mode","Fit") ?: "Fit"),
             "Channel screen fit: "+screenMode(),
-            "Stream quality","Buffering profile","Audio track","Preferred audio language","Subtitle settings","Sleep timer","Playback engine",
+            "Stream quality","Buffering profile","Audio track","Preferred audio language","Subtitle settings","Sleep timer","MPV decoder",
             "Clock display","Select stream source","Home","Live TV settings","Channel volume",
             "Color Presets ("+(channels.getOrNull(active)?.let{selectedPicturePreset(it)} ?: "Standard")+")",
             "Audio Presets ("+(channels.getOrNull(active)?.let{selectedAudioPreset(it)} ?: "Standard")+")",
             "View diagnostic logs",
-            "Save diagnostic report"
+            "Save diagnostic report",
+            "MPV HDR/SDR output ("+(channels.getOrNull(active)?.let{selectedMpvOutput(it)} ?: "Auto")+")"
         )
         val drawer=LinearLayout(this).apply{
             tag="settings_drawer"
@@ -7216,6 +7219,7 @@ class MainActivity: Activity() {
                 15->if(active>=0)configureChannelAudioPreset(active)
                 16->showDiagnosticLogs()
                 17->exportDiagnosticReport()
+                18->chooseMpvOutputForCurrentChannel()
             }
         }
         list.setOnKeyListener{_,code,event->
@@ -8685,6 +8689,8 @@ class MainActivity: Activity() {
     private val mpvDecoderOptions=arrayOf("Automatic","Hardware copy","Software")
     private val mpvOutputOptions=arrayOf("Auto","Force HDR10","Force SDR")
     private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(c.url)
+    // Auto is the first-run default for every URL. MPV uses the actual video
+    // colour metadata; only explicit user overrides force an HDR/SDR target.
     private fun selectedMpvOutput(c:Channel)=prefs.getString(mpvOutputKey(c),"Auto")
         ?.takeIf{it in mpvOutputOptions} ?: "Auto"
     private fun chooseMpvOutputForCurrentChannel(){
