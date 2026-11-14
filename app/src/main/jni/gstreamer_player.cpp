@@ -105,6 +105,21 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
     env->ReleaseStringUTFChars(url, value);
 }
 
+// Stop the current channel without destroying the Surface or player instance.
+extern "C" JNIEXPORT void JNICALL
+Java_com_softppj_nextv_GstreamerPlaybackView_nativeStop(JNIEnv*, jobject, jlong handle) {
+    auto *p = fromHandle(handle);
+    if (!p) return;
+    std::lock_guard<std::mutex> guard(p->lock);
+    gst_element_set_state(p->pipeline, GST_STATE_NULL);
+    p->ended = false;
+    p->buffering = false;
+    p->playing = false;
+    p->videoBufferSeen.store(false, std::memory_order_release);
+    p->lastError.clear();
+    while (GstMessage *stale = gst_bus_pop(p->bus)) gst_message_unref(stale);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_softppj_nextv_GstreamerPlaybackView_nativePause(JNIEnv*, jobject, jlong handle, jboolean paused) {
     auto *p = fromHandle(handle);

@@ -95,6 +95,16 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         startStatusPolling()
     }
 
+    /** Stop playback without releasing the Surface or native player. */
+    fun stop() {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "Stop GStreamer on the main thread" }
+        stopStatusPolling()
+        if (!closed && handle != 0L) nativeStop(handle)
+        lastReportedStatus = null
+        firstBufferReported = false
+        slowStartupReported = false
+    }
+
     /** Native states: 0 waiting, 1 buffering, 2 EOS, 3 error, 4 PLAYING, 5 video buffer at sink. */
     /** State 5 is not confirmation that the frame appeared on the display. */
     fun pollStatus(): Int = if (handle != 0L && !closed) nativePollStatus(handle) else 3
@@ -131,6 +141,7 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private external fun nativeSetSurface(handle: Long, surface: android.view.Surface?)
     private external fun nativePlay(handle: Long, url: String)
     private external fun nativePause(handle: Long, paused: Boolean)
+    private external fun nativeStop(handle: Long)
     private external fun nativeSeek(handle: Long, ms: Long)
     private external fun nativeVolume(handle: Long, volume: Int)
     private external fun nativeRelease(handle: Long)
