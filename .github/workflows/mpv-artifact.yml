@@ -19,7 +19,13 @@ jobs:
           set -euo pipefail
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" --install "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+          "$SDKMANAGER" --install "platforms;android-37.0" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+          # AGP 9.1.1 requests API 37 via the android-37 SDK directory.
+          # The Android SDK package is distributed as android-37.0.
+          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          fi
+          test -f "$ANDROID_HOME/platforms/android-37/android.jar"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
