@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'app/src/main/jni/**'
+      - 'app/src/main/java/com/softppj/nextv/GstreamerPlaybackView.kt'
       - 'app/build.gradle.kts'
       - '.github/workflows/gstreamer-native-compile.yml'
 permissions:
@@ -85,6 +86,9 @@ jobs:
             V=1
           test -s app/build/gstreamer-jniLibs/arm64-v8a/libnextv_gst_player.so
           test -s app/build/gstreamer-jniLibs/arm64-v8a/libgstreamer_android.so
+          # Catch missing exported JNI methods and unresolved native symbols early.
+          readelf -Ws app/build/gstreamer-jniLibs/arm64-v8a/libnextv_gst_player.so | grep -q Java_com_softppj_nextv_GstreamerPlaybackView_nativeCreate
+          readelf -Ws app/build/gstreamer-jniLibs/arm64-v8a/libnextv_gst_player.so | grep -q Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus
           file app/build/gstreamer-jniLibs/arm64-v8a/*.so
       - uses: gradle/actions/setup-gradle@v4
         with:
