@@ -281,7 +281,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         // name containing HDR10 does not establish the actual transfer function.
         val displayHdr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             runCatching {
-                val types = display?.hdrCapabilities?.supportedHdrTypes.orEmpty()
+                val types = (display?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf())
                 if (types.isEmpty()) "none reported" else types.joinToString(",") { type ->
                     when (type) {
                         android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"
