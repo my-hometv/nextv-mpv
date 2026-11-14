@@ -191,6 +191,25 @@ val verifyGstreamerNativeBridge by tasks.registering {
     doLast {
         val cmake = file("src/main/cpp/CMakeLists.txt").readText()
         val adapter = file("src/main/java/com/softppj/nextv/GstreamerPlaybackView.kt").readText()
+        val bridge = file("src/main/cpp/gstreamer_player_jni.cpp")
+        check(bridge.isFile && bridge.readText().contains("nativeCreate")) {
+            "GStreamer JNI player source is missing"
+        }
+        val sdk = providers.gradleProperty("nextvGstreamerSdk")
+            .orElse(providers.environmentVariable("NEXTV_GSTREAMER_SDK"))
+            .orNull
+        check(!sdk.isNullOrBlank() && file(sdk).isDirectory) {
+            "GStreamer Android SDK sysroot is not configured; native player cannot be verified"
+        }
+        check(file("$sdk/include/gstreamer-1.0/gst/gst.h").isFile) {
+            "GStreamer Android SDK headers are missing"
+        }
+        val abi = "arm64-v8a"
+        listOf("gstreamer-1.0", "gstvideo-1.0", "gobject-2.0", "glib-2.0").forEach { library ->
+            check(file("$sdk/lib/$abi/lib$library.so").isFile) {
+                "GStreamer SDK missing $library for $abi"
+            }
+        }
         check(adapter.contains("System.loadLibrary(\"nextv_gst_player\")")) {
             "GStreamer adapter no longer loads the required JNI player"
         }
