@@ -1,6 +1,7 @@
 package com.softppj.nextv
 
 import android.content.Context
+import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -32,6 +33,12 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
     @Volatile private var generation = 0
     var listener: Listener? = null
 
+    init {
+        // Request a defined 8-bit RGBA Android surface instead of relying on
+        // vendor-specific default pixel formats for the GPU compositor.
+        holder.setFormat(PixelFormat.RGBA_8888)
+    }
+
     fun initialize(decoder: String = "Automatic") {
         check(mpv == null && !closed)
         selectedDecoder = decoder
@@ -51,6 +58,11 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             // Avoid changing video output backends during Android surface transitions.
             engine.setOptionString("vd-lavc-dr", "no")
             engine.setOptionString("interpolation", "no")
+            // Preserve source colour metadata and avoid forced RGB levels or
+            // BT.709 conversion. Apply GPU debanding only to reduce visible
+            // 8-bit colour banding; do not alter brightness or saturation.
+            engine.setOptionString("deband", "yes")
+            engine.setOptionString("dither-depth", "auto")
             engine.setOptionString("keep-open", "no")
             engine.setOptionString("force-window", "no")
             engine.setOptionString("idle", "yes")
@@ -281,6 +293,9 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Dropped frames: "+count("frame-drop-count"),
             "Decoder dropped frames: "+count("decoder-frame-drop-count"),
             "Video output: "+str("current-vo"),
+            "GPU debanding: "+str("deband"),
+            "Dither depth: "+str("dither-depth"),
+            "Android surface pixel format: RGBA_8888",
             "Playback started: "+started,
             "Surface attached: "+attached
         ).joinToString("\n")
