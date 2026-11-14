@@ -28,28 +28,31 @@ struct Player {
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
     ANativeWindow* next = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
-    if (p.window) ANativeWindow_release(p.window);
+    ANativeWindow* previous = p.window;
     p.window = next;
+    // A NULL handle must be delivered before the old window is released.
+    // Otherwise an asynchronous sink may keep referencing freed native memory.
+    if (p.pipeline && !p.window && !p.waitingForSurface) {
+        gst_element_set_state(p.pipeline, GST_STATE_PAUSED);
+        p.waitingForSurface = true;
+        p.status = 0;
+    }
     if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink)) {
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p.sink),
                                              reinterpret_cast<guintptr>(p.window));
         if (p.window) gst_video_overlay_expose(GST_VIDEO_OVERLAY(p.sink));
     }
-    if (!p.window && p.pipeline && !p.waitingForSurface) {
-        // Surface destruction must not leave video decoding running into a
-        // detached native window. A later surfaceCreated resumes playback.
-        gst_element_set_state(p.pipeline, GST_STATE_PAUSED);
-        p.waitingForSurface = true;
-        p.status = 0;
-    }
+    if (previous) ANativeWindow_release(previous);
     if (p.window && p.waitingForSurface && p.pipeline) {
         p.waitingForSurface = false;
-        if (gst_element_set_state(p.pipeline, p.paused ? GST_STATE_PAUSED : GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+        if (gst_element_set_state(p.pipeline,
+                p.paused ? GST_STATE_PAUSED : GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
             p.status = 3;
-            p.error = "GStreamer failed to start after surface creation";
-        } else p.status = 1;
+            p.error = "GStreamer failed to resume after surface creation";
+        } else p.status = p.paused ? 0 : 1;
     }
 }
+
 GstPadProbeReturn onBuffer(GstPad*, GstPadProbeInfo* info, gpointer data) {
     auto* p = static_cast<Player*>(data);
     if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER) {
