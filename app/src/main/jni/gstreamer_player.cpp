@@ -203,7 +203,7 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
         }
         gst_message_unref(msg);
     }
-    if (status == 4 && p->videoBufferSeen.load(std::memory_order_acquire)) status = 5;
+    if ((status == 4 || status == 0) && p->videoBufferSeen.load(std::memory_order_acquire)) status = 5;
     return status;
 }
 

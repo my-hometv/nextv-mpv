@@ -5,6 +5,7 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 
 /**
  * Standalone GStreamer playbin adapter. This class is deliberately not routed
@@ -17,11 +18,19 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private var polling = false
     private var lastReportedStatus: Int? = null
     var listener: ((status: Int, error: String?) -> Unit)? = null
+    /** Called once per stream when a video buffer first reaches the native sink. */
+    var onFirstVideoBuffer: ((elapsedMs: Long) -> Unit)? = null
+    private var startedAtMs = 0L
+    private var firstBufferReported = false
 
     private val statusPoll = object : Runnable {
         override fun run() {
             if (!polling || closed || handle == 0L) return
             val status = pollStatus()
+            if (status == 5 && !firstBufferReported) {
+                firstBufferReported = true
+                onFirstVideoBuffer?.invoke((SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L))
+            }
             if (status != lastReportedStatus) {
                 lastReportedStatus = status
                 listener?.invoke(status, if (status == 3) lastError() else null)
@@ -34,6 +43,8 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
     private fun startStatusPolling() {
         mainHandler.removeCallbacks(statusPoll)
         lastReportedStatus = null
+        firstBufferReported = false
+        startedAtMs = SystemClock.elapsedRealtime()
         polling = true
         mainHandler.post(statusPoll)
     }
@@ -89,6 +100,8 @@ internal class GstreamerPlaybackView(context: Context) : SurfaceView(context), S
         closed = true
         stopStatusPolling()
         listener = null
+        onFirstVideoBuffer = null
+        generation++
         if (handle != 0L) {
             nativeRelease(handle)
             handle = 0
