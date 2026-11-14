@@ -26,6 +26,7 @@ struct Player {
     bool waitingForSurface = false;
 };
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
+void stop(Player& p);  // Used by the surface-resume error path.
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
     ANativeWindow* next = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
     ANativeWindow* previous = p.window;
