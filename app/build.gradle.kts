@@ -256,7 +256,18 @@ val stageGstreamerRuntime by tasks.registering(Sync::class) {
     val sdk = providers.gradleProperty("nextvGstreamerSdk")
         .orElse(providers.environmentVariable("NEXTV_GSTREAMER_SDK"))
     val source = sdk.map { file("$it/lib/arm64-v8a") }
-    onlyIf { sdk.isPresent && source.get().isDirectory }
+    onlyIf {
+        if (!sdk.isPresent) {
+            // Never silently package native libraries left by a previous SDK build.
+            delete(layout.buildDirectory.dir("gstreamer-jniLibs"))
+            false
+        } else {
+            check(source.get().isDirectory) {
+                "NEXTV_GSTREAMER_SDK is set but its arm64-v8a library directory is missing"
+            }
+            true
+        }
+    }
     from(source) {
         include("*.so")
         into("arm64-v8a")
