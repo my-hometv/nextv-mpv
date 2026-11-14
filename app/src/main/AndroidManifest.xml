@@ -1,0 +1,38 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:icon="@drawable/nextv_launcher"
+        android:roundIcon="@drawable/nextv_launcher"
+        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:usesCleartextTraffic="true"
+        android:banner="@drawable/tv_banner">
+        <activity
+            android:name=".MainActivity"
+            android:banner="@drawable/tv_banner"
+            android:icon="@drawable/nextv_launcher"
+            android:exported="true"
+            android:configChanges="orientation|screenSize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- IPC boundary only; native adapters must be verified before playback is enabled. -->
+        <service
+            android:name=".IsolatedVlcPlaybackService"
+            android:exported="false"
+            android:process=":isolated_vlc" />
+        <receiver android:name=".BootReceiver" android:enabled="true" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+        </receiver>
+    </application>
+</manifest>
