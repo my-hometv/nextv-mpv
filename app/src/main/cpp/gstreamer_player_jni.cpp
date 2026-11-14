@@ -35,6 +35,8 @@ void setWindow(Player& p, JNIEnv* env, jobject surface) {
     if (p.pipeline && !p.window && !p.waitingForSurface) {
         gst_element_set_state(p.pipeline, GST_STATE_PAUSED);
         p.waitingForSurface = true;
+        p.firstBuffer.store(false, std::memory_order_release);
+        p.firstBufferDelivered = false;
         p.status = 0;
     }
     if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink)) {
