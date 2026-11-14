@@ -44,9 +44,17 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             engine.setOptionString("hwdec", when (decoder) {
                 "Software" -> "no"
                 "Hardware copy" -> "mediacodec-copy"
-                else -> "auto-safe"
+                // Avoid direct MediaCodec GPU surfaces on TVs with broken YUV output.
+                // Copy decoded frames through mpv's colour-managed GPU renderer.
+                else -> "mediacodec-copy"
             })
+            // Keep video synced to audio without interpolation or forced frame repeats.
             engine.setOptionString("video-sync", "audio")
+            // Use source metadata for matrix, range and transfer. Never force BT.709
+            // or full-range on SD broadcasts; that causes washed-out colours.
+            engine.setOptionString("video-output-levels", "auto")
+            engine.setOptionString("target-prim", "auto")
+            engine.setOptionString("target-trc", "auto")
             // Avoid changing video output backends during Android surface transitions.
             engine.setOptionString("vd-lavc-dr", "no")
             engine.setOptionString("interpolation", "no")
@@ -252,6 +260,12 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Decoder: "+str("hwdec-current"),
             "Video codec: "+str("video-codec"),
             "Video format: "+str("video-params/pixelformat"),
+            "Source matrix: "+str("video-params/colormatrix"),
+            "Source levels: "+str("video-params/colorlevels"),
+            "Source primaries: "+str("video-params/primaries"),
+            "Source transfer: "+str("video-params/gamma"),
+            "Output format: "+str("video-out-params/pixelformat"),
+            "Output levels: "+str("video-out-params/colorlevels"),
             "Video size: "+count("video-params/w")+" x "+count("video-params/h"),
             "Video FPS: "+num("estimated-vf-fps"),
             "Dropped frames: "+count("frame-drop-count"),
@@ -259,7 +273,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Video output: "+str("current-vo"),
             "Playback started: "+started,
             "Surface attached: "+attached
-        ).joinToString("\\n")
+        ).joinToString("\n")
     }
 
     fun release() {
