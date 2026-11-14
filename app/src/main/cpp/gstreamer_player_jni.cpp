@@ -17,13 +17,15 @@ struct Player {
     std::string error;
     int status = 0;
     std::atomic<bool> firstBuffer{false};
+    bool firstBufferDelivered = false;
+    int bufferingPercent = 100;
 };
 Player* player(jlong handle) { return reinterpret_cast<Player*>(handle); }
 void setWindow(Player& p, JNIEnv* env, jobject surface) {
     ANativeWindow* next = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;
     if (p.window) ANativeWindow_release(p.window);
     p.window = next;
-    if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink) && p.window)
+    if (p.sink && GST_IS_VIDEO_OVERLAY(p.sink))
         gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(p.sink),
                                              reinterpret_cast<guintptr>(p.window));
 }
@@ -43,6 +45,8 @@ void stop(Player& p) {
     }
     p.status = 0;
     p.firstBuffer.store(false, std::memory_order_release);
+    p.firstBufferDelivered = false;
+    p.bufferingPercent = 100;
     p.error.clear();
 }
 }
@@ -79,6 +83,11 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePlay(JNIEnv* env, jobject, jl
     if (!p->pipeline) { p->status = 3; p->error = "GStreamer playbin plugin unavailable"; return; }
     p->sink = gst_element_factory_make("glimagesink", nullptr);
     if (!p->sink) p->sink = gst_element_factory_make("autovideosink", nullptr);
+    if (!p->sink) {
+        p->status = 3;
+        p->error = "No GStreamer video sink plugin is available";
+        return;
+    }
     if (p->sink) {
         g_object_set(p->pipeline, "video-sink", p->sink, nullptr);
         if (p->window && GST_IS_VIDEO_OVERLAY(p->sink))
@@ -143,9 +152,14 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
                     break;
                 }
                 case GST_MESSAGE_EOS: p->status = 2; break;
-                case GST_MESSAGE_BUFFERING:
-                    if (p->status != 3) p->status = 1;
+                case GST_MESSAGE_BUFFERING: {
+                    gint percent = 0;
+                    gst_message_parse_buffering(msg, &percent);
+                    p->bufferingPercent = percent;
+                    if (p->status != 3 && p->status != 2)
+                        p->status = percent < 100 ? 1 : 4;
                     break;
+                }
                 case GST_MESSAGE_STATE_CHANGED:
                     if (GST_MESSAGE_SRC(msg) == GST_OBJECT(p->pipeline) && p->status != 3) {
                         GstState oldState, newState, pending;
@@ -159,7 +173,11 @@ Java_com_softppj_nextv_GstreamerPlaybackView_nativePollStatus(JNIEnv*, jobject, 
         }
         gst_object_unref(bus);
     }
-    if (p->firstBuffer.load(std::memory_order_acquire) && p->status != 3 && p->status != 2) return 5;
+    if (p->firstBuffer.load(std::memory_order_acquire) &&
+        !p->firstBufferDelivered && p->status != 3 && p->status != 2) {
+        p->firstBufferDelivered = true;
+        return 5;
+    }
     return p->status;
 }
 extern "C" JNIEXPORT jstring JNICALL
