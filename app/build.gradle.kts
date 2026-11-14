@@ -150,3 +150,32 @@ val verifyGstreamerPreservation by tasks.registering {
     }
 }
 tasks.named("check") { dependsOn(verifyGstreamerPreservation) }
+
+
+/**
+ * Static integration contract checked before any release candidate is built.
+ * Native GStreamer SDK packaging and actual playback still require CI/device checks.
+ */
+val verifyGstreamerMainActivityIntegration by tasks.registering {
+    group = "verification"
+    description = "Check opt-in routing, MPV fallback and teardown wiring."
+    doLast {
+        val activity = file("src/main/java/com/softppj/nextv/MainActivity.kt").readText()
+        val adapter = file("src/main/java/com/softppj/nextv/GstreamerPlaybackView.kt").readText()
+        listOf(
+            "private var gstreamerPlayer:GstreamerPlaybackView?=null",
+            "gstreamer_experimental",
+            "startGstreamer(c,index,screen)",
+            "startMpv(c,index,screen)",
+            "gstreamerPlayer?.release()",
+            "generation==playbackGeneration"
+        ).forEach { invariant ->
+            check(activity.contains(invariant)) { "GStreamer MainActivity integration missing: $invariant" }
+        }
+        listOf("nativeStop(handle)", "nativeRelease(handle)", "playbackGeneration++").forEach { invariant ->
+            check(adapter.contains(invariant)) { "GStreamer adapter lifecycle missing: $invariant" }
+        }
+        println("Verified experimental routing, MPV fallback and native teardown wiring")
+    }
+}
+tasks.named("check") { dependsOn(verifyGstreamerMainActivityIntegration) }
