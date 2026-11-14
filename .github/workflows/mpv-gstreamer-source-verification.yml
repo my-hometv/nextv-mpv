@@ -31,7 +31,16 @@ jobs:
         with:
           packages: 'platform-tools'
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-37.0" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+          # Android API 37.0 is published under the 37.0 package name.
+          # AGP currently resolves the platform using the android-37 path.
+          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          fi
+          test -f "$ANDROID_HOME/platforms/android-37/android.jar"
       - name: Verify Gradle wrapper
         run: test -f gradlew && chmod +x gradlew
       - name: Compile Kotlin, NDK probes and run regression checks without creating an APK
