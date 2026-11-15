@@ -36,5 +36,31 @@ internal object MpvPlaybackPolicy {
     ): Boolean = selectedMode == "Automatic" && !previouslyConfirmed &&
         !alreadyTriedSoftware && !playbackStarted
 
+    /**
+     * Source metadata describes the decoded stream, not the Android display
+     * pipeline. Never infer actual HDR output solely from HDR source metadata.
+     */
+    fun sourceDynamicRange(transfer: String, primaries: String): String {
+        val t=transfer.trim().lowercase()
+        val p=primaries.trim().lowercase()
+        return when {
+            t in setOf("pq", "smpte2084", "st2084", "smpte-st-2084") -> "HDR10/PQ source"
+            t in setOf("hlg", "arib-std-b67", "arib-std-b67 (hlg)") -> "HLG HDR source"
+            t in setOf("unknown", "", "auto", "n/a") -> "Unknown (no reliable transfer metadata)"
+            t in setOf("bt.1886", "bt1886", "bt.709", "srgb", "gamma2.2", "gamma2.4") ->
+                "SDR source"
+            else -> "Unclassified transfer: " + transfer.trim().take(40)
+        } + if(p == "bt.2020" || p == "bt2020") " / BT.2020 primaries" else ""
+    }
+
+    fun outputInterpretation(effectiveMode: String, hdr10Supported: Boolean): String = when {
+        effectiveMode == "Force SDR" -> "SDR target requested; verify TV picture"
+        effectiveMode == "Force HDR10" && hdr10Supported ->
+            "HDR10 target requested; actual HDR output not verified"
+        effectiveMode == "Auto (HDR10 unsupported)" ->
+            "HDR10 override disabled; display did not report HDR10"
+        else -> "Automatic output; actual HDR signalling not verified"
+    }
+
     fun isValidMode(mode: String): Boolean = mode in setOf("Automatic", "Hardware copy", "Software")
 }
