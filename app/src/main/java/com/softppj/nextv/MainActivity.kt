@@ -5716,7 +5716,7 @@ class MainActivity: Activity() {
                         }
                     }
                     panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
-                    view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c))
+                    view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c),silentPreview=true)
                     view.setVolume(0)
                     view.setPictureScale("Fit")
                     view.play(c.url,c.headers,isLive=c.mediaType=="live")
@@ -5787,8 +5787,7 @@ class MainActivity: Activity() {
                 prefs.getBoolean("show_channel_epg",true)
             val programmes=if(showEpg)programmeList(channel) else emptyList()
             val playing=if(index==active)when{
-                player!=null->"Media3"
-                vlcPlayer!=null->"LibVLC"
+                mpvPlayer?.hasStarted==true->"MPV"
                 else->"Starting"
             } else engineFor(channel)
             val current=programmes.firstOrNull{it.start<=now && it.end>now}
