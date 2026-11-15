@@ -1400,8 +1400,6 @@ class MainActivity: Activity() {
         val c=channels[index]
         val key=channelKey(c)
         val current="MPV"
-        val pinnedUrl=prefs.getString("manual_url_"+key,null)
-            ?:prefs.getString("working_url_"+key,null)
         // The MPV edition has only one native engine. Older app data may
         // retain a confirmed URL without an engine pin, and foreground playback
         // can be established before asynchronous preferences are observed.
