@@ -8,6 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
+      - name: Enforce native license and APK release hold
+        shell: bash
+        run: |
+          echo "NexTV MPV APK generation is blocked pending native GPL compliance evidence and explicit user approval." >&2
+          exit 1
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
