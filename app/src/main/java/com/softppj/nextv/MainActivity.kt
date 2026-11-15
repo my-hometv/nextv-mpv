@@ -763,14 +763,6 @@ class MainActivity: Activity() {
                 .apply()
         }
         initialTried.remove(channelKey(c))
-        if(engine=="Media3"){
-            probeReachable[c.url]=true
-            prefs.edit().putBoolean("media3_verified_"+hash(c.url),true)
-                .remove("libvlc_only_"+hash(c.url)).apply()
-        }else if(engine=="LibVLC"){
-            // Keep the proven working engine for this URL across channel changes/restarts.
-            prefs.edit().putBoolean("libvlc_only_"+hash(c.url),true).apply()
-        }
         engineAttempts.remove(c.url)
         // Preserve a user's explicit stream choice until they change it.
         // Automatically confirmed alternatives remain usable as fallbacks,
@@ -1336,8 +1328,10 @@ class MainActivity: Activity() {
         val c=channels.getOrNull(index) ?:return
         val key=channelKey(c)
         if(mpvPlayer?.hasStarted==true || recoveryPending.contains(key) ||
-            prefs.contains("working_url_"+key) || prefs.contains("manual_url_"+key) ||
-            prefs.contains("confirmed_engine_"+key) || prefs.contains("manual_engine_"+key))return
+            MpvPlaybackPolicy.isEstablishedStream(
+                prefs.getString("working_url_"+key,null),
+                prefs.getString("manual_url_"+key,null),
+                key in playedThisSession))return
         offerMpvAlternative(index,screen)
     }
     private var testingAlternativeKey:String?=null
@@ -7010,7 +7004,7 @@ class MainActivity: Activity() {
                     youtubeResolveTimeout=null
                     if(stream!=null){
                         youtubeNativeStreamUrl=stream.url
-                        HomeTvDiagnostics.i("HomeTV","Public YouTube HLS manifest found; starting native Media3 playback")
+                        HomeTvDiagnostics.i("HomeTV","Public YouTube HLS manifest found; starting native MPV playback")
                     }else{
                         HomeTvDiagnostics.i("HomeTV","No eligible public YouTube HLS manifest; using WebView fallback")
                     }
@@ -7022,7 +7016,7 @@ class MainActivity: Activity() {
         }
         if((youtubeUri!=null && youtubeNativeStreamUrl==null) || webPage){
             // Use the original YouTube watch page inside WebView.
-            // Keep regular IPTV streams on their existing Media3/LibVLC path.
+            // Regular IPTV streams continue through the MPV player.
             val viewer=WebView(this)
             web=viewer
             viewer.setBackgroundColor(android.graphics.Color.BLACK)
