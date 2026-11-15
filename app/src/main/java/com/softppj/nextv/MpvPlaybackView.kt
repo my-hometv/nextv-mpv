@@ -61,10 +61,21 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             }
             engine.setOptionString("hwdec", MpvPlaybackPolicy.hardwareDecoder(decoder))
             engine.setOptionString("video-sync", "audio")
-            // Explicit user-selectable output targets for HDR/SDR comparison.
-            // Auto retains source/display negotiation; forcing HDR cannot make
-            // an SDR-only display HDR-capable.
-            when (outputMode) {
+            // A requested HDR target must never be forced on an SDR-only TV.
+            // Preserve automatic source/output negotiation unless the display
+            // actually advertises HDR10. This is not a claim that the Android
+            // SurfaceView pipeline itself can switch into an HDR buffer mode.
+            val hdr10Supported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    display?.hdrCapabilities?.supportedHdrTypes?.contains(
+                        android.view.Display.HdrCapabilities.HDR_TYPE_HDR10) == true
+                } catch (_: RuntimeException) { false }
+            } else false
+            selectedOutputMode = when {
+                outputMode == "Force HDR10" && !hdr10Supported -> "Auto (HDR10 unsupported)"
+                else -> outputMode
+            }
+            when (selectedOutputMode) {
                 "Force HDR10" -> {
                     engine.setOptionString("target-prim", "bt.2020")
                     engine.setOptionString("target-trc", "pq")
