@@ -1718,9 +1718,8 @@ class MainActivity: Activity() {
     private fun handleEngineFailure(index:Int,screen:FrameLayout):Boolean{
         if(index !in channels.indices || active!=index || videoScreen!==screen ||
             playbackTeardownInProgress)return true
-        // Media3 and LibVLC can report the same failure through both a
-        // startup watchdog and a native callback. Do not count or schedule it
-        // again while the first recovery is already pending.
+        // An MPV watchdog and native callback may report the same failure.
+        // Do not schedule duplicate recovery for one playback generation.
         if(retryTask!=null || networkRecoveryTask!=null)return true
         if(safeStartupChannelOnePending){
             safeStartupChannelOnePending=false
@@ -1744,8 +1743,10 @@ class MainActivity: Activity() {
             ?:prefs.getString("working_url_"+key,null)
         val pinnedEngine=prefs.getString("manual_engine_"+key,null)
             ?:prefs.getString("confirmed_engine_"+key,null)
+        // Legacy Media3/LibVLC engine pins still represent a previously working URL.
+        // Preserve recovery confidence when migrating that URL to the MPV engine.
         val established=ChannelFailurePolicy.hasEstablishedPlayback(
-            pinnedUrl!=null,pinnedEngine!=null && engineEnabled(pinnedEngine))
+            pinnedUrl!=null,pinnedEngine!=null)
         if(established){
             // Never let a previous unestablished-channel failure blacklist a
             // channel that has since confirmed playback.
@@ -1761,7 +1762,7 @@ class MainActivity: Activity() {
             // viewer with an unverified alternative-URL dialog.
             // Alternative selection remains available manually in channel settings.
             if(!prefs.getBoolean("auto_reconnect",true))return true
-            val fixedEngine=pinnedEngine?.takeIf(::engineEnabled) ?:current
+            val fixedEngine="MPV"
             val count=((recoveryAttempts[key] ?:0)+1).coerceAtMost(10)
             recoveryAttempts[key]=count
             // Both manually pinned and automatically confirmed playback are
