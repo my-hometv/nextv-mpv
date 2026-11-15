@@ -2828,13 +2828,14 @@ class MainActivity: Activity() {
         if(!MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure(
                 selectedMpvDecoder(c),confirmed,
                 key in mpvSoftwareFallbackAttempted,started))return false
-        if(active!=index || videoScreen!==screen || playbackGeneration!=generation)return false
+        if(active!=index || videoScreen!==screen || playbackGeneration!=generation ||
+            channels.getOrNull(index)!==c)return false
         mpvSoftwareFallbackAttempted.add(key)
         mpvSoftwareFallbackActive.add(key)
         HomeTvDiagnostics.w("MPV","Automatic hardware startup failed; trying software once")
         val task=Runnable{
-            if(active==index && videoScreen===screen && playbackGeneration==generation)
-                playIndex(index)
+            if(active==index && videoScreen===screen && playbackGeneration==generation &&
+                channels.getOrNull(index)===c)playIndex(index)
         }
         handler.post(task)
         return true
