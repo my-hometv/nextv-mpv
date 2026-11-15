@@ -5,7 +5,6 @@ permissions:
   contents: read
 jobs:
   build:
-    if: ${{ false }} # Release held until licensing clearance and explicit APK approval
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
