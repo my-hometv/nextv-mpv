@@ -4,6 +4,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BackgroundProbeUrlPolicyTest {
+    @Test fun mpvHttpCheckerAcceptsDirectStreamsButNotNativeOnlyProtocols() {
+        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "https://iptv.example/live/channel.m3u8?token=AbC"))
+        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "http://iptv.example/live/channel.ts"))
+        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "rtsp://iptv.example/live"))
+        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "rtmp://iptv.example/live"))
+        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "file:///sdcard/video.ts"))
+        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "https://user:password@iptv.example/live.ts"))
+        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+            "https://youtube.com/watch?v=abc"))
+    }
+
     @Test fun boundedHttpChecksAcceptPartialContentAndRejectHtml() {
         assertTrue(BackgroundProbeUrlPolicy.isReachableHttpResponse(200,"video/mp2t"))
         assertTrue(BackgroundProbeUrlPolicy.isReachableHttpResponse(206,"application/octet-stream"))
