@@ -760,7 +760,7 @@ class MainActivity: Activity() {
                 .apply()
         }
         // Record the player that actually reached playback, not a pending fallback hint.
-        val engine=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
+        val engine="MPV"
         // Keep the confirmed engine paired with the URL that actually played.
         // A manually pinned URL must not be silently replaced by a tested alternative.
         val confirmedKey=channelKey(c)
@@ -1739,7 +1739,7 @@ class MainActivity: Activity() {
         }
         val c=channels[index]
         val key=channelKey(c)
-        val current=if(mpvPlayer!=null)"MPV" else isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
+        val current="MPV"
         val pinnedUrl=prefs.getString("manual_url_"+key,null)
             ?:prefs.getString("working_url_"+key,null)
         val pinnedEngine=prefs.getString("manual_engine_"+key,null)
@@ -8257,11 +8257,9 @@ class MainActivity: Activity() {
             // The MPV edition routes native playback directly to libmpv.
             // No experimental native fallback or probe is permitted on this path.
             startMpv(c,index,screen)
-        }else if(engineFor(c).startsWith("LibVLC-") && youtubeNativeStreamUrl==null){
-            startIsolatedVlc(c,index,screen,engineFor(c))
-        }else if(engineFor(c)=="LibVLC" && youtubeNativeStreamUrl==null){
-            startVlc(c,index,screen)
         }else{
+            // Legacy fallback is unreachable while engineFor() is MPV-only.
+            // Retained temporarily until the dependent Media3 utilities are migrated.
             val factory=DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(if(c.mediaType=="live")10000 else 6500)
