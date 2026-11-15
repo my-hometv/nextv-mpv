@@ -44,9 +44,6 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0-mpv-experiment"
-        // Legacy BuildConfig field retained until unused VLC source is fully removed;
-        // no LibVLC runtime is packaged in the MPV APK.
-        buildConfigField("String", "LIBVLC_VERSION", "\"3.5.1\"")
     }
 
     compileOptions {
@@ -89,10 +86,6 @@ dependencies {
     // Candidate libmpv Android AAR. Its native FFmpeg/mpv binaries are GPL-3.0-or-later.
     // This experiment must not be distributed without GPL source/licensing compliance.
     implementation("dev.jdtech.mpv:libmpv:1.0.0")
-    // Legacy isolated service is not registered in the MPV manifest.
-    // Compile-only VLC types remain until that unused source is removed.
-    compileOnly("org.videolan.android:libvlc-all:3.5.1")
-
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }
