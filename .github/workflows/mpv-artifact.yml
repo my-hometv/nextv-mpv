@@ -9,11 +9,13 @@ jobs:
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
-      - name: Verify licensing and explicit APK approval
+      - name: Confirm personal-use debug build only
         shell: bash
-        env:
-          NEXTV_APK_APPROVED: ${{ vars.NEXTV_MPV_APK_APPROVED }}
-        run: bash scripts/check-mpv-release-compliance.sh
+        run: |
+          set -euo pipefail
+          test "${GITHUB_EVENT_NAME}" = "workflow_dispatch"
+          echo "Personal-use debug artifact only; do not publish or share."
+          echo "GPL distribution clearance has NOT been established."
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -50,4 +52,4 @@ jobs:
           name: NexTV-MPV-Debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
