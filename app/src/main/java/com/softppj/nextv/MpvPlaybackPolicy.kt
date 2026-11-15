@@ -74,5 +74,9 @@ internal object MpvPlaybackPolicy {
     ): Boolean = !workingUrl.isNullOrBlank() ||
         !manualUrl.isNullOrBlank() || playedThisSession
 
+    fun normalizedDecoder(mode: String?): String = mode?.takeIf(::isValidMode) ?: "Automatic"
+
+    fun normalizedOutput(mode: String?): String = mode?.takeIf { it in setOf("Auto", "Force HDR10", "Force SDR") } ?: "Auto"
+
     fun isValidMode(mode: String): Boolean = mode in setOf("Automatic", "Hardware copy", "Software")
 }

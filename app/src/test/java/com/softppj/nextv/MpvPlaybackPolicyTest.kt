@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MpvPlaybackPolicyTest {
+ @Test fun firstRunDefaultsAndLegacyPreferencesAreNormalized() {
+     assertEquals("Automatic", MpvPlaybackPolicy.normalizedDecoder(null))
+     assertEquals("Automatic", MpvPlaybackPolicy.normalizedDecoder("LibVLC"))
+     assertEquals("Hardware copy", MpvPlaybackPolicy.normalizedDecoder("Hardware copy"))
+     assertEquals("Auto", MpvPlaybackPolicy.normalizedOutput(null))
+     assertEquals("Auto", MpvPlaybackPolicy.normalizedOutput("Media3"))
+     assertEquals("Force SDR", MpvPlaybackPolicy.normalizedOutput("Force SDR"))
+     assertEquals("Force HDR10", MpvPlaybackPolicy.normalizedOutput("Force HDR10"))
+ }
  @Test fun defaultIsCopyBack() { assertEquals("mediacodec-copy", MpvPlaybackPolicy.hardwareDecoder("Automatic")) }
  @Test fun hardwareIsCopyBack() { assertEquals("mediacodec-copy", MpvPlaybackPolicy.hardwareDecoder("Hardware copy")) }
  @Test fun softwareIsSoftware() { assertEquals("no", MpvPlaybackPolicy.hardwareDecoder("Software")) }

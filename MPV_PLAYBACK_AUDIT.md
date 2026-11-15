@@ -28,3 +28,10 @@
 - Commit `0f802ed`: MPV integration verification and source verification both passed. Commit `28bb944` passed all three verification workflows. Commit `5498231` passed both integration and source verification. The earlier `a28cc6c` test compilation failures were due to removed VLC classes still referenced by obsolete tests; those tests were cleaned up in `5498231`.
 - MPV native runtime now rejects all Media3 runtime modules and LibVLC/nextlib dependencies; the source gate rejects restoration of the removed VLC service and AIDL.
 - **Not performed:** Physical Android TV testing, HDR10 signal negotiation, picture-quality comparison with Media3, long-running stability, and final native licensing/ABI publication review. CI success is not approval to ship an APK.
+
+## Engineering review — source-only checks (2026-11-15)
+- Playback defaults and stale preference normalization are now centralized in `MpvPlaybackPolicy`, with regression coverage for first-run and migrated legacy values. Per-channel manual overrides remain available.
+- URL background probes use the HTTP-only transport checker, exclude foreground alternatives and do not assert successful decoding from an HTTP response. Device tests still needed for short signal loss and alternative prompts.
+- MPV HDR rendering uses Android `RGBA_8888` and GPU/OpenGL ES. This is **not verified 10-bit HDR presentation**; retain Auto as the safe first-run default and avoid unconditional PQ or 10-bit surface forcing.
+- Build dependency: `dev.jdtech.mpv:libmpv:1.0.0` is annotated GPL-3.0-or-later in Gradle. A source audit alone cannot certify the transitive native FFmpeg/mpv license set, exact binary ABIs, attribution, corresponding-source availability or redistribution obligations. Before publication, inspect the resolved AAR and dependency graph, ABI inventory, licenses and source-offer requirements; consult qualified licensing review if distributing binaries.
+- GStreamer optional SDK verification remains in the project, and SDK-enabled builds restrict ABI to arm64-v8a. Do not assume that filter proves the libmpv AAR supports all target TV ABIs.

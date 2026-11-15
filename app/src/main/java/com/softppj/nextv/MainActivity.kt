@@ -2814,13 +2814,13 @@ class MainActivity: Activity() {
     private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(channelKey(c))
     private fun selectedMpvDecoder(c:Channel):String {
         val mode=prefs.getString(mpvDecoderKey(c),"Automatic") ?: "Automatic"
-        val selected=if(MpvPlaybackPolicy.isValidMode(mode))mode else "Automatic"
+        val selected=MpvPlaybackPolicy.normalizedDecoder(mode)
         return if(selected=="Automatic" && channelKey(c) in mpvSoftwareFallbackActive)
             "Software" else selected
     }
     private fun selectedMpvOutput(c:Channel):String {
         val mode=prefs.getString(mpvOutputKey(c),"Auto") ?: "Auto"
-        return if(mode in setOf("Auto","Force HDR10","Force SDR"))mode else "Auto"
+        return MpvPlaybackPolicy.normalizedOutput(mode)
     }
     private fun chooseMpvDecoderForCurrentChannel(){
         if(active in channels.indices)chooseMpvDecoder(active)
