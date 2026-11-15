@@ -8256,12 +8256,9 @@ class MainActivity: Activity() {
                 }
             }
         }else if(engineFor(c)=="MPV"){
-            if (prefs.getBoolean("gstreamer_experimental",false) && !gstreamerNativeUnavailable &&
-                c.url !in gstreamerFailedUrls &&
-                c.headers.isEmpty() &&
-                youtubeNativeStreamUrl==null && c.url.startsWith("http")) {
-                startGstreamer(c,index,screen)
-            } else startMpv(c,index,screen)
+            // The MPV edition routes native playback directly to libmpv.
+            // No experimental native fallback or probe is permitted on this path.
+            startMpv(c,index,screen)
         }else if(engineFor(c).startsWith("LibVLC-") && youtubeNativeStreamUrl==null){
             startIsolatedVlc(c,index,screen,engineFor(c))
         }else if(engineFor(c)=="LibVLC" && youtubeNativeStreamUrl==null){
@@ -9545,8 +9542,7 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
         root.addView(label("Planned for a later release: Instant Switching, Smart Logos and MultiView. No unfinished feature is enabled."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
-        root.addView(label("MPV is the default engine. GStreamer is an experimental native test route with automatic MPV fallback."))
-        root.addView(settingsToggle("Experimental GStreamer playback (HTTP streams without custom headers)","gstreamer_experimental",false))
+        root.addView(label("Native playback uses MPV only. Legacy engine controls are being retired."))
         root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
         root.addView(button("MPV decoder and frame diagnostics"){showMpvPlaybackDiagnostics()})
         root.addView(button("MPV HDR/SDR output for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvOutput).orEmpty().ifBlank{"No channel selected"}){chooseMpvOutputForCurrentChannel()})
