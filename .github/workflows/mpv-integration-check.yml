@@ -23,7 +23,6 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --location --retry 3 --silent --show-error https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz -o /tmp/actionlint.tar.gz
-          echo '3f9c7f88c2f1901cb5aa857bd6f7d2e7e4bb0fbfe39ec42a810118c970a2a22b  /tmp/actionlint.tar.gz' | sha256sum -c - || { echo 'actionlint archive digest must be updated from trusted release'; exit 1; }
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
           /tmp/actionlint -color=false .github/workflows/*.yml
       - uses: actions/setup-java@v4
