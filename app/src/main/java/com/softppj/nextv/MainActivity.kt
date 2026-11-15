@@ -711,6 +711,10 @@ class MainActivity: Activity() {
         dismissAlternativePrompt(channelKey(c))
         recoveryAttempts.remove(channelKey(c))
         playedThisSession.add(channelKey(c))
+        // The software escape hatch is for the initial tune only. Once MPV
+        // actually plays, future sessions start from the saved decoder choice.
+        mpvSoftwareFallbackActive.remove(channelKey(c))
+        mpvSoftwareFallbackAttempted.remove(channelKey(c))
         recoveryPrompted.remove(channelKey(c))
         failedUrlsThisSession.remove(c.url)
         // A confirmed playing event starts a fresh alternative-fallback cycle.
@@ -2852,7 +2856,9 @@ class MainActivity: Activity() {
     private fun chooseMpvDecoder(index:Int){
         val c=channels.getOrNull(index) ?:return
         val options=arrayOf("Automatic","Hardware copy","Software")
-        val selected=options.indexOf(selectedMpvDecoder(c)).coerceAtLeast(0)
+        // Display the user's saved choice, not a transient software retry.
+        val savedDecoder=prefs.getString(mpvDecoderKey(c),"Automatic") ?: "Automatic"
+        val selected=options.indexOf(savedDecoder).coerceAtLeast(0)
         showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — MPV decoder")
             .setSingleChoiceItems(options,selected){dialog,choice->
                 mpvSoftwareFallbackActive.remove(channelKey(c))
@@ -6902,6 +6908,12 @@ class MainActivity: Activity() {
             previousChannelIdentity=id(channels[active])
         }
         val sessionKey=channelKey(c)
+        // A manual channel change starts a fresh decoder session. Keep the
+        // temporary software fallback only for retries of this same channel.
+        if(active in channels.indices && channelKey(channels[active])!=sessionKey){
+            mpvSoftwareFallbackActive.clear()
+            mpvSoftwareFallbackAttempted.clear()
+        }
         if(alternativeSessionKey!=sessionKey){alternativeAttempted.clear();alternativeSessionKey=sessionKey;engineAttempts.clear();fallbackEngineOverride=null;recoveryPrompted.clear()}
         if(engineChannelUrl!=c.url)engineChannelUrl=c.url
         if(retryUrl!=c.url)retryCount=0
