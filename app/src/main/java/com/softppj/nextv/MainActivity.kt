@@ -8756,69 +8756,6 @@ class MainActivity: Activity() {
             }.setNegativeButton("Cancel",null).create()
         showSideDialog(dialog)
     }
-    /** Experimental native route. Disabled by default; MPV remains the safe fallback. */
-    private fun startGstreamer(c:Channel,index:Int,screen:FrameLayout){
-        val generation=playbackGeneration
-        val view=GstreamerPlaybackView(this)
-        gstreamerPlayer=view
-        val startupTimeout=Runnable{
-            if(gstreamerPlayer===view && active==index && videoScreen===screen &&
-                generation==playbackGeneration){
-                gstreamerFailedUrls.add(c.url)
-                HomeTvDiagnostics.w("GStreamer","No first video buffer within 15 seconds; falling back to MPV")
-                gstreamerPlayer=null
-                try{view.release()}catch(_:Throwable){}
-                screen.removeView(view)
-                startMpv(c,index,screen)
-            }
-        }
-        try{
-            screen.addView(view,0,FrameLayout.LayoutParams(-1,-1))
-            view.listener={status,error->
-                if(gstreamerPlayer===view && active==index && videoScreen===screen &&
-                    generation==playbackGeneration && (status==3 || status==2)){
-                    handler.removeCallbacks(startupTimeout)
-                    gstreamerFailedUrls.add(c.url)
-                    HomeTvDiagnostics.w("GStreamer",
-                        if(status==2) "Stream ended; switching to MPV"
-                        else error ?: "Native playback failed")
-                    gstreamerPlayer=null
-                    try{view.release()}catch(_:Throwable){}
-                    screen.removeView(view)
-                    startMpv(c,index,screen)
-                }
-            }
-            view.onFirstVideoBuffer={elapsed->
-                if(gstreamerPlayer===view && generation==playbackGeneration && active==index){
-                    handler.removeCallbacks(startupTimeout)
-                    HomeTvDiagnostics.i("Startup","GStreamer first buffer in "+elapsed+" ms")
-                    rememberWorking(c,generation)
-                    autoBufferHealthy()
-                    updateClock()
-                }
-            }
-            view.onSlowStartup={elapsed->
-                if(gstreamerPlayer===view && generation==playbackGeneration)
-                    HomeTvDiagnostics.w("GStreamer","Slow first buffer: "+elapsed+" ms")
-            }
-            view.initialize()
-            view.setVolume(prefs.getInt(channelVolumeKey(c),100))
-            view.play(c.url)
-            handler.postDelayed(startupTimeout,15000L)
-        }catch(e:Throwable){
-            handler.removeCallbacks(startupTimeout)
-            if(e is LinkageError) gstreamerNativeUnavailable=true
-            else gstreamerFailedUrls.add(c.url)
-            HomeTvDiagnostics.w("GStreamer","Native startup unavailable; using MPV",e)
-            if(gstreamerPlayer===view){
-                gstreamerPlayer=null
-                try{view.release()}catch(_:Throwable){}
-                screen.removeView(view)
-            }
-            if(active==index && generation==playbackGeneration && videoScreen===screen)
-                startMpv(c,index,screen)
-        }
-    }
     private fun startMpv(c:Channel,index:Int,screen:FrameLayout){
         // MPV Edition has one native video engine for all native video routes.
         // Preserve signed licensing and parental-lock checks done by playIndex.
