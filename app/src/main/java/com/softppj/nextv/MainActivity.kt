@@ -3966,6 +3966,9 @@ class MainActivity: Activity() {
     }
     // Bounded MPV-edition HTTP reachability checks. Never allocate a decoder.
     @Volatile private var backgroundProbeGeneration=0
+    private val backgroundProbeWorker=java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+        Thread(task,"nextv-mpv-url-check").apply{isDaemon=true}
+    }
     private var backgroundProbePlaylist:MutableList<Channel>?=null
     private val probeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
     private var periodicProbeTask:Runnable?=null
@@ -4052,9 +4055,10 @@ class MainActivity: Activity() {
             return
         }
         // One short-lived worker; no additional decoder, no UI-thread network calls.
-        kotlin.concurrent.thread(name="nextv-mpv-url-check",isDaemon=true){
+        backgroundProbeWorker.execute {
             for(candidate in selected){
-                if(generation!=backgroundProbeGeneration || !appInForeground ||
+                if(Thread.currentThread().isInterrupted ||
+                    generation!=backgroundProbeGeneration || !appInForeground ||
                     !licenseReady || safeStartupMode ||
                     !prefs.getBoolean("background_url_checks",false))
                     break
@@ -8651,6 +8655,7 @@ class MainActivity: Activity() {
         epgTuneTask?.let{handler.removeCallbacks(it)};epgTuneTask=null
         sleepTimerTask?.let{handler.removeCallbacks(it)};sleepTimerTask=null
         backgroundProbeGeneration++
+        backgroundProbeWorker.shutdownNow()
         refreshGeneration++
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         stopPlayback()
