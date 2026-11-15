@@ -516,11 +516,9 @@ class MainActivity: Activity() {
 
     private var player:ExoPlayer?=null
     private var activeChannelGainProcessor:ChannelGainAudioProcessor?=null
-    private var vlcCore:LibVLC?=null
     private var mpvPlayer:MpvPlaybackView?=null
     // A missing optional JNI bridge must be detected once, not retried for every channel.
     // Do not repeatedly retry a stream that already failed this experimental engine.
-    private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
     private val engineAttempts=mutableMapOf<String,MutableSet<String>>()
@@ -8205,16 +8203,6 @@ class MainActivity: Activity() {
         player=null
         try{oldPlayer?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","Media3 cleanup failed",e)}
         activeChannelGainProcessor=null
-        val oldVlc=vlcPlayer
-        vlcPlayer=null
-        oldVlc?.let{v->
-            try{v.stop()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC stop failed",e)}
-            try{v.vlcVout.detachViews()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC detach failed",e)}
-            try{v.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC release failed",e)}
-        }
-        val oldCore=vlcCore
-        vlcCore=null
-        try{oldCore?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC core cleanup failed",e)}
         val oldWeb=web
         web=null
         try{oldWeb?.onPause();oldWeb?.destroy()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","WebView cleanup failed",e)}
