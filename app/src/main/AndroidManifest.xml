@@ -27,11 +27,6 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- IPC boundary only; native adapters must be verified before playback is enabled. -->
-        <service
-            android:name=".IsolatedVlcPlaybackService"
-            android:exported="false"
-            android:process=":isolated_vlc" />
         <receiver android:name=".BootReceiver" android:enabled="true" android:exported="false">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
         </receiver>
