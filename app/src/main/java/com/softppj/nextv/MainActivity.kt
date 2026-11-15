@@ -3096,17 +3096,19 @@ class MainActivity: Activity() {
         root.addView(button("←  Home"){showHome()})
     }
     private fun mediaPlaybackControls(){
-        val c=channels.getOrNull(active)?:return
+        val c=channels.getOrNull(active) ?:return
         if(c.mediaType !in setOf("movie","series","music"))return
-        val exo=player
-        val vlc=vlcPlayer
-        if(exo==null && vlc==null && mpvPlayer==null){
+        val mpv=mpvPlayer
+        if(mpv==null){
             Toast.makeText(this,"This web player controls seeking on its own",Toast.LENGTH_SHORT).show()
             return
         }
-        val duration=if(exo!=null)exo.duration else vlc?.length ?: mpvPlayer?.durationMs ?: 0L
-        val position=if(exo!=null)exo.currentPosition else vlc?.time ?: mpvPlayer?.positionMs ?: 0L
-        if(duration<=0L){Toast.makeText(this,"Seeking unavailable for this stream",Toast.LENGTH_SHORT).show();return}
+        val duration=mpv.durationMs
+        val position=mpv.positionMs
+        if(duration<=0L){
+            Toast.makeText(this,"Seeking unavailable for this stream",Toast.LENGTH_SHORT).show()
+            return
+        }
         val bar=android.widget.SeekBar(this).apply{
             max=(duration/1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             progress=(position/1000L).coerceAtMost(max.toLong()).toInt()
@@ -3123,31 +3125,19 @@ class MainActivity: Activity() {
         AlertDialog.Builder(this).setTitle("▶  "+c.name)
             .setView(layout)
             .setPositiveButton("▶  Play here"){_,_->
-                val target=bar.progress.toLong()*1000L
-                if(exo!=null)exo.seekTo(target) else if(vlc!=null)vlc.time=target else mpvPlayer?.seekTo(target)
+                if(mpvPlayer===mpv)mpv.seekTo(bar.progress.toLong()*1000L)
             }
-            .setNeutralButton(if(exo?.isPlaying==true || vlc?.isPlaying==true || mpvPlayer?.isPlaying==true) "Pause" else "Play"){_,_->
-                if(exo!=null){if(exo.isPlaying)exo.pause() else exo.play()}
-                else if(vlc!=null){if(vlc.isPlaying)vlc.pause() else vlc.play()}
-                else mpvPlayer?.togglePause()
+            .setNeutralButton(if(mpv.isPlaying)"Pause" else "Play"){_,_->
+                if(mpvPlayer===mpv)mpv.togglePause()
             }
             .setNegativeButton("Close",null).show()
     }
     private fun mediaKey(c:Channel)=viewerKey("myhometv_progress_"+c.url.hashCode().toString())
     private fun mediaResumeSeconds(c:Channel):Long=prefs.getLong(mediaKey(c),0L)
     private fun saveCurrentMediaProgress(){
-        val c=channels.getOrNull(active)?:return
+        val c=channels.getOrNull(active) ?:return
         if(c.mediaType !in setOf("movie","series","music"))return
-        val seconds=when{
-            mpvPlayer!=null->mpvPlayer!!.positionMs/1000L
-            player!=null->try{(player!!.currentPosition/1000L).coerceAtLeast(0L)}catch(e:Exception){
-                HomeTvDiagnostics.w("Playback","Unable to save Media3 position during switch",e);0L
-            }
-            vlcPlayer!=null->try{(vlcPlayer!!.time/1000L).coerceAtLeast(0L)}catch(e:Exception){
-                HomeTvDiagnostics.w("Playback","Unable to save LibVLC position during switch",e);0L
-            }
-            else->0L
-        }
+        val seconds=(mpvPlayer?.positionMs ?:0L).coerceAtLeast(0L)/1000L
         if(seconds>0L)prefs.edit().putLong(mediaKey(c),seconds).apply()
     }
     private fun continueMedia(){
