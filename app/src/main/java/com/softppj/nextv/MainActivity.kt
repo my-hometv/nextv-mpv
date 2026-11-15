@@ -397,13 +397,15 @@ class MainActivity: Activity() {
         // Restore the last playable channel, or select the first permitted live
         // channel when the saved one is missing. Licence and parental checks stay on.
         resumeLast()
-        scheduleStartupHiddenChannelScan()
+        // Automatic channel scans are retired in the MPV edition.
     }
     // Hidden-channel checks are deliberately delayed until after the cached
     // playlist has opened, so startup and first-picture time are unaffected.
     // The automatic pass is non-modal; users can review results from the
     // existing manual "Check hidden channels" action.
     private fun scheduleStartupHiddenChannelScan(){
+        // MPV-only edition: automatic hidden-channel scans are disabled.
+        if(true)return
         if(startupHiddenScanScheduled || safeStartupMode || !licenseReady ||
             !prefs.getBoolean("auto_hidden_channel_check",true))return
         startupHiddenScanScheduled=true
@@ -3249,13 +3251,8 @@ class MainActivity: Activity() {
         super.onResume()
         appInForeground=true
         if(licenseReady)onLicenseNetworkAvailable()
-        // Rebuild the rotating discovery queue after the app becomes visible.
-        if(licenseReady && prefs.getBoolean("background_url_checks",false))
-            startBackgroundChannelChecks()
-        if(licenseReady){
-            showPendingHiddenChannelPrompt()
-            scheduleStartupHiddenChannelScan()
-        }
+        // Never launch automatic URL probes when the TV app resumes.
+        if(licenseReady)showPendingHiddenChannelPrompt()
         val url=suspendedPlaybackUrl
         val identity=suspendedPlaybackIdentity
         suspendedPlaybackUrl=null
@@ -3274,9 +3271,7 @@ class MainActivity: Activity() {
     override fun onPause(){
         val wasPlaying=active in channels.indices && !isFinishing
         appInForeground=false
-        // Release optional background decoders immediately on app suspension.
-        // Hidden-channel HTTP worker checks are independent and may continue.
-        startBackgroundChannelChecks()
+        // Do not start background channel probes while leaving the app.
         if(wasPlaying){
             val current=channels[active]
             suspendedPlaybackUrl=current.url
@@ -4529,6 +4524,15 @@ class MainActivity: Activity() {
     }
 
     private fun startBackgroundChannelChecks(){
+        // MPV-only edition: cancel legacy decoder probes; do not schedule more.
+        backgroundProbeGeneration++
+        periodicProbeTask?.let{handler.removeCallbacks(it)}
+        periodicProbeTask=null
+        probeWatchdogs.values.forEach{handler.removeCallbacks(it)}
+        probeWatchdogs.clear()
+        probePlayers.forEach{runCatching{it.release()}}
+        probePlayers.clear()
+        return
         backgroundProbePlaylist=channels
         backgroundProbeGeneration++
         val generation=backgroundProbeGeneration
@@ -9490,7 +9494,7 @@ class MainActivity: Activity() {
         root.addView(label("Live preview can be switched ON/OFF in NexTV Feature Controls above."))
         root.addView(button("Startup buffering profile: "+bufferProfile()){chooseBufferProfile()})
         root.addView(label("Ultra Fast = quickest switching; Balanced = recommended; Stable / Maximum Buffer = fewer pauses on uneven networks. Changes apply to the next channel."))
-        root.addView(settingsToggle("Check alternative stream links in background","background_url_checks",false){startBackgroundChannelChecks()})
+        // Background decoder-based URL checking has been removed.
         root.addView(label("YouTube: Native HLS first when publicly available; WebView fallback for other videos."))
         root.addView(settingsToggle("Skip unavailable channels automatically","auto_skip_nonworking",false))
         root.addView(label("OFF by default: stay on a channel during interruptions. Turn ON only if you want NexTV to move automatically after available playback engines fail."))
