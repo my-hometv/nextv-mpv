@@ -674,7 +674,7 @@ class MainActivity: Activity() {
             if(savedMatch==null && saved!=null && url==saved)savedMatch=candidate
             // Only recent, engine-specific probes may influence automatic source choice.
             // A stale success must not outrank a currently reachable alternative.
-            if(reachableMatch==null && engineEnabled("Media3") &&
+            if(reachableMatch==null &&
                 probeReachable[url]==true &&
                 AlternativeLinkConfidencePolicy.isFresh(media3ProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
                 reachableMatch=candidate
@@ -4529,92 +4529,99 @@ class MainActivity: Activity() {
         }
     }
 
+    // Background availability is a lightweight HTTP check, not a second video engine.
+    // An HTTP success is only reachability evidence: it NEVER confirms playback.
+    private fun probeMpvUrlReachability(url:String,headers:Map<String,String>):Boolean {
+        val scheme=runCatching{java.net.URI(url).scheme?.lowercase(java.util.Locale.ROOT)}.getOrNull()
+        if(scheme!="http" && scheme!="https")return false
+        var connection:java.net.HttpURLConnection?=null
+        return try{
+            connection=(java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply{
+                instanceFollowRedirects=true
+                connectTimeout=3500
+                readTimeout=3500
+                requestMethod="GET"
+                setRequestProperty("Range","bytes=0-1023")
+                headers.forEach{(name,value)->
+                    if(!name.equals("Range",true))setRequestProperty(name,value)
+                }
+            }
+            val response=connection.responseCode
+            if(response !in 200..299)return false
+            // Fetch no more than a small prefix; never download a full live stream.
+            connection.inputStream.use{input->
+                val buffer=ByteArray(1024)
+                input.read(buffer)
+            }
+            true
+        }catch(_:Exception){false}
+        finally{connection?.disconnect()}
+    }
+
     private fun startBackgroundChannelChecks(){
         backgroundProbePlaylist=channels
         backgroundProbeGeneration++
         val generation=backgroundProbeGeneration
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         periodicProbeTask=null
-        // Background probes are nonessential. Avoid tearing down decoders
-        // while a foreground channel is playing; old HTTP checks are ignored
-        // by the generation guard.
-        probeQueue.clear()
-        probePositionByUrl=emptyMap()
-        // Cancel probes from the previous generation before resetting counters.
+        // Cancel any legacy decoder probes from a previous generation.
         probeWatchdogs.values.forEach{handler.removeCallbacks(it)}
         probeWatchdogs.clear()
         probePlayers.toList().forEach{probe->
-            try{probe.stop()}catch(_:Exception){}
-            try{probe.release()}catch(_:Exception){}
+            runCatching{probe.stop()}
+            runCatching{probe.release()}
         }
         probePlayers.clear()
         probeInFlight=0
-        stopVlcProbe()
+        probeQueue.clear()
         vlcProbeQueue.clear()
-        media3ProbeAttempted.clear()
-        vlcProbeAttempted.clear()
-        // An OFF toggle must not build and sort a huge probe queue.
+        stopVlcProbe()
         if(!appInForeground || !licenseReady || safeStartupMode ||
-            !prefs.getBoolean("background_url_checks",false) ||
-            (!engineEnabled("Media3") && !engineEnabled("LibVLC")))return
-        // An empty playlist must not spin or allocate decoders. It can be
-        // populated later by refresh/import, which starts a fresh scan.
-        if(channels.isEmpty()){
+            !prefs.getBoolean("background_url_checks",false))return
+        val playlist=channels
+        if(playlist.isEmpty()){
             scheduleNextBackgroundProbeWindow(generation)
             return
         }
-        // Probe results are pruned only when the playlist is replaced.
-        // Building a set of every URL on each 15-minute scan turns a bounded
-        // 250-channel background pass into an O(playlist size) UI operation.
-        // Probe closest channels first in the last remote-control direction.
-        // Never interrupt the on-screen channel or probe it a second time.
-        // Only the bounded probe window needs URL positions. Scanning every
-        // channel on the UI thread made each background refresh O(playlist size).
-        val firstPositionByUrl=HashMap<String,Int>(256)
-        // Scan a rotating window, not always the first 250 streams. Even a
-        // very large playlist is eventually covered without a giant queue.
-        val playlistSnapshot=channels
-        val snapshot=ArrayList<Channel>(250)
-        val seenUrls=HashSet<String>()
-        val foregroundChannel=playlistSnapshot.getOrNull(active)
-        val foregroundKey=foregroundChannel?.let{channelKey(it)}
-        val foregroundUrl=foregroundChannel?.url
-        val total=playlistSnapshot.size
-        val start=if(total>0)backgroundProbeOffset.mod(total) else 0
-        var scanned=0
-        // Bound work per UI dispatch even when many entries share one URL.
-        // The rotating offset resumes scanning on the next cycle.
-        val scanBudget=minOf(total,1000)
-        while(scanned<scanBudget && snapshot.size<250){
-            val position=(start.toLong()+scanned.toLong()).rem(total.toLong()).toInt()
-            val candidate=playlistSnapshot[position]
-            scanned++
+        // Rotate a bounded window; skip the currently playing URL and duplicates.
+        val total=playlist.size
+        val offset=backgroundProbeOffset.mod(total)
+        val selected=ArrayList<Channel>(64)
+        val seen=HashSet<String>()
+        val foreground=playlist.getOrNull(active)
+        var visited=0
+        while(visited<minOf(total,512) && selected.size<64){
+            val candidate=playlist[(offset+visited)%total]
+            visited++
             if(BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                foregroundKey,foregroundUrl,channelKey(candidate),candidate.url
-            ) && seenUrls.add(BackgroundProbeUrlPolicy.probeIdentity(candidate.url))){
-                firstPositionByUrl[candidate.url]=position
-                snapshot.add(candidate)
-            }
+                    foreground?.let{channelKey(it)},foreground?.url,
+                    channelKey(candidate),candidate.url
+                ) && seen.add(BackgroundProbeUrlPolicy.probeIdentity(candidate.url)))
+                selected.add(candidate)
         }
-        if(total>0)backgroundProbeOffset=(start.toLong()+scanned.toLong()).rem(total.toLong()).toInt()
-        probePositionByUrl=firstPositionByUrl
-        val anchor=active.coerceAtLeast(0)
-        val count=playlistSnapshot.size.coerceAtLeast(1)
-        val ordered=snapshot.sortedWith(compareBy<Channel>{candidate->
-            val position=firstPositionByUrl[candidate.url] ?:0
-            if(surfingDirection<0)(anchor-position+count)%count
-            else (position-anchor+count)%count
-        }.thenBy{it.name})
-        ordered.forEach{probeQueue.addLast(it)}
-        // Engine-first: complete the Media3 URL window, then inspect the
-        // same ordered URLs with LibVLC.
-        if(engineEnabled("LibVLC"))ordered.forEach{vlcProbeQueue.addLast(it)}
-        if(ordered.isEmpty()){
-            // Empty playlists and fully excluded windows still need to
-            // recover automatically when the next scan window is due.
+        backgroundProbeOffset=(offset+visited)%total
+        if(selected.isEmpty()){
             scheduleNextBackgroundProbeWindow(generation)
-        }else if(prefs.getBoolean("background_url_checks",false)){
-            launchNextProbe(generation)
+            return
+        }
+        // One short-lived worker; no additional decoder, no UI-thread network calls.
+        kotlin.concurrent.thread(name="nextv-mpv-url-check",isDaemon=true){
+            for(candidate in selected){
+                if(generation!=backgroundProbeGeneration || !prefs.getBoolean("background_url_checks",false))
+                    break
+                val reachable=probeMpvUrlReachability(candidate.url,candidate.headers)
+                handler.post{
+                    if(generation==backgroundProbeGeneration && channels===playlist &&
+                        prefs.getBoolean("background_url_checks",false)){
+                        probeReachable[candidate.url]=reachable
+                        media3ProbeObservedAt[candidate.url]=android.os.SystemClock.elapsedRealtime()
+                    }
+                }
+            }
+            handler.post{
+                if(generation==backgroundProbeGeneration && channels===playlist)
+                    scheduleNextBackgroundProbeWindow(generation)
+            }
         }
     }
     // Bounded decoder-backed probes. Keep them subordinate to foreground playback.
