@@ -514,8 +514,6 @@ class MainActivity: Activity() {
             }.setNegativeButton("Cancel",null).show()
     }
 
-    private var player:ExoPlayer?=null
-    private var activeChannelGainProcessor:ChannelGainAudioProcessor?=null
     private var mpvPlayer:MpvPlaybackView?=null
     // A missing optional JNI bridge must be detected once, not retried for every channel.
     // Do not repeatedly retry a stream that already failed this experimental engine.
@@ -4824,59 +4822,16 @@ class MainActivity: Activity() {
     // Audio presets are per channel. Unsupported native EQ implementations retain
     // the original audio rather than claiming to apply a filter.
     private val audioPresetNames=arrayOf("Standard","Cinema","Music","Dialogue","Bass Boost","Night Mode")
-    private var platformEqualizer:android.media.audiofx.Equalizer?=null
     private var previewAudioChannelKey:String?=null
     private var previewAudioMode:String?=null
     private fun audioPresetKey(c:Channel)="audio_preset_"+hash(channelKey(c))
     private fun selectedAudioPreset(c:Channel)=prefs.getString(audioPresetKey(c),"Standard")
         ?.takeIf{it in audioPresetNames} ?: "Standard"
-    private fun audioBands(name:String):IntArray=when(name){
-        "Cinema"->intArrayOf(250,120,0,160,120)
-        "Music"->intArrayOf(180,80,0,100,160)
-        "Dialogue"->intArrayOf(-160,-80,160,280,120)
-        "Bass Boost"->intArrayOf(350,240,0,-50,-80)
-        "Night Mode"->intArrayOf(-150,-80,100,140,-100)
-        else->intArrayOf(0,0,0,0,0)
-    }
-    private fun releaseAudioEqualizer(){
-        val old=platformEqualizer
-        platformEqualizer=null
-        try{old?.enabled=false;old?.release()}catch(e:Exception){
-            HomeTvDiagnostics.w("Audio","Equalizer release failed",e)
-        }
-    }
     private fun applyAudioPreset(){
-        releaseAudioEqualizer()
-        val c=channels.getOrNull(active)?:return
-        val preset=if(previewAudioChannelKey==channelKey(c)) previewAudioMode ?: selectedAudioPreset(c) else selectedAudioPreset(c)
-        if(preset=="Standard")return
-        val session=player?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET
-        if(session==C.AUDIO_SESSION_ID_UNSET){
-            HomeTvDiagnostics.i("Audio","Platform EQ not available for current engine: "+preset)
-            return
-        }
-        try{
-            val eq=android.media.audiofx.Equalizer(0,session)
-            val bands=audioBands(preset)
-            val range=eq.bandLevelRange
-            for(i in 0 until eq.numberOfBands.toInt()){
-                val centerHz=eq.getCenterFreq(i.toShort())/1000
-                val slot=when{
-                    centerHz<180->0
-                    centerHz<650->1
-                    centerHz<1800->2
-                    centerHz<5500->3
-                    else->4
-                }
-                val millibels=(bands[slot]*3).coerceIn(range[0].toInt(),range[1].toInt())
-                eq.setBandLevel(i.toShort(),millibels.toShort())
-            }
-            eq.enabled=true
-            platformEqualizer=eq
-        }catch(e:Exception){
-            HomeTvDiagnostics.w("Audio","Device equalizer unavailable",e)
-            releaseAudioEqualizer()
-        }
+        val c=channels.getOrNull(active) ?:return
+        val preset=if(previewAudioChannelKey==channelKey(c))
+            previewAudioMode ?: selectedAudioPreset(c) else selectedAudioPreset(c)
+        mpvPlayer?.setAudioPreset(preset)
     }
     private fun configureChannelAudioPreset(index:Int){
         val c=channels.getOrNull(index)?:return
@@ -4889,7 +4844,7 @@ class MainActivity: Activity() {
             if(active!=index)return
             previewAudioChannelKey=channelKey(c)
             previewAudioMode=audioPresetNames[position]
-            // Media3 can adjust the active audio session without restarting playback.
+            // MPV applies the preset to the active audio filter chain.
             applyAudioPreset()
         }
         val dialog=AlertDialog.Builder(this)
@@ -7203,6 +7158,7 @@ class MainActivity: Activity() {
                     HomeTvDiagnostics.i("Startup","MPV first playback after "+
                         (android.os.SystemClock.elapsedRealtime()-startupTuneStartedAt)+" ms")
                     restoreMpvTrackPreferences(c,view)
+                    applyAudioPreset()
                     applyQuality()
                     // Media3 previously restored VOD progress; retain that
                     // behavior now that MPV is the sole native media engine.
@@ -8201,11 +8157,6 @@ class MainActivity: Activity() {
         qualityUpgradeTask?.let{handler.removeCallbacks(it)}
         qualityUpgradeTask=null
         bannerTask=null;banner=null;videoScreen=null
-        releaseAudioEqualizer()
-        val oldPlayer=player
-        player=null
-        try{oldPlayer?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","Media3 cleanup failed",e)}
-        activeChannelGainProcessor=null
         val oldWeb=web
         web=null
         try{oldWeb?.onPause();oldWeb?.destroy()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","WebView cleanup failed",e)}
