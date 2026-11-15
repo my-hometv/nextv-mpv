@@ -4780,169 +4780,76 @@ class MainActivity: Activity() {
     }
 
     private fun audioTracks(){
-        mpvPlayer?.let{mpv->
-            val tracks=mpv.tracks("audio")
-            if(tracks.isEmpty()){
-                showBanner("No selectable audio tracks found")
-                return
-            }
-            val labels=tracks.map{it.label+(if(it.selected)" ✓" else "")}.toTypedArray()
-            val picked=tracks.indexOfFirst{it.selected}.coerceAtLeast(0)
-            showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Audio tracks")
-                .setSingleChoiceItems(labels,picked){dialog,index->
-                    mpv.chooseAudioTrack(tracks[index].id)
-                    dialog.dismiss()
-                    showBanner("Audio: "+tracks[index].label)
-                }.setNegativeButton("Cancel",null).create())
+        val mpv=mpvPlayer
+        if(mpv==null){
+            showBanner("Audio tracks are available after MPV playback starts")
             return
         }
-        val vlc=vlcPlayer
-        if(vlc!=null){vlcAudioTracks(vlc);return}
-        val exo=player
-        if(exo==null){Toast.makeText(this,"Audio track selection is available for IPTV streams",Toast.LENGTH_LONG).show();return}
-        val entries=mutableListOf<Triple<Tracks.Group,Int,androidx.media3.common.Format>>()
-        val names=mutableListOf<String>()
-        for(group in exo.currentTracks.groups){
-            if(group.type!=C.TRACK_TYPE_AUDIO)continue
-            for(i in 0 until group.length){
-                val fmt=group.getTrackFormat(i)
-                val language=normalizeAudioLanguage(fmt.language) ?: fmt.language ?: "Unknown language"
-                val codec=fmt.sampleMimeType ?: "Unknown codec"
-                val supported=group.isTrackSupported(i)
-                names.add(language+" · "+codec+(if(group.isTrackSelected(i))" ✓" else "")+(if(!supported)" (unsupported)" else ""))
-                if(supported)entries.add(Triple(group,i,fmt))
-            }
-        }
-        val supportedNames=entries.map{entry->
-            val group=entry.first;val index=entry.second
-            val fmt=entry.third
-            val language=normalizeAudioLanguage(fmt.language) ?: fmt.language ?: "Unknown language"
-            language+" · "+(fmt.sampleMimeType ?: "Unknown codec")+
-                (if(group.isTrackSelected(index))" ✓" else "")
-        }
-        if(entries.isEmpty()){
-            showSideDialog(AlertDialog.Builder(this).setTitle("Audio tracks")
-                .setMessage(if(names.isEmpty())"No audio track was detected for this channel. Try another stream URL."
-                    else "Audio tracks were detected, but this device cannot currently decode them.")
-                .setPositiveButton("OK",null).create())
+        val tracks=mpv.tracks("audio")
+        if(tracks.isEmpty()){
+            showBanner("No selectable audio tracks found")
             return
         }
-        val dialog=AlertDialog.Builder(this).setTitle("Select audio track").setItems(supportedNames.toTypedArray()){_,position->
-            val (group,index,format)=entries[position]
-            exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
-                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup,listOf(index)))
-                .build()
-            channels.getOrNull(active)?.let{channel->
-                val language=normalizeAudioLanguage(format.language)
-                val edit=prefs.edit().putString(audioTrackSignatureKey(channel),audioFormatSignature(format))
-                if(language!=null)edit.putString(audioTrackPreferenceKey(channel),language)
-                else edit.remove(audioTrackPreferenceKey(channel))
-                edit.remove(vlcAudioTrackPreferenceKey(channel)).apply()
-            }
-            showBanner("Audio track: "+supportedNames[position])
-        }.setNeutralButton("Automatic"){_,_->
-            channels.getOrNull(active)?.let{channel->prefs.edit()
-                .remove(audioTrackPreferenceKey(channel)).remove(audioTrackSignatureKey(channel)).apply()}
-            exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
-                .setPreferredAudioLanguage(if(prefs.getBoolean("audio_use_stream_default",false)) null else preferredAudioLanguage())
-                .build()
-        }.setNegativeButton("Cancel",null).create()
-        showSideDialog(dialog)
+        val labels=tracks.map{it.label+(if(it.selected)" ✓" else "")}.toTypedArray()
+        val picked=tracks.indexOfFirst{it.selected}.coerceAtLeast(0)
+        showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Audio tracks")
+            .setSingleChoiceItems(labels,picked){dialog,index->
+                val selected=tracks[index]
+                mpv.chooseAudioTrack(selected.id)
+                channels.getOrNull(active)?.let{channel->
+                    prefs.edit().putString(audioTrackSignatureKey(channel),selected.label)
+                        .remove(audioTrackPreferenceKey(channel)).apply()
+                }
+                dialog.dismiss()
+                showBanner("Audio: "+selected.label)
+            }.setNeutralButton("Automatic"){dialog,_->
+                channels.getOrNull(active)?.let{channel->
+                    prefs.edit().remove(audioTrackSignatureKey(channel))
+                        .remove(audioTrackPreferenceKey(channel)).apply()
+                }
+                mpv.chooseDefaultAudioTrack()
+                dialog.dismiss()
+                showBanner("Audio: stream default")
+            }.setNegativeButton("Cancel",null).create())
     }
 
-    // Media3 subtitle choices are saved per logical channel. This does not alter
-    // the selected playback engine or the stream URL.
     private fun subtitlePreference(c:Channel):String =
         prefs.getString("subtitle_"+hash(channelKey(c)),"auto") ?: "auto"
 
-    private fun applySubtitlePreference(c:Channel){
-        val exo=player ?:return
-        val pref=subtitlePreference(c)
-        val builder=exo.trackSelectionParameters.buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT,pref=="off")
-        if(pref!="off" && pref!="auto"){
-            builder.setPreferredTextLanguage(pref)
-                .setSelectUndeterminedTextLanguage(false)
-        }else{
-            builder.setPreferredTextLanguage(null)
-                .setSelectUndeterminedTextLanguage(false)
-        }
-        exo.trackSelectionParameters=builder.build()
-    }
-
     private fun subtitleTracks(channelIndex:Int=active){
         val c=channels.getOrNull(channelIndex) ?:return
-        mpvPlayer?.let{mpv->
-            val tracks=mpv.tracks("sub")
-            val labels=arrayOf("Off")+tracks.map{it.label+(if(it.selected)" ✓" else "")}
-            val selected=tracks.indexOfFirst{it.selected}.let{if(it<0)0 else it+1}
-            showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Subtitle tracks")
-                .setSingleChoiceItems(labels,selected){dialog,choice->
-                    mpv.chooseSubtitleTrack(if(choice==0)null else tracks[choice-1].id)
-                    dialog.dismiss()
-                    showBanner(if(choice==0)"Subtitles off" else "Subtitles: "+labels[choice])
-                }.setNegativeButton("Cancel",null).create())
-            return
-        }
-        if(active !in channels.indices || !sameChannel(c,channels[active])){
+        val mpv=mpvPlayer
+        if(mpv==null || active !in channels.indices || !sameChannel(c,channels[active])){
             showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — Subtitles")
-                .setMessage("Subtitle tracks can be selected after this channel starts playing.")
+                .setMessage("Subtitle tracks can be selected after this channel starts playing through MPV.")
                 .setPositiveButton("Watch channel"){_,_->playIndex(preferredChannel(channelIndex))}
                 .setNegativeButton("Cancel",null).create())
             return
         }
-        val exo=player
-        if(exo==null){
-            showSideDialog(AlertDialog.Builder(this).setTitle("Subtitles")
-                .setMessage("Subtitle selection is available for streams playing through Media3. This channel is using another playback engine.")
-                .setPositiveButton("OK",null).create())
-            return
+        val tracks=mpv.tracks("sub")
+        val labels=arrayOf("Off","Automatic")+tracks.map{it.label+(if(it.selected)" ✓" else "")}
+        val saved=subtitlePreference(c)
+        val selected=when{
+            saved=="off"->0
+            saved=="auto"->1
+            else->tracks.indexOfFirst{it.label==saved}.let{if(it<0)1 else it+2}
         }
-        val choices=mutableListOf("Off","Automatic")
-        val entries=mutableListOf<Pair<androidx.media3.common.TrackGroup,Int>>()
-        val languages=mutableListOf<String>()
-        for(group in exo.currentTracks.groups){
-            if(group.type!=C.TRACK_TYPE_TEXT)continue
-            for(i in 0 until group.length){
-                if(!group.isTrackSupported(i))continue
-                val format=group.getTrackFormat(i)
-                val language=format.language ?: "und"
-                val label=if(language=="und")"Undetermined" else
-                    try{java.util.Locale.forLanguageTag(language).displayLanguage.ifBlank{language}}
-                    catch(_:Exception){language}
-                choices.add(label+" · "+(format.label ?: format.sampleMimeType ?: "Subtitles")+
-                    (if(group.isTrackSelected(i))" ✓" else ""))
-                entries.add(group.mediaTrackGroup to i)
-                languages.add(language)
-            }
-        }
-        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — Subtitles")
-            .setItems(choices.toTypedArray()){_,choice->
-                val editor=prefs.edit()
-                if(choice==0){
-                    editor.putString("subtitle_"+hash(channelKey(c)),"off").apply()
-                    applySubtitlePreference(c)
-                    showBanner("Subtitles off")
-                }else if(choice==1){
-                    editor.putString("subtitle_"+hash(channelKey(c)),"auto").apply()
-                    applySubtitlePreference(c)
-                    showBanner("Subtitles automatic")
-                }else{
-                    val position=choice-2
-                    val (group,track)=entries[position]
-                    val language=languages[position]
-                    editor.putString("subtitle_"+hash(channelKey(c)),
-                        if(language=="und")"auto" else language).apply()
-                    applySubtitlePreference(c)
-                    exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
-                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT,false)
-                        .setOverrideForType(TrackSelectionOverride(group,listOf(track))).build()
-                    showBanner("Subtitles: "+choices[choice])
+        showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Subtitle tracks")
+            .setSingleChoiceItems(labels.toTypedArray(),selected){dialog,choice->
+                val value=when(choice){
+                    0->"off"
+                    1->"auto"
+                    else->tracks[choice-2].label
                 }
-            }.setNegativeButton("Cancel",null).create()
-        showSideDialog(dialog)
+                prefs.edit().putString("subtitle_"+hash(channelKey(c)),value).apply()
+                when(choice){
+                    0->mpv.chooseSubtitleTrack(null)
+                    1->mpv.chooseDefaultSubtitleTrack()
+                    else->mpv.chooseSubtitleTrack(tracks[choice-2].id)
+                }
+                dialog.dismiss()
+                showBanner("Subtitles: "+labels[choice])
+            }.setNegativeButton("Cancel",null).create())
     }
 
     private var sleepTimerTask:Runnable?=null
