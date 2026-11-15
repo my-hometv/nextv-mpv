@@ -5,13 +5,19 @@ on:
       licensing_cleared:
         description: 'Confirm MPV/FFmpeg license notices and corresponding-source obligations are satisfied'
         required: true
-        type: boolean
-        default: false
+        type: choice
+        options:
+          - 'no'
+          - 'yes'
+        default: 'no'
       apk_approved:
         description: 'Explicitly approve generating an APK in this manual run'
         required: true
-        type: boolean
-        default: false
+        type: choice
+        options:
+          - 'no'
+          - 'yes'
+        default: 'no'
 permissions:
   contents: read
 jobs:
@@ -24,8 +30,8 @@ jobs:
           LICENSING_CLEARED: ${{ inputs.licensing_cleared }}
           APK_APPROVED: ${{ inputs.apk_approved }}
         run: |
-          test "$LICENSING_CLEARED" = 'true' || { echo 'Native licensing clearance required' >&2; exit 1; }
-          test "$APK_APPROVED" = 'true' || { echo 'Explicit APK approval required' >&2; exit 1; }
+          test "$LICENSING_CLEARED" = 'yes' || { echo 'Native licensing clearance required' >&2; exit 1; }
+          test "$APK_APPROVED" = 'yes' || { echo 'Explicit APK approval required' >&2; exit 1; }
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
