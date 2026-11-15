@@ -7873,16 +7873,7 @@ class MainActivity: Activity() {
         }
     }
 
-    private fun isRemoteTransportReady(): Boolean {
-        if(mpvPlayer!=null)return true
-        val exo = player
-        if (exo != null) return try {
-            exo.playbackState == Player.STATE_READY
-        } catch (_: Exception) { false }
-        val vlc = vlcPlayer
-        if (vlc != null) return try { vlc.isPlaying } catch (_: Exception) { false }
-        return false
-    }
+    private fun isRemoteTransportReady():Boolean = mpvPlayer?.hasStarted==true
 
     override fun dispatchKeyEvent(event:KeyEvent):Boolean{
         // Do not reenter native teardown, but never discard remote recovery.
@@ -8043,13 +8034,9 @@ class MainActivity: Activity() {
                 if(media=="live" && event.keyCode in setOf(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,KeyEvent.KEYCODE_MEDIA_PLAY,KeyEvent.KEYCODE_MEDIA_PAUSE)){
                     if(isRemoteTransportReady()) safeRemoteTransport {
                         when(event.keyCode){
-                            KeyEvent.KEYCODE_MEDIA_PLAY->{player?.play();vlcPlayer?.play();mpvPlayer?.resume()}
-                            KeyEvent.KEYCODE_MEDIA_PAUSE->{player?.pause();vlcPlayer?.pause();mpvPlayer?.pause()}
-                            else->{
-                                player?.let{if(it.isPlaying)it.pause() else it.play()}
-                                vlcPlayer?.let{if(it.isPlaying)it.pause() else it.play()}
-                                mpvPlayer?.togglePause()
-                            }
+                            KeyEvent.KEYCODE_MEDIA_PLAY->mpvPlayer?.resume()
+                            KeyEvent.KEYCODE_MEDIA_PAUSE->mpvPlayer?.pause()
+                            else->mpvPlayer?.togglePause()
                         }
                     }
                     return true
@@ -8073,16 +8060,8 @@ class MainActivity: Activity() {
                             val delta=if(event.keyCode==KeyEvent.KEYCODE_DPAD_RIGHT ||
                                 event.keyCode==KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)10_000L else -10_000L
                             if(isRemoteTransportReady()) safeRemoteTransport {
-                                val exo=player
-                                val vlc=vlcPlayer
-                                if(exo!=null && exo.isCurrentMediaItemSeekable){
-                                    val target=(exo.currentPosition+delta).coerceAtLeast(0L)
-                                    exo.seekTo(if(exo.duration>0)target.coerceAtMost(exo.duration) else target)
-                                }else if(vlc!=null && vlc.isSeekable){
-                                    val target=(vlc.time+delta).coerceAtLeast(0L)
-                                    vlc.time=if(vlc.length>0)target.coerceAtMost(vlc.length) else target
-                                }else if(mpvPlayer!=null){
-                                    val mpv=mpvPlayer!!
+                                val mpv=mpvPlayer
+                                if(mpv!=null){
                                     val target=(mpv.positionMs+delta).coerceAtLeast(0L)
                                     mpv.seekTo(if(mpv.durationMs>0)target.coerceAtMost(mpv.durationMs) else target)
                                 }else Toast.makeText(this,"Seeking unavailable for this stream",Toast.LENGTH_SHORT).show()
@@ -8093,8 +8072,6 @@ class MainActivity: Activity() {
                         KeyEvent.KEYCODE_NUMPAD_ENTER->{mediaPlaybackControls();return true}
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE->{
                             if(isRemoteTransportReady()) safeRemoteTransport {
-                                player?.let{if(it.isPlaying)it.pause() else it.play()}
-                                vlcPlayer?.let{if(it.isPlaying)it.pause() else it.play()}
                                 mpvPlayer?.togglePause()
                             }
                             return true
