@@ -1222,7 +1222,7 @@ class MainActivity: Activity() {
         prefs.edit().putBoolean("first_failure_prompted_"+key,true).apply()
         val dialog=AlertDialog.Builder(this)
             .setTitle(c.name+" — no playable source found")
-            .setMessage("All URL and player combinations failed on this first attempt. What would you like to do?")
+            .setMessage("No available MPV stream started on this first attempt. What would you like to do?")
             .setPositiveButton("Retry all"){_,_->
                 failurePromptKey=null
                 recoveryPrompted.remove(key)
@@ -1276,9 +1276,8 @@ class MainActivity: Activity() {
     private fun cancelAlternativeBackgroundChecks(){
         failureSearches.clear()
     }
-    // MPV-only fallback: legacy Media3/LibVLC background probes cannot run
-    // in this edition. Offer unverified alternative URLs without claiming that
-    // they have been decoded or tested; foreground MPV confirms playback.
+    // MPV-only recovery offers unverified alternatives without claiming they
+    // have been decoded or tested; foreground MPV confirms playback.
     private fun offerMpvAlternative(index:Int, screen:FrameLayout) {
         val original=channels.getOrNull(index) ?: return
         if(active!=index || videoScreen!==screen || !licenseReady ||
@@ -3022,7 +3021,7 @@ class MainActivity: Activity() {
                 prefs.getBoolean("auto_hidden_channel_check",true) &&
                 prefs.getBoolean("background_hidden_channel_check",true) &&
                 !hiddenChannelCheckRunning)checkHiddenChannelsNow(showResults=false)
-            // stopPlayback saves VOD progress and releases Media3, LibVLC and WebView.
+            // stopPlayback saves VOD progress and releases native playback and WebView.
             stopPlayback()
         }
         super.onPause()
@@ -7241,7 +7240,7 @@ class MainActivity: Activity() {
                     restoreMpvTrackPreferences(c,view)
                     applyAudioPreset()
                     applyQuality()
-                    // Media3 previously restored VOD progress; retain that
+                    // Preserve VOD resume progress; retain that
                     // behavior now that MPV is the sole native media engine.
                     if(c.mediaType in setOf("movie","series","music")){
                         val resume=mediaResumeSeconds(c)
