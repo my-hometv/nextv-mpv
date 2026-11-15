@@ -53,8 +53,25 @@ jobs:
             sha256sum "$binary"
             readelf -h "$binary" | grep -E 'Class:|Machine:' || true
           done
+          mkdir -p app/build/reports/mpv-native
+          find app/build/intermediates -type f -name 'libmpv.so' -print0 | while IFS= read -r -d '' binary; do
+            echo "=== $binary ===" >> app/build/reports/mpv-native/abi-inventory.txt
+            file "$binary" >> app/build/reports/mpv-native/abi-inventory.txt
+            sha256sum "$binary" >> app/build/reports/mpv-native/abi-inventory.txt
+            readelf -h "$binary" >> app/build/reports/mpv-native/abi-inventory.txt
+            readelf -d "$binary" >> app/build/reports/mpv-native/abi-inventory.txt
+          done
+          gradle --no-daemon :app:dependencies --configuration debugRuntimeClasspath > app/build/reports/mpv-native/runtime-dependencies.txt
           echo "MPV/FFmpeg runtime version is also exposed in TV diagnostics."
           echo "Native library presence does not prove stream support or picture quality."
+      - name: Upload native audit evidence (no APK)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mpv-native-audit
+          path: app/build/reports/mpv-native/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Ensure APK was not generated
         shell: bash
         run: |
