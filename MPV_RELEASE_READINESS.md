@@ -1,0 +1,32 @@
+# NexTV MPV — release-readiness checklist
+
+## Current decision: HOLD for distribution
+This document is an engineering gate, not a legal certification or a claim of verified HDR output.
+
+### Verified engineering baseline
+- MPV-only app ID: `com.softppj.nextv.mpv` (independent of the stable NexTV package).
+- Native MPV binary observed in merged debug libraries for arm64-v8a, armeabi-v7a, x86, and x86_64 in GitHub Actions run 43681545625.
+- Latest source and integration tests for commit ed1088af passed (runs 43681812284 and 43681812286).
+- Foreground playback uses MPV; first-run decoder Automatic and output Auto; per-channel manual choices remain.
+- `MainActivity.kt` has no remaining literal Media3/LibVLC references as of the source audit.
+- Existing manifest includes INTERNET, ACCESS_NETWORK_STATE and RECEIVE_BOOT_COMPLETED; backup disabled; cleartext traffic enabled to support legacy HTTP IPTV endpoints. Review HTTP transport exposure before public release.
+
+### Native redistribution compliance — NOT CLEARED
+1. Retrieve the exact `dev.jdtech.mpv:libmpv:1.0.0` AAR, its POM and license notices, and retain immutable checksums.
+2. Identify mpv, FFmpeg, codec libraries, build flags, and all statically or dynamically linked components per ABI. ELF NEEDED entries alone cannot reveal statically linked components.
+3. Confirm each component's license and any GPL/LGPL compatibility, attribution, license-text, modification and corresponding-source obligations.
+4. Prepare required notices, license texts and complete corresponding source/build instructions or source offer, as applicable, for the distributed binary.
+5. Record reviewer, evidence, date and approval. Do not check `licensing_cleared` in manual workflows before these steps are complete.
+
+### Manual APK and prerelease workflows — prepared, NOT RUN
+- Both workflows use `workflow_dispatch` only, require `licensing_cleared=true` and `apk_approved=true`, run source and unit verification before assembling, and inspect MPV/arm64 native inclusion.
+- These inputs are attestations by the person dispatching the run; they are not independently verified legal evidence. Keep permissions limited and restrict release operators.
+- Artifact workflow uploads a debug APK; prerelease workflow publishes an experimental GitHub prerelease. Neither should run without user approval.
+- Confirm GitHub workflow syntax and run a non-APK source check after editing workflows.
+
+### TV testing — user-owned
+- Test Surya TV HDR10 stream and ordinary SDR channels for colour accuracy, HDR signalling, frame pacing, startup latency, audio, short network interruptions, alternative URL behaviour, and extended playback.
+- The current RGBA_8888 SurfaceView does not establish genuine 10-bit HDR presentation. Force HDR10 is a request, not proof of HDR output.
+
+### Release decision
+Do not mark this project distribution-ready until native compliance is documented, final CI is green, user authorizes APK creation, and physical TV testing passes.
