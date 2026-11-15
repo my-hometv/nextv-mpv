@@ -1273,34 +1273,12 @@ class MainActivity: Activity() {
         alternativePromptKey=null
         try{dialog?.dismiss()}catch(_:Exception){}
     }
-    private val alternativeProbeStops=mutableMapOf<String,()->Unit>()
-    // A same-channel reconnect must not destroy its independent alternative scan.
+    // Keep recovery state across a same-channel reconnect, but do not
+    // retain decoder cancellation callbacks: MPV does not launch such probes.
     private var preservingRecoveryScan=false
     private var recoveryScanSession=0L
-    private var cancellingAlternativeChecks=false
     private fun cancelAlternativeBackgroundChecks(){
-        // Cancellation callbacks may schedule a fallback engine. Suppress that
-        // handoff during full teardown, but allow it for engine-only disable.
-        val stops=alternativeProbeStops.values.toList()
-        alternativeProbeStops.clear()
         failureSearches.clear()
-        cancellingAlternativeChecks=true
-        try{
-            stops.forEach{stop->try{stop()}catch(e:Exception){
-                HomeTvDiagnostics.w("SmartPlay","Alternative probe cancellation failed",e)
-            }}
-        }finally{
-            cancellingAlternativeChecks=false
-        }
-    }
-    private fun cancelDisabledEngineProbes(){
-        // Iterate a snapshot because a stop callback unregisters its engine.
-        alternativeProbeStops.filterKeys{!engineEnabled(it)}
-            .values.toList().forEach{stop->
-                try{stop()}catch(e:Exception){
-                    HomeTvDiagnostics.w("SmartPlay","Disabled engine probe cancellation failed",e)
-                }
-            }
     }
     // MPV-only fallback: legacy Media3/LibVLC background probes cannot run
     // in this edition. Offer unverified alternative URLs without claiming that
