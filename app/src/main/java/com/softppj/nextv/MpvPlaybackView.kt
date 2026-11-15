@@ -1,6 +1,8 @@
 package com.softppj.nextv
 
 import android.content.Context
+import android.hardware.display.DisplayManager
+import android.view.Display
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -41,6 +43,23 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         holder.setFormat(PixelFormat.RGBA_8888)
     }
 
+    /**
+     * SurfaceView.display can be null before the view is attached. Resolve the
+     * Android default display explicitly for first-tune HDR capability checks.
+     * This checks advertised capabilities, not whether libmpv negotiated HDR.
+     */
+    private fun hdr10DisplaySupported(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+        val activeDisplay = display ?: runCatching {
+            (context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+                ?.getDisplay(Display.DEFAULT_DISPLAY)
+        }.getOrNull()
+        return runCatching {
+            activeDisplay?.hdrCapabilities?.supportedHdrTypes?.contains(
+                Display.HdrCapabilities.HDR_TYPE_HDR10) == true
+        }.getOrDefault(false)
+    }
+
     fun initialize(decoder: String = "Automatic", outputMode: String = "Auto", silentPreview: Boolean = false) {
         check(mpv == null && !closed)
         selectedDecoder = decoder
@@ -65,12 +84,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             // Preserve automatic source/output negotiation unless the display
             // actually advertises HDR10. This is not a claim that the Android
             // SurfaceView pipeline itself can switch into an HDR buffer mode.
-            val hdr10Supported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                try {
-                    display?.hdrCapabilities?.supportedHdrTypes?.contains(
-                        android.view.Display.HdrCapabilities.HDR_TYPE_HDR10) == true
-                } catch (_: RuntimeException) { false }
-            } else false
+            val hdr10Supported = hdr10DisplaySupported()
             selectedOutputMode = MpvPlaybackPolicy.effectiveOutputMode(outputMode, hdr10Supported)
             when (selectedOutputMode) {
                 "Force HDR10" -> {
@@ -366,7 +380,9 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         // name containing HDR10 does not establish the actual transfer function.
         val displayHdr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             runCatching {
-                val types = (display?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf())
+                val currentDisplay=display ?: (context.getSystemService(Context.DISPLAY_SERVICE)
+                    as? DisplayManager)?.getDisplay(Display.DEFAULT_DISPLAY)
+                val types = (currentDisplay?.hdrCapabilities?.supportedHdrTypes ?: intArrayOf())
                 if (types.isEmpty()) "none reported" else types.joinToString(",") { type ->
                     when (type) {
                         android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"
