@@ -562,10 +562,7 @@ class MainActivity: Activity() {
                 BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
                     foregroundKey,foreground?.url,channelKey(candidate),url
                 ) &&
-                    BackgroundProbeUrlPolicy.isMpvProbeCandidate(url) &&
-                    (url.startsWith("http://",true) || url.startsWith("https://",true)) &&
-                    BackgroundProbeUrlPolicy.isNativeProbeCandidate(url) &&
-                    true
+                    BackgroundProbeUrlPolicy.isHttpProbeCandidate(url)
             }.take(12).toList()
         // One eligible alternate is still worth probing.
         if(queuedChannels.isEmpty())return
