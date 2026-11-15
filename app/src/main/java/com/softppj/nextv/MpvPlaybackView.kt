@@ -183,6 +183,30 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         }
     }
 
+    // Some streams expose multiple independently selectable video tracks.
+    // A single adaptive HLS/DASH track cannot be bitrate-limited by selecting
+    // a track; in that case leave the broadcaster's original quality intact.
+    fun selectVideoQuality(maxHeight: Int?) {
+        val engine = mpv ?: return
+        if (closed) return
+        val count = (engine.getPropertyInt("track-list/count") ?: 0).coerceIn(0, 100)
+        val variants = buildList {
+            for (i in 0 until count) {
+                if (engine.getPropertyString("track-list/$i/type") != "video") continue
+                val id = engine.getPropertyInt("track-list/$i/id") ?: continue
+                val height = engine.getPropertyInt("track-list/$i/demux-h")
+                    ?: engine.getPropertyInt("track-list/$i/h")
+                    ?: continue
+                if (height > 0) add(id to height)
+            }
+        }
+        if (variants.size < 2) return
+        val eligible = maxHeight?.let { limit -> variants.filter { it.second <= limit } }
+            ?.takeIf { it.isNotEmpty() } ?: variants
+        val chosen = eligible.maxByOrNull { it.second } ?: return
+        engine.setPropertyInt("vid", chosen.first)
+    }
+
     fun choosePreferredAudioLanguage(language: String) {
         if (closed) return
         mpv?.setPropertyString("alang", language)
