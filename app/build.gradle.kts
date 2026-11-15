@@ -116,6 +116,12 @@ val verifyMpvRuntime by tasks.registering {
             (it.group == "org.videolan.android" && it.name.startsWith("libvlc")) ||
                 (it.group == "io.github.anilbeesetti" && it.name.startsWith("nextlib"))
         }) { "Legacy native playback dependency leaked into MPV runtime" }
+        check(modules.none {
+            it.group == "androidx.media3" &&
+                it.name in setOf("media3-ui", "media3-effect", "media3-exoplayer-hls",
+                    "media3-exoplayer-dash", "media3-exoplayer-rtsp",
+                    "media3-exoplayer-smoothstreaming")
+        }) { "Unused legacy Media3 playback/UI module leaked into MPV runtime" }
         println("Verified MPV native runtime without LibVLC or nextlib")
     }
 }
