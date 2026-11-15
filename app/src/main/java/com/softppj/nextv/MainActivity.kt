@@ -7210,6 +7210,15 @@ class MainActivity: Activity() {
                     HomeTvDiagnostics.i("Startup","MPV first playback after "+
                         (android.os.SystemClock.elapsedRealtime()-startupTuneStartedAt)+" ms")
                     restoreMpvTrackPreferences(c,view)
+                    // Media3 previously restored VOD progress; retain that
+                    // behavior now that MPV is the sole native media engine.
+                    if(c.mediaType in setOf("movie","series","music")){
+                        val resume=mediaResumeSeconds(c)
+                        val duration=view.durationMs
+                        if(resume>0L && (duration<=0L || resume*1000L<duration-5000L)){
+                            view.seekTo(resume*1000L)
+                        }
+                    }
                     rememberWorking(c,generation)
                     autoBufferHealthy()
                     updateClock()
