@@ -41,7 +41,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         holder.setFormat(PixelFormat.RGBA_8888)
     }
 
-    fun initialize(decoder: String = "Automatic", outputMode: String = "Auto") {
+    fun initialize(decoder: String = "Automatic", outputMode: String = "Auto", silentPreview: Boolean = false) {
         check(mpv == null && !closed)
         selectedDecoder = decoder
         selectedOutputMode = outputMode
@@ -52,7 +52,13 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             engine.setOptionString("vo", "gpu")
             engine.setOptionString("gpu-context", "android")
             engine.setOptionString("opengl-es", "yes")
-            engine.setOptionString("ao", "audiotrack,opensles")
+            // A preview must never take over or interrupt foreground audio.
+            if (silentPreview) {
+                engine.setOptionString("audio", "no")
+                engine.setOptionString("ao", "null")
+            } else {
+                engine.setOptionString("ao", "audiotrack,opensles")
+            }
             engine.setOptionString("hwdec", MpvPlaybackPolicy.hardwareDecoder(decoder))
             engine.setOptionString("video-sync", "audio")
             // Explicit user-selectable output targets for HDR/SDR comparison.
