@@ -7,6 +7,32 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class AlternativeRecoveryPolicyTest {
+    @Test fun mpvOnlyRecoverySkipsFailedUrlsWithoutChangingEngine() {
+        val attempted = mutableSetOf<String>()
+        val urls = listOf("https://tv.example/a.m3u8", "https://tv.example/b.m3u8")
+        val first = AlternativeRecoveryPolicy.nextEngineFirst(
+            urls, listOf("MPV"), { it }, { _, engine -> engine == "MPV" }, attempted)
+        assertEquals(urls[0] to "MPV", first)
+        attempted += AlternativeRecoveryPolicy.attemptKey(urls[0], "MPV")
+        val second = AlternativeRecoveryPolicy.nextEngineFirst(
+            urls, listOf("MPV"), { it }, { _, engine -> engine == "MPV" }, attempted)
+        assertEquals(urls[1] to "MPV", second)
+        attempted += AlternativeRecoveryPolicy.attemptKey(urls[1], "MPV")
+        assertNull(AlternativeRecoveryPolicy.nextEngineFirst(
+            urls, listOf("MPV"), { it }, { _, _ -> true }, attempted))
+    }
+
+    @Test fun staleQueuedAlternativeCannotReplaceRecoveredForeground() {
+        assertFalse(AlternativeRecoveryPolicy.mayApplyQueuedSwitch(
+            true, true, false, true, true, true))
+        assertFalse(AlternativeRecoveryPolicy.mayApplyQueuedSwitch(
+            true, true, true, true, false, true))
+        assertFalse(AlternativeRecoveryPolicy.mayApplyQueuedSwitch(
+            true, true, true, false, true, true))
+        assertTrue(AlternativeRecoveryPolicy.mayApplyQueuedSwitch(
+            true, true, true, true, true, true))
+    }
+
     @Test fun circularSelectionSkipsFailedSourcesAndWraps() {
         val urls=listOf("a","b","c","d")
         assertEquals(3,AlternativeRecoveryPolicy.nextCircularUsable(urls,0,setOf("b","c")){it})
