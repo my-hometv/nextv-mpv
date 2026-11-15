@@ -786,7 +786,6 @@ class MainActivity: Activity() {
     private val unlockedGroupsThisSession=mutableSetOf<String>()
     private var unlockedChannel:String?=null
     private var videoScreen:FrameLayout?=null
-    private var currentPlayerView:PlayerView?=null
     private val handler=Handler(Looper.getMainLooper())
     // Main-thread playback teardown is reentrant when native players dispatch callbacks.
     private var playbackTeardownInProgress=false
@@ -6449,98 +6448,10 @@ class MainActivity: Activity() {
         }
         return prefs.getString("screen_mode","Fit") ?: "Fit"
     }
-    private fun resizeMode():Int=when(screenMode()){
-        "Stretch"->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
-        "Fill / Crop","Zoom 110%","Zoom 125%","Zoom 150%"->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-        else->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-    }
-    private fun prepareVideoView(view:PlayerView){
-        val mode=screenMode()
-        view.resizeMode=resizeMode()
-        view.setBackgroundColor(android.graphics.Color.BLACK)
-        val ratio=when(mode){
-            "16:9"->16f/9f
-            "4:3"->4f/3f
-            "21:9"->21f/9f
-            "1:1"->1f
-            else->0f
-        }
-        if(ratio>0f){
-            view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)?.setAspectRatio(ratio)
-        }
-    }
     private fun applyVideoSize(){
-        val mode=screenMode()
-        mpvPlayer?.setPictureScale(mode)
-        val forcedRatio=when(mode){
-            "16:9"->16f/9f
-            "4:3"->4f/3f
-            "21:9"->21f/9f
-            "1:1"->1f
-            else->0f
-        }
-        currentPlayerView?.let{view->
-            view.resizeMode=resizeMode()
-            val frame=view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
-            val format=player?.videoFormat
-            val natural=if(format!=null && format.height>0)
-                format.width.toFloat()*format.pixelWidthHeightRatio/format.height else 0f
-            // Preserve a user-selected ratio even when Media3 updates its video dimensions.
-            if(forcedRatio>0f){
-                frame?.setAspectRatio(forcedRatio)
-            }else if(natural>0f){
-                frame?.setAspectRatio(natural)
-            }
-            // The content frame handles fit, crop and stretch; avoid double-scaling.
-            view.videoSurfaceView?.let{surface->
-                val zoom=when(mode){
-                    "Zoom 110%"->1.10f
-                    "Zoom 125%"->1.25f
-                    "Zoom 150%"->1.50f
-                    else->1f
-                }
-                surface.scaleX=zoom
-                surface.scaleY=zoom
-            }
-        }
-        vlcPlayer?.let{vlc->
-            try{
-                val displayRatio=resources.displayMetrics.let{if(it.heightPixels>0)it.widthPixels.toFloat()/it.heightPixels else 16f/9f}
-                val videoRatio=vlcVideoRatio(vlc)
-                val cropRatio=if(videoRatio>0f)videoRatio else displayRatio
-                vlc.setScale(0f)
-                vlc.setAspectRatio(when(mode){
-                    "16:9"->"16:9"
-                    "4:3"->"4:3"
-                    "21:9"->"21:9"
-                    "1:1"->"1:1"
-                    "Stretch"->resources.displayMetrics.let{"${it.widthPixels}:${it.heightPixels}"}
-                    else->null
-                })
-                val scale=when(mode){
-                    "Original"->1f
-                    "Zoom 110%"->1.10f
-                    "Zoom 125%"->1.25f
-                    "Zoom 150%"->1.50f
-                    "Fill / Crop"->if(cropRatio>0f && displayRatio>0f)maxOf(displayRatio/cropRatio,cropRatio/displayRatio) else 1f
-                    else->0f
-                }
-                if(scale>0f)vlc.setScale(scale)
-            }catch(e:Exception){HomeTvDiagnostics.w("HomeTV","Video size adjustment",e)}
-        }
-    }
-    // LibVLC 4 EAP removed currentVideoTrack. Resolve optional video metadata
-    // reflectively so 3.x remains compatible without hard-linking to 4.x APIs.
-    private fun vlcVideoRatio(vlc:VlcPlayer):Float{
-        return try{
-            val method=vlc.javaClass.methods.firstOrNull{
-                it.name=="getCurrentVideoTrack" && it.parameterCount==0
-            } ?: return 0f
-            val track=method.invoke(vlc) ?: return 0f
-            val width=track.javaClass.getField("width").getInt(track)
-            val height=track.javaClass.getField("height").getInt(track)
-            if(height>0)width.toFloat()/height else 0f
-        }catch(_:ReflectiveOperationException){0f}
+        // All native video routes use the MPV surface. No Media3 or LibVLC
+        // resize state is needed, including for per-channel aspect overrides.
+        mpvPlayer?.setPictureScale(screenMode())
     }
     private fun selectScreenMode(channelIndex:Int?=null){
         val returnToSettings=settingsScreenVisible
@@ -8330,7 +8241,7 @@ class MainActivity: Activity() {
         retryTask=null
         qualityUpgradeTask?.let{handler.removeCallbacks(it)}
         qualityUpgradeTask=null
-        bannerTask=null;banner=null;videoScreen=null;currentPlayerView=null
+        bannerTask=null;banner=null;videoScreen=null
         releaseAudioEqualizer()
         val oldPlayer=player
         player=null
