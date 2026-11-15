@@ -22,6 +22,14 @@ class MpvPlaybackPolicyTest {
      assertEquals("Auto", MpvPlaybackPolicy.effectiveOutputMode("Media3", true))
      assertEquals("Auto", MpvPlaybackPolicy.effectiveOutputMode("", false))
  }
+ @Test fun softwareFallbackOnlyForFirstUnconfirmedAutomaticFailure() {
+     assertTrue(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Automatic", false, false, false))
+     assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Automatic", true, false, false))
+     assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Automatic", false, true, false))
+     assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Automatic", false, false, true))
+     assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Hardware copy", false, false, false))
+     assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Software", false, false, false))
+ }
  @Test fun explicitTransportStreamIsDetected() {
      assertTrue(MpvPlaybackPolicy.isExplicitTransportStream("https://example.test/live/channel.ts"))
      assertTrue(MpvPlaybackPolicy.isExplicitTransportStream("https://example.test/live/CHANNEL.TS?token=redacted"))
