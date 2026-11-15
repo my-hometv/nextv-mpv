@@ -440,7 +440,9 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             "Video output: "+str("current-vo"),
             "GPU debanding: "+str("deband"),
             "Dither depth: "+str("dither-depth"),
-            "Android surface pixel format: RGBA_8888",
+            "Android surface pixel format: RGBA_8888 (8-bit per channel)",
+            "HDR surface negotiation: not confirmed by this renderer",
+            "HDR note: display capability and PQ target do not prove HDR10 presentation",
             "Playback started: "+started,
             "Surface attached: "+attached
         ).joinToString("\n")
