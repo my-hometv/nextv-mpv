@@ -169,7 +169,7 @@ class BackgroundProbeUrlPolicyTest {
     @Test fun trailingDotOnOrdinaryStreamHostRemainsAllowed() {
         assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
             "https://iptv.example./live.m3u8"))
-        assertTrue(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
+        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
             "https://iptv.example./live.m3u8"))
     }
 
@@ -187,7 +187,7 @@ class BackgroundProbeUrlPolicyTest {
             "https://[::1]:8443/live"))
         assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
             "http://iptv.example:8080/live.ts"))
-        assertTrue(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
+        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
             "http://iptv.example:8080/live.ts"))
     }
 
