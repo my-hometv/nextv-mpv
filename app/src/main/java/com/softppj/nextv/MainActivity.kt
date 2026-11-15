@@ -1046,19 +1046,11 @@ class MainActivity: Activity() {
         val key=channelKey(channel)
         val confirmed=prefs.getString("working_url_"+key,null)==channel.url &&
             prefs.getString("confirmed_engine_"+key,null)==engine
-        val observedAt=when(engine){
-            "Media3"->media3ProbeObservedAt[channel.url]
-            "LibVLC"->vlcProbeObservedAt[channel.url]
-            else->null
-        }
+        val observedAt=media3ProbeObservedAt[channel.url]
         val fresh=AlternativeLinkConfidencePolicy.isFresh(
             observedAt,android.os.SystemClock.elapsedRealtime(),probeConfidenceMaxAgeMs
         )
-        val probe=if(!fresh)null else when(engine){
-            "Media3"->probeReachable[channel.url]
-            "LibVLC"->vlcProbeReachable[channel.url]
-            else->null
-        }
+        val probe=if(fresh)probeReachable[channel.url] else null
         return AlternativeLinkConfidencePolicy.score(confirmed,probe)
     }
     private fun alternativeEngineConfidence(channel:Channel,engine:String):String{
@@ -4277,8 +4269,6 @@ class MainActivity: Activity() {
                     val validUrls=nextChannels.asSequence().map{it.url}.toHashSet()
                     probeReachable.keys.retainAll(validUrls)
                     media3ProbeObservedAt.keys.retainAll(validUrls)
-                    vlcProbeObservedAt.keys.retainAll(validUrls)
-                    vlcProbeReachable.keys.retainAll(validUrls)
                     if(forceRebuild)Toast.makeText(this,"Rebuilt "+updated+"/"+sources.size+" playlists • "+actualChannelCount()+" channels",Toast.LENGTH_LONG).show()
                 }
                 // Preserve whichever channel is playing when the refresh finishes,
@@ -4307,35 +4297,15 @@ class MainActivity: Activity() {
             }
         }
     }
-    // Bounded background stream checks: optional players, never the on-screen player.
+    // Bounded MPV-edition HTTP reachability checks. Never allocate a decoder.
     @Volatile private var backgroundProbeGeneration=0
     private var backgroundProbePlaylist:MutableList<Channel>?=null
     private val probeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
     private var periodicProbeTask:Runnable?=null
-    private var probeQueue=java.util.ArrayDeque<Channel>()
     private var backgroundProbeOffset=0
-    private var probePositionByUrl:Map<String,Int> = emptyMap()
-    private val probePlayers=mutableSetOf<ExoPlayer>()
-    private val probeWatchdogs=mutableMapOf<ExoPlayer,Runnable>()
-    private var probeInFlight=0
-    // A successful or failed decoder probe is recent evidence only. Old
-    // results must not remain displayed as current confidence indefinitely.
+    // Historical name retained temporarily for preference/data compatibility.
     private val media3ProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
-    private val vlcProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
     private val probeConfidenceMaxAgeMs=30*60*1000L
-    private val vlcProbeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
-    private val vlcProbeQueue=java.util.ArrayDeque<Channel>()
-    // Per-generation deduplication: a URL is attempted at most once per engine.
-    private val media3ProbeAttempted=HashSet<String>()
-    private val vlcProbeAttempted=HashSet<String>()
-    private var vlcProbeCore:LibVLC?=null
-    private var vlcProbePlayer:VlcPlayer?=null
-    private var vlcProbeWatchdog:Runnable?=null
-    // An active native probe may be cancelled by a scan-generation reset.
-    // Track its identity so a stale catch/callback cannot release a successor.
-    private var vlcProbeOwnerGeneration=-1
-    // Every enabled-engine configuration must eventually advance the rotating
-    // background scan window, including installations without LibVLC.
     private fun scheduleNextBackgroundProbeWindow(generation:Int){
         if(generation!=backgroundProbeGeneration || !appInForeground ||
             !licenseReady || safeStartupMode ||
@@ -4348,180 +4318,6 @@ class MainActivity: Activity() {
                 startBackgroundChannelChecks()
         }
         handler.postDelayed(periodicProbeTask!!,15*60*1000L)
-    }
-    private fun stopVlcProbe(){
-        vlcProbeWatchdog?.let{handler.removeCallbacks(it)}
-        vlcProbeWatchdog=null
-        // A native stop failure must never skip release: leaked LibVLC
-        // players can hold decoders and starve foreground playback.
-        vlcProbePlayer?.let{probe->
-            try{probe.stop()}catch(_:Exception){}
-            try{probe.release()}catch(_:Exception){}
-        }
-        vlcProbePlayer=null
-        vlcProbeCore?.let{try{it.release()}catch(_:Exception){}}
-        vlcProbeCore=null
-        vlcProbeOwnerGeneration=-1
-    }
-    private fun launchNextVlcProbe(generation:Int){
-        // Queued entries belong to the playlist at scan creation, not the
-        // playlist that happens to be active when a decoder finishes.
-        if(generation==backgroundProbeGeneration && channels !== backgroundProbePlaylist){
-            if(appInForeground && licenseReady && !safeStartupMode &&
-                prefs.getBoolean("background_url_checks",false))
-                startBackgroundChannelChecks()
-            return
-        }
-        if(generation!=backgroundProbeGeneration || !appInForeground ||
-            !licenseReady || safeStartupMode ||
-            !prefs.getBoolean("background_url_checks",false) || vlcProbePlayer!=null)return
-        // Media3-only configurations still need the next rotating window.
-        // Previously this early return stopped background checks permanently.
-        if(!engineEnabled("LibVLC")){
-            if(probeInFlight==0 && probeQueue.isEmpty())
-                scheduleNextBackgroundProbeWindow(generation)
-            return
-        }
-        // Never start LibVLC until enabled Media3 probes have completed.
-        if(probeInFlight>0 || (engineEnabled("Media3") && probeQueue.isNotEmpty()))return
-        // Both engine queues can be empty after URL filtering. Complete the
-        // window without allocating a native player or scheduling network
-        // retries for work that no longer exists.
-        if(vlcProbeQueue.isEmpty()){
-            scheduleNextBackgroundProbeWindow(generation)
-            return
-        }
-        // Never keep a completed scan alive through an obsolete delayed retry.
-        periodicProbeTask?.let{handler.removeCallbacks(it)}
-        periodicProbeTask=null
-        // Native probing is optional. Pause the scan when connectivity is lost
-        // rather than exhausting the entire URL window with false negatives.
-        if(!hasNetworkConnection()){
-            periodicProbeTask?.let{handler.removeCallbacks(it)}
-            periodicProbeTask=Runnable{
-                if(generation==backgroundProbeGeneration &&
-                    prefs.getBoolean("background_url_checks",false))launchNextVlcProbe(generation)
-            }
-            handler.postDelayed(periodicProbeTask!!,15000L)
-            return
-        }
-        // Foreground playback wins decoder resources during startup/rebuffering,
-        // including WebView and the gap before a native player is allocated.
-        if(active>=0 && (vlcPlayer!=null ||
-                (player==null && web==null) ||
-                (player!=null && player?.isPlaying!=true))){
-            periodicProbeTask?.let{handler.removeCallbacks(it)}
-            periodicProbeTask=Runnable{if(generation==backgroundProbeGeneration)
-                launchNextVlcProbe(generation)}
-            handler.postDelayed(periodicProbeTask!!,3000L)
-            return
-        }
-        var channel:Channel?=null
-        var inspectedVlcCandidates=0
-        while(vlcProbeQueue.isNotEmpty() && inspectedVlcCandidates<32){
-            inspectedVlcCandidates++
-            val candidate=vlcProbeQueue.removeFirst()
-            // The foreground selection can change after this scan was queued.
-            // Recheck against the current channel before allocating LibVLC.
-            val foreground=channels.getOrNull(active)
-            if(!BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                foreground?.let{channelKey(it)},foreground?.url,
-                channelKey(candidate),candidate.url
-            ))continue
-            if(!BackgroundProbeUrlPolicy.isNativeProbeCandidate(candidate.url))continue
-            if(vlcProbeAttempted.add(BackgroundProbeUrlPolicy.probeIdentity(candidate.url))){
-                channel=candidate
-                break
-            }
-        }
-        if(channel==null && vlcProbeQueue.isNotEmpty()){
-            // Yield instead of synchronously filtering the entire playlist.
-            handler.post{if(generation==backgroundProbeGeneration)launchNextVlcProbe(generation)}
-            return
-        }
-        if(channel==null){
-            // Both engines finished their ordered pass; rotate the window
-            // after the normal interval, including when LibVLC is disabled.
-            scheduleNextBackgroundProbeWindow(generation)
-            return
-        }
-        val probePlaylist=backgroundProbePlaylist
-        // Claim this generation before constructing native objects. LibVLC's
-        // constructor itself can throw; without ownership the catch handler
-        // silently abandoned the entire remaining scan window.
-        vlcProbeOwnerGeneration=generation
-        try{
-            val core=LibVLC(this,arrayListOf("--no-audio","--no-video","--network-caching=1200","--http-reconnect"))
-            vlcProbeCore=core
-            val probe=VlcPlayer(core)
-            vlcProbePlayer=probe
-            var completed=false
-            fun finish(working:Boolean){
-                if(completed || generation!=backgroundProbeGeneration || vlcProbePlayer!==probe)return
-                completed=true
-                val currentForeground=channels.getOrNull(active)
-                val stillBackground=BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                    currentForeground?.let{channelKey(it)},currentForeground?.url,
-                    channelKey(channel),channel.url
-                )
-                if(generation==backgroundProbeGeneration && stillBackground &&
-                    channels === probePlaylist && licenseReady &&
-                    !safeStartupMode && engineEnabled("LibVLC") &&
-                    prefs.getBoolean("background_url_checks",false)){
-                    vlcProbeReachable[channel.url]=working
-                    vlcProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
-                    if(working)unavailableChannels.remove(channelKey(channel))
-                }
-                handler.post{
-                    if(vlcProbePlayer===probe){
-                        stopVlcProbe()
-                        launchNextVlcProbe(generation)
-                    }
-                }
-            }
-            probe.setEventListener{event->
-                val result=when(event.type){
-                    VlcPlayer.Event.Playing->true
-                    VlcPlayer.Event.EncounteredError,VlcPlayer.Event.EndReached->false
-                    else->null
-                }
-                if(result!=null)handler.post{
-                    if(vlcProbePlayer===probe && generation==backgroundProbeGeneration)
-                        finish(result)
-                }
-            }
-            val media=VlcMedia(core,Uri.parse(channel.url))
-            try{
-                media.addOption(":no-audio")
-                media.addOption(":no-video")
-                HomeTvPolicies.libVlcHttpHeaderOptions(channel.headers).forEach{media.addOption(it)}
-                probe.media=media
-            }finally{
-                media.release()
-            }
-            vlcProbeWatchdog=Runnable{finish(false)}
-            handler.postDelayed(vlcProbeWatchdog!!,6500L)
-            probe.play()
-        }catch(e:Exception){
-            HomeTvDiagnostics.w("HomeTV","Background LibVLC probe failed for "+channel.name,e)
-            if(generation!=backgroundProbeGeneration ||
-                vlcProbeOwnerGeneration!=generation){
-                // Never tear down a native probe owned by a newer scan.
-                return
-            }
-            val currentForeground=channels.getOrNull(active)
-            if(BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                currentForeground?.let{channelKey(it)},currentForeground?.url,
-                channelKey(channel),channel.url
-            ) && channels === probePlaylist && engineEnabled("LibVLC") &&
-                prefs.getBoolean("background_url_checks",false) &&
-                licenseReady && !safeStartupMode){
-                vlcProbeReachable[channel.url]=false
-                vlcProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
-            }
-            stopVlcProbe()
-            handler.post{launchNextVlcProbe(generation)}
-        }
     }
 
     // Background availability is a lightweight HTTP check, not a second video engine.
@@ -4561,18 +4357,6 @@ class MainActivity: Activity() {
         val generation=backgroundProbeGeneration
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         periodicProbeTask=null
-        // Cancel any legacy decoder probes from a previous generation.
-        probeWatchdogs.values.forEach{handler.removeCallbacks(it)}
-        probeWatchdogs.clear()
-        probePlayers.toList().forEach{probe->
-            runCatching{probe.stop()}
-            runCatching{probe.release()}
-        }
-        probePlayers.clear()
-        probeInFlight=0
-        probeQueue.clear()
-        vlcProbeQueue.clear()
-        stopVlcProbe()
         if(!appInForeground || !licenseReady || safeStartupMode ||
             !prefs.getBoolean("background_url_checks",false))return
         val playlist=channels
@@ -4626,196 +4410,6 @@ class MainActivity: Activity() {
         }
     }
     // Bounded decoder-backed probes. Keep them subordinate to foreground playback.
-    private fun launchNextProbe(generation:Int){
-        // Queued entries belong to the playlist at scan creation, not the
-        // playlist that happens to be active when a decoder finishes.
-        if(generation==backgroundProbeGeneration && channels !== backgroundProbePlaylist){
-            if(appInForeground && licenseReady && !safeStartupMode &&
-                prefs.getBoolean("background_url_checks",false))
-                startBackgroundChannelChecks()
-            return
-        }
-        if(generation!=backgroundProbeGeneration || !appInForeground ||
-            !licenseReady || safeStartupMode ||
-            !prefs.getBoolean("background_url_checks",false))return
-        // Engine disable is a control-plane change, not a decoder-capacity
-        // decision. Handle it before network/buffering gates: otherwise an
-        // exhausted Media3 queue can strand the enabled LibVLC fallback.
-        if(!engineEnabled("Media3")){
-            probeQueue.clear()
-            // Native decoder callbacks can be delayed indefinitely after an
-            // engine is disabled. Reclaim the background-only Media3 players
-            // now, rather than blocking the enabled LibVLC phase forever.
-            // Never release the foreground player from this collection.
-            probeWatchdogs.values.forEach { handler.removeCallbacks(it) }
-            probeWatchdogs.clear()
-            probePlayers.toList().forEach { probe ->
-                try { probe.stop() } catch (_: Exception) {}
-                try { probe.release() } catch (_: Exception) {}
-            }
-            probePlayers.clear()
-            probeInFlight = 0
-            // With both engines disabled, close this scan window rather
-            // than abandoning the rotating scan indefinitely.
-            if(engineEnabled("LibVLC")) launchNextVlcProbe(generation)
-            else scheduleNextBackgroundProbeWindow(generation)
-            return
-        }
-        // An empty Media3 queue needs no network or decoder capacity.
-        // In particular, foreground buffering must not block the handoff
-        // after the last Media3 result has already been collected.
-        if(probeQueue.isEmpty()){
-            if(probeInFlight==0)launchNextVlcProbe(generation)
-            return
-        }
-        if(!hasNetworkConnection()){
-            periodicProbeTask?.let{handler.removeCallbacks(it)}
-            periodicProbeTask=Runnable{
-                if(generation==backgroundProbeGeneration &&
-                    prefs.getBoolean("background_url_checks",false))launchNextProbe(generation)
-            }
-            handler.postDelayed(periodicProbeTask!!,15000L)
-            return
-        }
-        // A foreground decoder always has priority: avoid two simultaneous
-        // background players competing for hardware codecs at startup.
-        val foregroundBuffering=active>=0 &&
-            (player?.playbackState==Player.STATE_BUFFERING ||
-             player?.playbackState==Player.STATE_IDLE)
-        // A WebView channel is not a native decoder, so its background
-        // checks may continue. Native startup and buffering take priority.
-        val foregroundStarting=active>=0 &&
-            ((player==null && web==null && vlcPlayer==null) ||
-             (player!=null && player?.isPlaying!=true))
-        val limit=VideoQualityPolicy.backgroundProbeLimit(
-            active>=0,foregroundBuffering,vlcPlayer!=null,foregroundStarting)
-        if(limit==0){
-            // Defer optional decoder work until foreground startup/rebuffering
-            // settles; retain the same generation and remaining probe queue.
-            periodicProbeTask?.let{handler.removeCallbacks(it)}
-            periodicProbeTask=Runnable{
-                if(generation==backgroundProbeGeneration)launchNextProbe(generation)
-            }
-            handler.postDelayed(periodicProbeTask!!,3000L)
-            return
-        }
-        // The scan queue was already ordered at generation creation.
-        // Re-sorting the entire queue before every probe caused repeated
-        // O(n²) work on the Activity thread for large IPTV playlists.
-        // Cap synchronous URL filtering/decoder creation per UI dispatch.
-        // Large playlists can contain hundreds of malformed or unsupported
-        // entries; draining them all in one loop freezes remote navigation.
-        var inspectedThisDispatch=0
-        while(probeInFlight<limit && probeQueue.isNotEmpty() &&
-            inspectedThisDispatch<32 && engineEnabled("Media3")){
-            inspectedThisDispatch++
-            val channel=probeQueue.removeFirst()
-            // A channel switch after queue construction must not allow a
-            // background decoder to probe the newly selected foreground group.
-            val foreground=channels.getOrNull(active)
-            if(!BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                foreground?.let{channelKey(it)},foreground?.url,
-                channelKey(channel),channel.url
-            ))continue
-            if(!BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(channel.url))continue
-            if(!media3ProbeAttempted.add(BackgroundProbeUrlPolicy.probeIdentity(channel.url)))continue
-            val probePlaylist=backgroundProbePlaylist
-            probeInFlight++
-            var createdProbe:ExoPlayer?=null
-            try{
-                val factory=DefaultHttpDataSource.Factory()
-                    .setAllowCrossProtocolRedirects(true)
-                    .setConnectTimeoutMs(3500).setReadTimeoutMs(4500)
-                    .setDefaultRequestProperties(channel.headers)
-                val probe=ExoPlayer.Builder(this)
-                    .setMediaSourceFactory(mediaSourceFactoryForStreams(factory)).build()
-                createdProbe=probe
-                probePlayers.add(probe)
-                probe.volume=0f
-                var completed=false
-                var watchdog:Runnable?=null
-                fun finish(media3Works:Boolean){
-                    if(completed || generation!=backgroundProbeGeneration || probe !in probePlayers)return
-                    completed=true
-                    watchdog?.let{handler.removeCallbacks(it)}
-                    probeWatchdogs.remove(probe)
-                    probePlayers.remove(probe)
-                    try{probe.stop()}catch(_:Exception){}
-                    try{probe.release()}catch(_:Exception){}
-                    if(generation!=backgroundProbeGeneration)return
-                    probeInFlight=(probeInFlight-1).coerceAtLeast(0)
-                    val currentForeground=channels.getOrNull(active)
-                    val stillBackground=BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                        currentForeground?.let{channelKey(it)},currentForeground?.url,
-                        channelKey(channel),channel.url
-                    )
-                    val resultEligible=stillBackground &&
-                        channels === probePlaylist && licenseReady &&
-                        !safeStartupMode && engineEnabled("Media3") &&
-                        prefs.getBoolean("background_url_checks",false)
-                    if(resultEligible){
-                        probeReachable[channel.url]=media3Works
-                        media3ProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
-                    }
-                    if(media3Works && resultEligible){
-                        // Each engine's reachability is independent. A Media3
-                        // success must not erase a proven LibVLC result.
-                        unavailableChannels.remove(channelKey(channel))
-                    }
-                    // launchNextProbe handles the Media3-to-LibVLC handoff
-                    // once the last in-flight Media3 probe finishes.
-                    launchNextProbe(generation)
-                }
-                probe.addListener(object:Player.Listener{
-                    override fun onIsPlayingChanged(isPlaying:Boolean){
-                        if(isPlaying)handler.post{finish(true)}
-                    }
-                    override fun onPlaybackStateChanged(state:Int){
-                        if(state==Player.STATE_ENDED)handler.post{finish(false)}
-                    }
-                    override fun onPlayerError(error:PlaybackException){
-                        handler.post{finish(false)}
-                    }
-                })
-                watchdog=Runnable{finish(false)}
-                probeWatchdogs[probe]=watchdog!!
-                handler.postDelayed(watchdog!!,7000L)
-                probe.setMediaItem(mediaItemForStream(channel.url))
-                probe.prepare()
-                probe.play()
-            }catch(e:Exception){
-                HomeTvDiagnostics.w("HomeTV","Background Media3 probe failed for "+channel.name,e)
-                createdProbe?.let{failed->
-                    probeWatchdogs.remove(failed)?.let{handler.removeCallbacks(it)}
-                    probePlayers.remove(failed)
-                    try{failed.stop()}catch(_:Exception){}
-                    try{failed.release()}catch(_:Exception){}
-                }
-                if(generation==backgroundProbeGeneration){
-                    probeInFlight=(probeInFlight-1).coerceAtLeast(0)
-                    val currentForeground=channels.getOrNull(active)
-                    if(BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                        currentForeground?.let{channelKey(it)},currentForeground?.url,
-                        channelKey(channel),channel.url
-                    ) && channels === probePlaylist && engineEnabled("Media3") &&
-                        prefs.getBoolean("background_url_checks",false) &&
-                        licenseReady && !safeStartupMode){
-                        probeReachable[channel.url]=false
-                        media3ProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
-                    }
-                    // LibVLC already has its own ordered engine-first queue.
-                    // Continue the Media3 phase even when a probe fails to start.
-                    handler.post{launchNextProbe(generation)}
-                }
-            }
-        }
-        if(probeQueue.isNotEmpty() && probeInFlight<limit && engineEnabled("Media3")){
-            // Yield to input, video rendering and player callbacks.
-            handler.post{if(generation==backgroundProbeGeneration)launchNextProbe(generation)}
-        }else if(probeInFlight==0 && probeQueue.isEmpty()){
-            launchNextVlcProbe(generation)
-        }
-    }
     // Discover links from a bounded Web TV directory, without touching normal IPTV entries.
     // This extracts navigable channel pages; playable streams are resolved by the WebView.
     private fun discoverWebDirectory(entry:Channel):List<Channel>{
@@ -10017,12 +9611,9 @@ class MainActivity: Activity() {
     override fun onDestroy(){
         epgTuneTask?.let{handler.removeCallbacks(it)};epgTuneTask=null
         sleepTimerTask?.let{handler.removeCallbacks(it)};sleepTimerTask=null
-        stopVlcProbe()
         backgroundProbeGeneration++
         refreshGeneration++
         periodicProbeTask?.let{handler.removeCallbacks(it)}
-        probePlayers.toList().forEach{try{it.release()}catch(_:Exception){}}
-        probePlayers.clear()
         stopPlayback()
         // Drop in-memory caches and queued UI work on final exit. Keep the
         // persistent playlist files, preferences and validated license cache.
