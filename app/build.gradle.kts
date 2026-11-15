@@ -128,6 +128,31 @@ val verifyMpvRuntime by tasks.registering {
 tasks.named("check") { dependsOn(verifyMpvRuntime) }
 
 /**
+ * Prevent obsolete native engine entry points from being reintroduced into
+ * the independently installed MPV edition while migration proceeds.
+ */
+val verifyMpvOnlyEntryPoints by tasks.registering {
+    group = "verification"
+    description = "Reject legacy player imports and VLC service registration."
+    doLast {
+        val activity = file("src/main/java/com/softppj/nextv/MainActivity.kt").readText()
+        val manifest = file("src/main/AndroidManifest.xml").readText()
+        listOf("import org.videolan.libvlc.", "import androidx.media3.").forEach { prefix ->
+            check(!activity.contains(prefix)) { "Legacy native player imported into MPV activity: $prefix" }
+        }
+        check(!manifest.contains("IsolatedVlcPlaybackService")) {
+            "Legacy isolated VLC service must not be registered in the MPV APK"
+        }
+        check(activity.contains("private fun startMpv(c:Channel,index:Int,screen:FrameLayout)")) {
+            "MPV foreground playback route missing"
+        }
+        println("Verified MPV activity entry points and manifest isolation")
+    }
+}
+tasks.named("check") { dependsOn(verifyMpvOnlyEntryPoints) }
+
+
+/**
  * Migration safety gate: GStreamer must not silently change the app identity,
  * persisted licensing keys, licence server contract, playlist parser or TV launcher.
  * This intentionally runs without any GStreamer native SDK being installed.
