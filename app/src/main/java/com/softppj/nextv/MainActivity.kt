@@ -6219,22 +6219,15 @@ class MainActivity: Activity() {
     private var previewQualityMode:String?=null
     private var previewQualityIndex:Int?=null
     private fun applyQuality(){
-        val exo=player ?:return
         val mode=if(previewQualityIndex==active)previewQualityMode ?: qualityMode() else qualityMode()
-        applyQualityMode(exo,mode)
-    }
-    private fun applyQualityMode(exo:androidx.media3.common.Player,mode:String){
         val maxHeight=when(mode){
             "Data Saver (360p)"->360
             "Standard (480p)"->480
             "HD (720p)"->720
             "Full HD (1080p)"->1080
-            else->Int.MAX_VALUE
+            else->null
         }
-        val builder=exo.trackSelectionParameters.buildUpon()
-            .setMaxVideoSize(Int.MAX_VALUE,maxHeight)
-            .setForceHighestSupportedBitrate(VideoQualityPolicy.forceHighestBitrate(mode))
-        exo.trackSelectionParameters=builder.build()
+        mpvPlayer?.selectVideoQuality(maxHeight)
     }
     private fun isYoutubeChannel(index:Int):Boolean{
         val host=try{channels.getOrNull(index)?.url?.let{Uri.parse(it).host?.lowercase(java.util.Locale.ROOT)}}catch(_:Exception){null}
@@ -6380,7 +6373,7 @@ class MainActivity: Activity() {
             .setSingleChoiceItems(options,selected){_,choice->
                 pending=choice
                 previewQualityMode=if(key!=null && choice==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[choice]
-                if(index==null || index==active)player?.let{applyQualityMode(it,previewQualityMode!!)}
+                if(index==null || index==active)applyQuality()
             }
             .setPositiveButton("OK"){_,_->
                 val editor=prefs.edit()
@@ -6403,7 +6396,7 @@ class MainActivity: Activity() {
                 override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){
                     pending=position;list.setItemChecked(position,true)
                     previewQualityMode=if(key!=null && position==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[position]
-                    if(index==null || index==active)player?.let{applyQualityMode(it,previewQualityMode!!)}
+                    if(index==null || index==active)applyQuality()
                 }
                 override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
             }
@@ -7210,6 +7203,7 @@ class MainActivity: Activity() {
                     HomeTvDiagnostics.i("Startup","MPV first playback after "+
                         (android.os.SystemClock.elapsedRealtime()-startupTuneStartedAt)+" ms")
                     restoreMpvTrackPreferences(c,view)
+                    applyQuality()
                     // Media3 previously restored VOD progress; retain that
                     // behavior now that MPV is the sole native media engine.
                     if(c.mediaType in setOf("movie","series","music")){
