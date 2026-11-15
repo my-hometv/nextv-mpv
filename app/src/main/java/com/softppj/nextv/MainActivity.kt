@@ -1351,9 +1351,11 @@ class MainActivity: Activity() {
         // Keep the retry paused while settings is open, but never leave an
         // abandoned callback polling indefinitely after a remote is left idle.
         var settingsWaits=0
+        val channelAtSchedule=channels.getOrNull(index) ?: return
         val task=object:Runnable{
             override fun run(){
                 if(active!=index || videoScreen!==screen ||
+                    channels.getOrNull(index)!==channelAtSchedule ||
                     playbackGeneration!=generation || playbackTeardownInProgress ||
                     retryTask!==this)return
                 if(screen.findViewWithTag<View>("settings_drawer")!=null){
@@ -7223,6 +7225,7 @@ class MainActivity: Activity() {
             mpvPlayer=view
             val watchdog=Runnable{
                 if(mpvPlayer===view && active==index && videoScreen===screen &&
+                    channels.getOrNull(index)===c &&
                     generation==playbackGeneration && !view.hasStarted){
                     HomeTvDiagnostics.w("MPV","First playback did not begin within 15 seconds")
                     if(!tryMpvSoftwareStartupFallback(c,index,screen,generation,view.hasStarted))
@@ -7234,6 +7237,7 @@ class MainActivity: Activity() {
                 override fun onFirstPlayback(){
                     handler.removeCallbacks(watchdog)
                     if(mpvPlayer!==view || active!=index || videoScreen!==screen ||
+                        channels.getOrNull(index)!==c ||
                         generation!=playbackGeneration)return
                     HomeTvDiagnostics.i("Startup","MPV first playback after "+
                         (android.os.SystemClock.elapsedRealtime()-startupTuneStartedAt)+" ms")
@@ -7256,6 +7260,7 @@ class MainActivity: Activity() {
                 override fun onError(message:String){
                     handler.removeCallbacks(watchdog)
                     if(mpvPlayer!==view || active!=index || videoScreen!==screen ||
+                        channels.getOrNull(index)!==c ||
                         generation!=playbackGeneration)return
                     HomeTvDiagnostics.w("MPV",message)
                     if(!tryMpvSoftwareStartupFallback(c,index,screen,generation,view.hasStarted))
