@@ -17,8 +17,9 @@ internal object MpvPlaybackPolicy {
      * Keep the saved user preference intact so moving to an HDR-capable TV
      * can enable it without silently rewriting settings.
      */
-    fun effectiveOutputMode(requested: String, hdr10Supported: Boolean): String = when {
+    fun effectiveOutputMode(requested: String, hdr10Supported: Boolean, hdrSurfaceVerified: Boolean = false): String = when {
         requested == "Force HDR10" && !hdr10Supported -> "Auto (HDR10 unsupported)"
+        requested == "Force HDR10" && !hdrSurfaceVerified -> "Auto (HDR surface unverified)"
         requested in setOf("Auto", "Force HDR10", "Force SDR") -> requested
         else -> "Auto"
     }
@@ -57,6 +58,8 @@ internal object MpvPlaybackPolicy {
         effectiveMode == "Force SDR" -> "SDR target requested; verify TV picture"
         effectiveMode == "Force HDR10" && hdr10Supported ->
             "HDR10 target requested; actual HDR output not verified"
+        effectiveMode == "Auto (HDR surface unverified)" ->
+            "HDR10 override disabled; Android surface HDR signalling not verified"
         effectiveMode == "Auto (HDR10 unsupported)" ->
             "HDR10 override disabled; display did not report HDR10"
         else -> "Automatic output; actual HDR signalling not verified"

@@ -85,7 +85,11 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             // actually advertises HDR10. This is not a claim that the Android
             // SurfaceView pipeline itself can switch into an HDR buffer mode.
             val hdr10Supported = hdr10DisplaySupported()
-            selectedOutputMode = MpvPlaybackPolicy.effectiveOutputMode(outputMode, hdr10Supported)
+            // RGBA_8888 is not a verified HDR10 output path. Even when the TV
+            // advertises HDR10, do not send PQ/BT.2020 to this SDR surface.
+            // Preserve the saved preference; a future verified 10-bit surface
+            // implementation can explicitly opt in through the policy.
+            selectedOutputMode = MpvPlaybackPolicy.effectiveOutputMode(outputMode, hdr10Supported, hdrSurfaceVerified = false)
             when (selectedOutputMode) {
                 "Force HDR10" -> {
                     engine.setOptionString("target-prim", "bt.2020")

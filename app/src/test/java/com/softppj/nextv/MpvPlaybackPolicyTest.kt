@@ -19,7 +19,8 @@ class MpvPlaybackPolicyTest {
  @Test fun staleModeIsSafe() { assertEquals("mediacodec-copy", MpvPlaybackPolicy.hardwareDecoder("legacy")); assertFalse(MpvPlaybackPolicy.isValidMode("legacy")) }
  @Test fun hdr10RequiresCapableDisplay() {
      assertEquals("Auto (HDR10 unsupported)", MpvPlaybackPolicy.effectiveOutputMode("Force HDR10", false))
-     assertEquals("Force HDR10", MpvPlaybackPolicy.effectiveOutputMode("Force HDR10", true))
+     assertEquals("Auto (HDR surface unverified)", MpvPlaybackPolicy.effectiveOutputMode("Force HDR10", true))
+     assertEquals("Force HDR10", MpvPlaybackPolicy.effectiveOutputMode("Force HDR10", true, hdrSurfaceVerified = true))
  }
  @Test fun sdrAndAutomaticDoNotRequireHdrDisplay() {
      for (hdr in listOf(true, false)) {
@@ -52,6 +53,7 @@ class MpvPlaybackPolicyTest {
  @Test fun displayOutputIsNeverDeclaredVerifiedByMetadata() {
      assertTrue(MpvPlaybackPolicy.outputInterpretation("Force HDR10",true).contains("not verified"))
      assertTrue(MpvPlaybackPolicy.outputInterpretation("Auto",true).contains("not verified"))
+     assertTrue(MpvPlaybackPolicy.outputInterpretation("Auto (HDR surface unverified)",true).contains("disabled"))
      assertTrue(MpvPlaybackPolicy.outputInterpretation("Auto (HDR10 unsupported)",false)
          .contains("disabled"))
      assertTrue(MpvPlaybackPolicy.outputInterpretation("Force SDR",false).contains("SDR target"))
