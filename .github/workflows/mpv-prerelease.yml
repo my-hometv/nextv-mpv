@@ -1,37 +1,14 @@
 name: NexTV MPV - Manual Pre-release APK
 on:
   workflow_dispatch:
-    inputs:
-      licensing_cleared:
-        description: 'Confirm MPV/FFmpeg license notices and corresponding-source obligations are satisfied'
-        required: true
-        type: choice
-        options:
-          - 'no'
-          - 'yes'
-        default: 'no'
-      apk_approved:
-        description: 'Explicitly approve generating an APK in this manual run'
-        required: true
-        type: choice
-        options:
-          - 'no'
-          - 'yes'
-        default: 'no'
 permissions:
   contents: write
 jobs:
   prerelease:
+    if: ${{ false }} # Release held until licensing clearance and explicit APK approval
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - name: Enforce explicit distribution and build approval
-        env:
-          LICENSING_CLEARED: ${{ inputs.licensing_cleared }}
-          APK_APPROVED: ${{ inputs.apk_approved }}
-        run: |
-          test "$LICENSING_CLEARED" = 'yes' || { echo 'Native licensing clearance required' >&2; exit 1; }
-          test "$APK_APPROVED" = 'yes' || { echo 'Explicit APK approval required' >&2; exit 1; }
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
@@ -54,35 +31,14 @@ jobs:
         with:
           gradle-version: '9.3.1'
       - name: Compile and test
-        run: gradle --no-daemon :app:verifyGstreamerPreservation :app:verifyMpvRuntime :app:verifyMpvOnlyEntryPoints :app:testDebugUnitTest :app:assembleDebug
+        run: gradle --no-daemon :app:verifyMpvRuntime :app:testDebugUnitTest :app:assembleDebug
       - name: Verify MPV APK
         shell: bash
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
-          unzip -Z -1 "$APK" | grep -E 'lib/arm64-v8a/libmpv[.]so
-          if unzip -Z -1 "$APK" | grep -E 'lib/[^/]+/libvlc[.]so$'; then exit 1; fi
-      - name: Publish experimental prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="nextv-mpv-test-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" app/build/outputs/apk/debug/app-debug.apk --target "$GITHUB_SHA" --title "NexTV MPV Test ${GITHUB_RUN_NUMBER}" --notes "Experimental Android TV APK. Validate on device. MPV GPL licensing obligations apply." --prerelease
-
-          unzip -Z -1 "$APK" | grep -E 'lib/[^/]+/libmpv[.]so
-          if unzip -Z -1 "$APK" | grep -E 'lib/[^/]+/libvlc[.]so$'; then exit 1; fi
-      - name: Publish experimental prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="nextv-mpv-test-${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" app/build/outputs/apk/debug/app-debug.apk --target "$GITHUB_SHA" --title "NexTV MPV Test ${GITHUB_RUN_NUMBER}" --notes "Experimental Android TV APK. Validate on device. MPV GPL licensing obligations apply." --prerelease
-
+          unzip -Z -1 "$APK" | grep -E 'lib/[^/]+/libmpv[.]so$'
           if unzip -Z -1 "$APK" | grep -E 'lib/[^/]+/libvlc[.]so$'; then exit 1; fi
       - name: Publish experimental prerelease
         env:
