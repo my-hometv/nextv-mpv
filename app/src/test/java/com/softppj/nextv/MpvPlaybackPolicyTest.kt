@@ -47,6 +47,16 @@ class MpvPlaybackPolicyTest {
          .contains("disabled"))
      assertTrue(MpvPlaybackPolicy.outputInterpretation("Force SDR",false).contains("SDR target"))
  }
+ @Test fun migratedWorkingUrlDoesNotRequireLegacyEnginePin() {
+     assertTrue(MpvPlaybackPolicy.isEstablishedStream("https://example.test/live.m3u8",null,false))
+     assertTrue(MpvPlaybackPolicy.isEstablishedStream(null,"https://example.test/manual.m3u8",false))
+     assertTrue(MpvPlaybackPolicy.isEstablishedStream(null,null,true))
+ }
+ @Test fun missingOrBlankUrlIsNotConfirmed() {
+     assertFalse(MpvPlaybackPolicy.isEstablishedStream(null,null,false))
+     assertFalse(MpvPlaybackPolicy.isEstablishedStream("  ","",false))
+     assertFalse(MpvPlaybackPolicy.isEstablishedStream("",null,false))
+ }
  @Test fun explicitTransportStreamIsDetected() {
      assertTrue(MpvPlaybackPolicy.isExplicitTransportStream("https://example.test/live/channel.ts"))
      assertTrue(MpvPlaybackPolicy.isExplicitTransportStream("https://example.test/live/CHANNEL.TS?token=redacted"))
