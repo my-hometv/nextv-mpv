@@ -5641,7 +5641,7 @@ class MainActivity: Activity() {
     private var previewTask:Runnable?=null
     private var previewInfoPanel:View?=null
     private var previewVideoTask:Runnable?=null
-    private var previewPlayer:ExoPlayer?=null
+    private var previewPlayer:MpvPlaybackView?=null
     private var previewPanel:FrameLayout?=null
     private var previewGeneration=0
     private fun closeVideoPreview(){
@@ -5650,8 +5650,9 @@ class MainActivity: Activity() {
         previewVideoTask=null
         val oldPreview=previewPlayer
         previewPlayer=null
+        oldPreview?.listener=null
         try{oldPreview?.release()}catch(e:Throwable){
-            HomeTvDiagnostics.w("Playback","Preview release failed during channel switch",e)
+            HomeTvDiagnostics.w("Playback","MPV preview release failed",e)
         }
         previewPanel?.let{panel->(panel.parent as? android.view.ViewGroup)?.removeView(panel)}
         previewPanel=null
@@ -5662,10 +5663,8 @@ class MainActivity: Activity() {
         val screen=videoScreen ?:return
         if(index !in channels.indices)return
         val resolvedIndex=preferredChannel(index)
-        if(resolvedIndex !in channels.indices)return
-        val c=channels[resolvedIndex]
-        // The on-screen player already displays this stream; a duplicate
-        // preview wastes a decoder and competes for network bandwidth.
+        val c=channels.getOrNull(resolvedIndex) ?:return
+        // Do not allocate a second MPV session for the foreground source.
         if(active in channels.indices && channels[active].url==c.url)return
         if(!BackgroundProbeUrlPolicy.isNativeProbeCandidate(c.url))return
         val width=(resources.displayMetrics.widthPixels*0.28f).toInt().coerceAtLeast(220)
@@ -5691,53 +5690,40 @@ class MainActivity: Activity() {
         val task=object:Runnable{
             private var deferrals=0
             override fun run(){
-            if(generation!=previewGeneration || requestedPlaybackGeneration!=playbackGeneration ||
-                previewIndex!=index || videoScreen!==screen)return
-            // A preview is optional. Wait briefly for foreground startup, but
-            // never let a stale request create a decoder after channel switching.
-            if(active in channels.indices && channels[active].url==c.url)return
-            if(vlcPlayer!=null || web!=null)return
-            if(player==null || player?.isPlaying!=true){
-                if(deferrals++<5)handler.postDelayed(this,600L)
-                return
-            }
-            try{
-                val factory=DefaultHttpDataSource.Factory()
-                    .setConnectTimeoutMs(4500).setReadTimeoutMs(6000)
-                    .setAllowCrossProtocolRedirects(true)
-                    .setDefaultRequestProperties(c.headers)
-                val previewBuffer=DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(500,2500,250,500).build()
-                val exo=ExoPlayer.Builder(this@MainActivity, DefaultRenderersFactory(this@MainActivity)
-                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON))
-                    .setMediaSourceFactory(mediaSourceFactoryForStreams(factory))
-                    .setLoadControl(previewBuffer)
-                    .build()
-                previewPlayer=exo
-                exo.volume=0f
-                exo.setAudioAttributes(AudioAttributes.DEFAULT,false)
-                val view=PlayerView(this@MainActivity).apply{
-                    player=exo
-                    useController=false
-                    resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                if(generation!=previewGeneration ||
+                    requestedPlaybackGeneration!=playbackGeneration ||
+                    previewIndex!=index || videoScreen!==screen)return
+                if(active in channels.indices && channels[active].url==c.url)return
+                // The foreground decoder takes priority. Never start a preview
+                // during channel startup or when WebView owns the screen.
+                if(web!=null)return
+                if(mpvPlayer?.hasStarted!=true){
+                    if(deferrals++<5)handler.postDelayed(this,600L)
+                    return
                 }
-                panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
-                exo.setMediaItem(mediaItemForStream(c.url))
-                exo.prepare()
-                if(c.mediaType in setOf("movie","series","music")){
-                    val resume=mediaResumeSeconds(c)
-                    if(resume>0)exo.seekTo(resume*1000L)
-                }
-                exo.play()
-                exo.addListener(object:Player.Listener{
-                    override fun onPlayerError(error:PlaybackException){
-                        if(previewPlayer===exo)closeVideoPreview()
+                try{
+                    val view=MpvPlaybackView(this@MainActivity)
+                    previewPlayer=view
+                    view.listener=object:MpvPlaybackView.Listener{
+                        override fun onFirstPlayback(){
+                            if(previewPlayer!==view || generation!=previewGeneration)return
+                            // Preview is intentionally silent; main audio remains active.
+                            view.setVolume(0)
+                        }
+                        override fun onError(message:String){
+                            if(previewPlayer===view && generation==previewGeneration)
+                                closeVideoPreview()
+                        }
                     }
-                })
-            }catch(e:Exception){
-                HomeTvDiagnostics.w("HomeTV","Preview unavailable",e)
-                closeVideoPreview()
-            }
+                    panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
+                    view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c))
+                    view.setVolume(0)
+                    view.setPictureScale("Fit")
+                    view.play(c.url,c.headers,isLive=c.mediaType=="live")
+                }catch(e:Throwable){
+                    HomeTvDiagnostics.w("MPV","Preview unavailable",e)
+                    closeVideoPreview()
+                }
             }
         }
         previewVideoTask=task
