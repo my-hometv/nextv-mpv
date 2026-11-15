@@ -183,6 +183,14 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         }
     }
 
+    fun chooseDefaultAudioTrack() {
+        if (!closed) mpv?.setPropertyString("aid", "auto")
+    }
+
+    fun chooseDefaultSubtitleTrack() {
+        if (!closed) mpv?.setPropertyString("sid", "auto")
+    }
+
     fun chooseAudioTrack(id: Int) {
         if (!closed) mpv?.setPropertyInt("aid", id)
     }
