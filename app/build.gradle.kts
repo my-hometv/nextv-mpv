@@ -176,33 +176,38 @@ tasks.named("check") { dependsOn(verifyGstreamerPreservation) }
 
 
 /**
- * Static integration contract checked before any release candidate is built.
- * Native GStreamer SDK packaging and actual playback still require CI/device checks.
+ * MPV-only activity integration contract. The experimental GStreamer JNI source
+ * remains independently checked by verifyGstreamerNativeBridge, but no removed
+ * GStreamer playback route is required in the MPV edition.
  */
 val verifyGstreamerMainActivityIntegration by tasks.registering {
     group = "verification"
-    description = "Check opt-in routing, MPV fallback and teardown wiring."
+    description = "Verify MPV-only activity routing, decoder controls and playback lifecycle."
     doLast {
         val activity = file("src/main/java/com/softppj/nextv/MainActivity.kt").readText()
-        val adapter = file("src/main/java/com/softppj/nextv/GstreamerPlaybackView.kt").readText()
+        val player = file("src/main/java/com/softppj/nextv/MpvPlaybackView.kt").readText()
         listOf(
-            "private var gstreamerPlayer:GstreamerPlaybackView?=null",
-            "gstreamer_experimental",
-            "startGstreamer(c,index,screen)",
-            "startMpv(c,index,screen)",
-            "gstreamerPlayer?.release()",
+            "private var mpvPlayer:MpvPlaybackView?=null",
+            "private fun startMpv(c:Channel,index:Int,screen:FrameLayout)",
+            "view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c))",
+            "private fun selectedMpvDecoder(c:Channel)",
+            "private fun selectedMpvOutput(c:Channel)",
+            "private fun showMpvPlaybackDiagnostics()",
             "generation==playbackGeneration"
         ).forEach { invariant ->
-            check(activity.contains(invariant)) { "GStreamer MainActivity integration missing: $invariant" }
+            check(activity.contains(invariant)) { "MPV MainActivity integration missing: $invariant" }
         }
-        listOf("nativeStop(handle)", "nativeRelease(handle)", "playbackGeneration++").forEach { invariant ->
-            check(adapter.contains(invariant)) { "GStreamer adapter lifecycle missing: $invariant" }
+        listOf("engine.attachSurface(", "engine.detachSurface()",
+            "fun diagnosticSnapshot()", "fun initialize(", "fun play(").forEach { invariant ->
+            check(player.contains(invariant)) { "MPV playback lifecycle missing: $invariant" }
         }
-        println("Verified experimental routing, MPV fallback and native teardown wiring")
+        check(!activity.contains("private var gstreamerPlayer:GstreamerPlaybackView?=null")) {
+            "Removed GStreamer player must not be reintroduced into the MPV edition"
+        }
+        println("Verified MPV-only activity routing, decoder/output controls and surface lifecycle")
     }
 }
 tasks.named("check") { dependsOn(verifyGstreamerMainActivityIntegration) }
-
 
 /**
  * Fail closed: the experimental GStreamer route must not be considered verified
