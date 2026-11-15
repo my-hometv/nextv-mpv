@@ -662,7 +662,6 @@ class MainActivity: Activity() {
         var firstUsable:Int?=null
         var savedMatch:Int?=null
         var reachableMatch:Int?=null
-        var vlcMatch:Int?=null
         for(candidate in group){
             val url=channels[candidate].url
             // An explicit manual choice takes precedence, but a previously
@@ -672,22 +671,18 @@ class MainActivity: Activity() {
             if(url in failedUrlsThisSession)continue
             if(firstUsable==null)firstUsable=candidate
             if(savedMatch==null && saved!=null && url==saved)savedMatch=candidate
-            // Only recent, engine-specific probes may influence automatic source choice.
-            // A stale success must not outrank a currently reachable alternative.
+            // Reachability is provisional. Only fresh positive HTTP checks
+            // may prioritize an alternative; never interpret it as MPV playback.
             if(reachableMatch==null &&
                 probeReachable[url]==true &&
                 AlternativeLinkConfidencePolicy.isFresh(media3ProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
                 reachableMatch=candidate
-            if(vlcMatch==null && engineEnabled("LibVLC") &&
-                vlcProbeReachable[url]==true &&
-                AlternativeLinkConfidencePolicy.isFresh(vlcProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
-                vlcMatch=candidate
         }
         // If every source failed during this session, preserve the requested
         // channel instead of silently returning the first failed playlist URL.
         // Prefer recent positive evidence over an older saved URL, while
         // preserving the explicit manual choice handled above.
-        return reachableMatch ?:vlcMatch ?:savedMatch ?:firstUsable ?:index
+        return reachableMatch ?:savedMatch ?:firstUsable ?:index
     }
     // Compatibility adapter for the unchanged V6 LibVLC playback implementation.
     // NexTV's Media3 path retain their generation-aware confirmation API.
