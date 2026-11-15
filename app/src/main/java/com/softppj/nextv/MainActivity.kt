@@ -349,7 +349,7 @@ class MainActivity: Activity() {
             override fun run(){
                 if(operation!=licenseOperationGeneration || !licenseReady || isFinishing || isDestroyed)return
                 val isLiveStarting=active in channels.indices &&
-                    (vlcPlayer?.isPlaying!=true && player?.isPlaying!=true)
+                    (mpvPlayer?.hasStarted!=true)
                 val elapsed=android.os.SystemClock.elapsedRealtime()-initial
                 if(isLiveStarting && elapsed<30000L){
                     handler.postDelayed(this,2000L)
@@ -2693,10 +2693,7 @@ class MainActivity: Activity() {
         val channelId=channelKey(channel)
         val task=Runnable{
             if(generation!=playbackGeneration || channels.getOrNull(active)?.let{channelKey(it)}!=channelId ||
-                !autoBufferEnabled() || !(
-                    (player?.isPlaying==true) ||
-                    (vlcPlayer?.isPlaying==true)
-                ))return@Runnable
+                !autoBufferEnabled() || mpvPlayer?.isPlaying!=true)return@Runnable
             val elapsed=android.os.SystemClock.elapsedRealtime()-autoBufferStableSince
             val next=SmartBufferPolicy.nextOnHealthy(autoBufferLevel,elapsed)
             if(next!=autoBufferLevel){
@@ -7298,7 +7295,7 @@ class MainActivity: Activity() {
         val next=preferredChannel(nextSurfingIndex(active,delta,available))
         if(!HomeTvPolicies.shouldRetuneSurfingChannel(
                 active,next,videoScreen!=null &&
-                    (player!=null || vlcPlayer!=null || web!=null)))return
+                    (mpvPlayer!=null || web!=null)))return
         playIndex(next)
     }
     private fun resumeLast(){
