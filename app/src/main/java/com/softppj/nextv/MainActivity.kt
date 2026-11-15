@@ -4610,6 +4610,29 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
 
+    private fun restoreMpvTrackPreferences(c:Channel,view:MpvPlaybackView){
+        // Only the foreground session may restore preferences. Track IDs are
+        // stream-local; saved labels are matched against the current track list.
+        val signature=prefs.getString(audioTrackSignatureKey(c),null)
+        val language=if(prefs.getBoolean("audio_use_stream_default",false))null
+            else normalizeAudioLanguage(preferredAudioLanguage())
+        val audio=view.tracks("audio")
+        val selected=audio.firstOrNull{signature!=null && it.label==signature}
+        if(selected!=null)view.chooseAudioTrack(selected.id)
+        else if(language!=null)view.choosePreferredAudioLanguage(language)
+        else view.chooseDefaultAudioTrack()
+
+        when(val subtitle=subtitlePreference(c)){
+            "off"->view.chooseSubtitleTrack(null)
+            "auto"->view.chooseDefaultSubtitleTrack()
+            else->{
+                val track=view.tracks("sub").firstOrNull{it.label==subtitle}
+                if(track!=null)view.chooseSubtitleTrack(track.id)
+                else view.chooseDefaultSubtitleTrack()
+            }
+        }
+    }
+
     private fun audioTracks(){
         val mpv=mpvPlayer
         if(mpv==null){
@@ -7320,6 +7343,7 @@ class MainActivity: Activity() {
                         generation!=playbackGeneration)return
                     HomeTvDiagnostics.i("Startup","MPV first playback after "+
                         (android.os.SystemClock.elapsedRealtime()-startupTuneStartedAt)+" ms")
+                    restoreMpvTrackPreferences(c,view)
                     rememberWorking(c,generation)
                     autoBufferHealthy()
                     updateClock()
