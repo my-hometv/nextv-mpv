@@ -131,10 +131,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         // Native FFmpeg handles MPEG-TS packet timing, PAT/PMT, PCR/PTS and A/V sync.
         // Hint the demuxer only for explicit .ts resources; HLS manifests must
         // retain automatic format detection, even when their segments are MPEG-TS.
-        val explicitTs = runCatching {
-            android.net.Uri.parse(url).lastPathSegment
-                ?.substringBefore('?')?.endsWith(".ts", ignoreCase = true) == true
-        }.getOrDefault(false)
+        val explicitTs = MpvPlaybackPolicy.isExplicitTransportStream(url)
         if (explicitTs) {
             engine.command(arrayOf("loadfile", url, "replace", "demuxer-lavf-format=mpegts"))
         } else {
