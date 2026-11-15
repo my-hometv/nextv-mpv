@@ -3200,6 +3200,7 @@ class MainActivity: Activity() {
             "Settings",
             "Exit",
             "Manage Favorites Groups",
+            "MPV output mode (HDR / SDR)",
             "MPV playback diagnostics"
         )
         val dialog=AlertDialog.Builder(this)
@@ -3224,7 +3225,7 @@ class MainActivity: Activity() {
                     14->confirmExit()
                     15->addChannelToFavoriteGroups(c)
                     16->chooseMpvOutputForCurrentChannel()
-                    16->showMpvPlaybackDiagnostics()
+                    17->showMpvPlaybackDiagnostics()
                 }
             }
             .setNegativeButton("Back",null).create()
