@@ -89,9 +89,6 @@ dependencies {
     // Candidate libmpv Android AAR. Its native FFmpeg/mpv binaries are GPL-3.0-or-later.
     // This experiment must not be distributed without GPL source/licensing compliance.
     implementation("dev.jdtech.mpv:libmpv:1.0.0")
-    // Retain the Media3 core/exoplayer compile surface for legacy source
-    // compatibility until its isolated helper classes are migrated.
-    implementation("androidx.media3:media3-exoplayer:1.12.0-beta01")
     // Legacy isolated service is not registered in the MPV manifest.
     // Compile-only VLC types remain until that unused source is removed.
     compileOnly("org.videolan.android:libvlc-all:3.5.1")
