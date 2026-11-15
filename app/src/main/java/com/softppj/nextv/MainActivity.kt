@@ -643,7 +643,7 @@ class MainActivity: Activity() {
                                     channelKey(channel),channel.url
                                 )){
                                 probeReachable[channel.url]=reachable
-                                media3ProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
+                                httpProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
                             }
                         }
                     }
@@ -675,7 +675,7 @@ class MainActivity: Activity() {
             // may prioritize an alternative; never interpret it as MPV playback.
             if(reachableMatch==null &&
                 probeReachable[url]==true &&
-                AlternativeLinkConfidencePolicy.isFresh(media3ProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
+                AlternativeLinkConfidencePolicy.isFresh(httpProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
                 reachableMatch=candidate
         }
         // If every source failed during this session, preserve the requested
@@ -1046,7 +1046,7 @@ class MainActivity: Activity() {
         val key=channelKey(channel)
         val confirmed=prefs.getString("working_url_"+key,null)==channel.url &&
             prefs.getString("confirmed_engine_"+key,null)==engine
-        val observedAt=media3ProbeObservedAt[channel.url]
+        val observedAt=httpProbeObservedAt[channel.url]
         val fresh=AlternativeLinkConfidencePolicy.isFresh(
             observedAt,android.os.SystemClock.elapsedRealtime(),probeConfidenceMaxAgeMs
         )
@@ -4268,7 +4268,7 @@ class MainActivity: Activity() {
                     // evict old reachability results, not every periodic scan.
                     val validUrls=nextChannels.asSequence().map{it.url}.toHashSet()
                     probeReachable.keys.retainAll(validUrls)
-                    media3ProbeObservedAt.keys.retainAll(validUrls)
+                    httpProbeObservedAt.keys.retainAll(validUrls)
                     if(forceRebuild)Toast.makeText(this,"Rebuilt "+updated+"/"+sources.size+" playlists • "+actualChannelCount()+" channels",Toast.LENGTH_LONG).show()
                 }
                 // Preserve whichever channel is playing when the refresh finishes,
@@ -4303,8 +4303,7 @@ class MainActivity: Activity() {
     private val probeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
     private var periodicProbeTask:Runnable?=null
     private var backgroundProbeOffset=0
-    // Historical name retained temporarily for preference/data compatibility.
-    private val media3ProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
+    private val httpProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
     private val probeConfidenceMaxAgeMs=30*60*1000L
     private fun scheduleNextBackgroundProbeWindow(generation:Int){
         if(generation!=backgroundProbeGeneration || !appInForeground ||
@@ -4398,7 +4397,7 @@ class MainActivity: Activity() {
                         prefs.getBoolean("background_url_checks",false)){
                         if(reachable!=null){
                             probeReachable[candidate.url]=reachable
-                            media3ProbeObservedAt[candidate.url]=android.os.SystemClock.elapsedRealtime()
+                            httpProbeObservedAt[candidate.url]=android.os.SystemClock.elapsedRealtime()
                         }
                     }
                 }
@@ -4409,7 +4408,6 @@ class MainActivity: Activity() {
             }
         }
     }
-    // Bounded decoder-backed probes. Keep them subordinate to foreground playback.
     // Discover links from a bounded Web TV directory, without touching normal IPTV entries.
     // This extracts navigable channel pages; playable streams are resolved by the WebView.
     private fun discoverWebDirectory(entry:Channel):List<Channel>{
