@@ -1044,9 +1044,17 @@ class MainActivity: Activity() {
         val probe=if(fresh)probeReachable[channel.url] else null
         return AlternativeLinkConfidencePolicy.score(confirmed,probe)
     }
-    private fun alternativeEngineConfidence(channel:Channel,engine:String):String{
-        if(!engineEnabled(engine))return "Off"
-        return alternativeEngineScore(channel,engine)?.let{it.toString()+"%"} ?: "Not tested"
+    private fun mpvAlternativeScore(channel:Channel):Int?{
+        if(channel.url in failedUrlsThisSession)return null
+        val key=channelKey(channel)
+        val confirmed=prefs.getString("working_url_"+key,null)==channel.url &&
+            prefs.getString("confirmed_engine_"+key,null)=="MPV"
+        val fresh=AlternativeLinkConfidencePolicy.isFresh(
+            httpProbeObservedAt[channel.url],
+            android.os.SystemClock.elapsedRealtime(),probeConfidenceMaxAgeMs
+        )
+        val probe=if(fresh)probeReachable[channel.url] else null
+        return AlternativeLinkConfidencePolicy.score(confirmed,probe)
     }
     private fun selectAlternative(index:Int){
         val returnToPlaybackDrawer=videoScreen?.findViewWithTag<View>("settings_drawer")!=null
@@ -1061,13 +1069,7 @@ class MainActivity: Activity() {
         val key=channelKey(channels[index])
         // Recommend only from observed evidence. An untested stream must
         // never receive an invented percentage or a "best" badge.
-        val scoredOptions=options.map{i->
-            AlternativeLinkConfidencePolicy.eligibleScore(
-                channels[i].url in failedUrlsThisSession,
-                alternativeEngineScore(channels[i],"Media3"),
-                alternativeEngineScore(channels[i],"LibVLC")
-            )
-        }
+        val scoredOptions=options.map { i -> mpvAlternativeScore(channels[i]) }
         val recommended=AlternativeLinkConfidencePolicy.recommendedIndex(
             scoredOptions,options.indexOf(active)
         )
@@ -1075,8 +1077,7 @@ class MainActivity: Activity() {
             options.mapIndexed{n,i->
                 "Stream "+(n+1)+(if(i==active)"  •  Playing" else "")+
                     (if(n==recommended)"  •  Best checked" else "")+
-                    "\nMedia3: "+alternativeEngineConfidence(channels[i],"Media3")+
-                    "   |   LibVLC: "+alternativeEngineConfidence(channels[i],"LibVLC")
+                    "\nMPV: "+(scoredOptions[n]?.let { "$it% (estimate)" } ?: "Not tested")
             }
         val dialog=AlertDialog.Builder(this).setTitle(channels[index].name+" — Alternative streams")
             .setItems(labels.toTypedArray()){_,choice->
@@ -1278,7 +1279,9 @@ class MainActivity: Activity() {
     // they have been decoded or tested; foreground MPV confirms playback.
     private fun offerMpvAlternative(index:Int, screen:FrameLayout) {
         val original=channels.getOrNull(index) ?: return
-        if(active!=index || videoScreen!==screen || !licenseReady) return
+        if(active!=index || videoScreen!==screen || !licenseReady ||
+            mpvPlayer?.hasStarted==true) return
+        val generationAtOffer=playbackGeneration
         val key=channelKey(original)
         if(key in failureSearches || alternativePromptKey==key) return
         val candidate=alternateIndices(index).firstOrNull {
@@ -1292,6 +1295,7 @@ class MainActivity: Activity() {
             .setMessage(original.name+" has another URL. This URL has not yet been verified by MPV.")
             .setPositiveButton("Try"){_,_->
                 if(active!=index || videoScreen!==screen ||
+                    playbackGeneration!=generationAtOffer || mpvPlayer?.hasStarted==true ||
                     channels.getOrNull(index)!==original ||
                     channels.getOrNull(candidate)!==target || !licenseReady) {
                     showBanner("Channel list changed; retry recovery",true)
@@ -1322,7 +1326,7 @@ class MainActivity: Activity() {
     private fun checkFailedChannelAlternatives(index:Int,screen:FrameLayout){
         // Foreground MPV is the only decoder. Do not spin up retired engines
         // to verify alternative URLs or interrupt a confirmed working source.
-        offerMpvAlternative(index,screen)
+        if(mpvPlayer?.hasStarted!=true) offerMpvAlternative(index,screen)
     }
     private var testingAlternativeKey:String?=null
     // Once a channel has played successfully, the URL and engine are pinned.
