@@ -647,8 +647,7 @@ class MainActivity: Activity() {
         // preserving the explicit manual choice handled above.
         return reachableMatch ?:savedMatch ?:firstUsable ?:index
     }
-    // Compatibility adapter for the unchanged V6 LibVLC playback implementation.
-    // NexTV's Media3 path retain their generation-aware confirmation API.
+    // Preserve generation-aware confirmation for MPV playback and URL recovery.
     private fun rememberWorking(c:Channel){
         rememberWorking(c,playbackGeneration)
     }
@@ -4950,7 +4949,7 @@ class MainActivity: Activity() {
             pending=position
             if(active!=activeIndex || position==modes.size)return
         // Do not recreate an active
-            // Media3/LibVLC decoder merely because a remote focus moved.
+            // MPV decoder merely because remote focus moved.
             val values=picturePresets[modes[position]] ?: return
         }
         val dialog=AlertDialog.Builder(this)
@@ -5194,7 +5193,7 @@ class MainActivity: Activity() {
     }
     private fun requestYoutubeStartupAudio(viewer:WebView,channelIndex:Int,screen:FrameLayout){
         // YouTube inserts its video asynchronously. Retry only while audio is
-        // unavailable; do not restart playback or affect Media3/LibVLC streams.
+        // unavailable; do not restart native playback.
         val generation=playbackGeneration
         val delays=longArrayOf(600L,1400L,2700L,4500L,7000L,11000L,15000L)
         youtubeUnmuteTask?.let{handler.removeCallbacks(it)}
@@ -6257,7 +6256,7 @@ class MainActivity: Activity() {
         if(!VideoQualityPolicy.shouldRequestYoutubeWebQuality(preference))return
         // Restore V7's HD quality selection. Apply once, not three times.
         // Only reduce quality after repeated real buffering; never change the
-        // saved user preference or any Media3 / LibVLC playback settings.
+        // saved user preference or native playback settings.
         val wanted=if(preference=="720p") "hd720" else "hd1080"
         val qualityGeneration=playbackGeneration
         handler.postDelayed({
@@ -6423,8 +6422,7 @@ class MainActivity: Activity() {
         return prefs.getString("screen_mode","Fit") ?: "Fit"
     }
     private fun applyVideoSize(){
-        // All native video routes use the MPV surface. No Media3 or LibVLC
-        // resize state is needed, including for per-channel aspect overrides.
+        // All native video routes use the MPV surface, including per-channel aspect overrides.
         mpvPlayer?.setPictureScale(screenMode())
     }
     private fun selectScreenMode(channelIndex:Int?=null){
@@ -7997,7 +7995,7 @@ class MainActivity: Activity() {
             val direction=if(event.keyCode==KeyEvent.KEYCODE_VOLUME_UP)android.media.AudioManager.ADJUST_RAISE else android.media.AudioManager.ADJUST_LOWER
             audio.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,direction,0)
             // A TV remote volume key is a user action; retry unmuting
-            // YouTube without affecting Media3 or LibVLC playback.
+            // YouTube without affecting native playback.
             if(event.keyCode==KeyEvent.KEYCODE_VOLUME_UP){
                 val current=channels.getOrNull(active)
                 val host=try{current?.url?.let{Uri.parse(it).host?.lowercase(java.util.Locale.ROOT)}}catch(_:Exception){null}

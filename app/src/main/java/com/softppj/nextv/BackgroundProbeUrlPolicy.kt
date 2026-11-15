@@ -50,14 +50,6 @@ internal object BackgroundProbeUrlPolicy {
         )
     }
 
-    /** Foreground MPV supports HTTP media and RTSP; background probing must not
-     * assume RTMP-family playback support. */
-    fun isMpvProbeCandidate(rawUrl: String): Boolean {
-        if (!isNativeProbeCandidate(rawUrl)) return false
-        val scheme = runCatching { URI(rawUrl).scheme?.lowercase(Locale.ROOT) }.getOrNull()
-        return scheme == "http" || scheme == "https" || scheme == "rtsp"
-    }
-
     fun isNativeProbeCandidate(rawUrl: String): Boolean {
         return try {
             val uri = URI(rawUrl)

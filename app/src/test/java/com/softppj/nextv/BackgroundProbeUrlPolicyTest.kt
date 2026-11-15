@@ -136,26 +136,6 @@ class BackgroundProbeUrlPolicyTest {
         )) assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
     }
 
-    @Test fun mpvBackgroundProbeDoesNotAttemptRtmp() {
-        assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
-            "rtmp://live.example/app/channel"))
-        assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
-            "rtmp://live.example/app/channel"))
-        assertTrue(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
-            "rtsp://camera.example/live"))
-        assertTrue(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
-            "https://iptv.example/live.m3u8"))
-    }
-
-    @Test fun mpvBackgroundProbeInheritsUrlSafetyChecks() {
-        assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
-            "https://youtube.com/watch?v=123"))
-        assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
-            "rtsp://user:pass@camera.example/live"))
-        assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(
-            "ftp://iptv.example/stream"))
-    }
-
     @Test fun libVlcCanDiscoverSecureRtspAndRtmpProtocolVariants() {
         for (url in listOf(
             "rtsps://camera.example:322/live",
@@ -163,7 +143,6 @@ class BackgroundProbeUrlPolicyTest {
             "rtmpt://live.example/app/channel"
         )) {
             assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
-            assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(url))
         }
     }
 
@@ -184,7 +163,6 @@ class BackgroundProbeUrlPolicyTest {
             "https://www.youtube-nocookie.com./embed/abc"
         )) {
             assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
-            assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(url))
         }
     }
 
@@ -204,7 +182,6 @@ class BackgroundProbeUrlPolicyTest {
             "https://[::1]:65536/live"
         )) {
             assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
-            assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(url))
         }
         assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
             "https://[::1]:8443/live"))
@@ -221,7 +198,6 @@ class BackgroundProbeUrlPolicyTest {
             "rtmp://live.example:/app/stream"
         )) {
             assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
-            assertFalse(BackgroundProbeUrlPolicy.isMpvProbeCandidate(url))
         }
     }
 
