@@ -30,6 +30,23 @@ class MpvPlaybackPolicyTest {
      assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Hardware copy", false, false, false))
      assertFalse(MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure("Software", false, false, false))
  }
+ @Test fun hdrSourceClassificationUsesTransferNotPlaylistName() {
+     assertEquals("HDR10/PQ source / BT.2020 primaries",
+         MpvPlaybackPolicy.sourceDynamicRange("pq","bt.2020"))
+     assertEquals("HDR10/PQ source", MpvPlaybackPolicy.sourceDynamicRange("smpte2084","unknown"))
+     assertEquals("HLG HDR source / BT.2020 primaries",
+         MpvPlaybackPolicy.sourceDynamicRange("hlg","bt.2020"))
+     assertEquals("SDR source", MpvPlaybackPolicy.sourceDynamicRange("bt.709","bt.709"))
+     assertEquals("Unknown (no reliable transfer metadata)",
+         MpvPlaybackPolicy.sourceDynamicRange("unknown","unknown"))
+ }
+ @Test fun displayOutputIsNeverDeclaredVerifiedByMetadata() {
+     assertTrue(MpvPlaybackPolicy.outputInterpretation("Force HDR10",true).contains("not verified"))
+     assertTrue(MpvPlaybackPolicy.outputInterpretation("Auto",true).contains("not verified"))
+     assertTrue(MpvPlaybackPolicy.outputInterpretation("Auto (HDR10 unsupported)",false)
+         .contains("disabled"))
+     assertTrue(MpvPlaybackPolicy.outputInterpretation("Force SDR",false).contains("SDR target"))
+ }
  @Test fun explicitTransportStreamIsDetected() {
      assertTrue(MpvPlaybackPolicy.isExplicitTransportStream("https://example.test/live/channel.ts"))
      assertTrue(MpvPlaybackPolicy.isExplicitTransportStream("https://example.test/live/CHANNEL.TS?token=redacted"))
