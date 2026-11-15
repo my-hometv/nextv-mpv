@@ -4728,30 +4728,6 @@ class MainActivity: Activity() {
         }
         return picturePresets[selectedPicturePreset(c)] ?: picturePresets.getValue("Standard")
     }
-    @UnstableApi
-    private fun media3PictureEffects(c:Channel):List<androidx.media3.common.Effect>{
-        val preset=selectedPictureValues(c)
-        val brightness=((preset.brightness-1f)*0.5f).coerceIn(-1f,1f)
-        val contrast=((preset.contrast-1f)*0.5f).coerceIn(-1f,1f)
-        val saturation=((preset.saturation-1f)*100f).coerceIn(-100f,100f)
-        return buildList {
-            if(brightness!=0f)add(Brightness(brightness))
-            if(contrast!=0f)add(Contrast(contrast))
-            if(saturation!=0f)add(HslAdjustment.Builder().adjustSaturation(saturation).build())
-        }
-    }
-    @UnstableApi
-    private fun applyMedia3PicturePreset(exo:ExoPlayer,c:Channel){
-        // Standard means native Media3 rendering. Preset changes restart the
-        // channel so this is decided before prepare(), not on a live TV decoder.
-        if(selectedPicturePreset(c)=="Standard")return
-        try{
-            exo.setVideoEffects(media3PictureEffects(c))
-        }catch(e:Exception){
-            // Keep the decoder's native surface path on adjustment failure.
-            HomeTvDiagnostics.w("HomeTV","Media3 picture adjustment unavailable; native video rendering retained",e)
-        }
-    }
     private var picturePreviewRestartTask:Runnable?=null
     private fun restartCurrentChannelForPicturePreset(index:Int,c:Channel){
         if(index !in channels.indices || active!=index || videoScreen==null ||
@@ -6192,18 +6168,6 @@ class MainActivity: Activity() {
     private fun youtubeQualityPreference(index:Int):String{
         val url=channels.getOrNull(index)?.url ?:return "Best available"
         return prefs.getString("youtube_quality_"+hash(url),"Best available") ?: "Best available"
-    }
-    private fun applyYoutubeNativeQuality(exo:ExoPlayer,index:Int){
-        val preference=youtubeQualityPreference(index)
-        val maxHeight=when(preference){
-            "720p"->720
-            "1080p"->1080
-            else->Int.MAX_VALUE
-        }
-        exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
-            .setMaxVideoSize(Int.MAX_VALUE,maxHeight)
-            .setForceHighestSupportedBitrate(VideoQualityPolicy.forceHighestBitrate(preference))
-            .build()
     }
     private fun requestYoutubeEnhancedQuality(viewer:WebView,index:Int,screen:FrameLayout){
         val preference=youtubeQualityPreference(index)
