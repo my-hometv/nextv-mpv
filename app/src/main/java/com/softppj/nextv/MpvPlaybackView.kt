@@ -231,6 +231,31 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         else mpv?.setPropertyInt("sid", id)
     }
 
+    // mpv's ten-band equalizer uses FFmpeg's audio equalizer filter.
+    // Rebuild only on a user preset change; reset to the untouched stream
+    // for Standard so no processing is applied by default.
+    fun setAudioPreset(preset: String) {
+        val engine = mpv ?: return
+        if (closed) return
+        val gains = when (preset) {
+            "Cinema" -> listOf(2.5, 1.2, 0.0, 1.6, 1.2)
+            "Music" -> listOf(1.8, 0.8, 0.0, 1.0, 1.6)
+            "Dialogue" -> listOf(-1.6, -0.8, 1.6, 2.8, 1.2)
+            "Bass Boost" -> listOf(3.5, 2.4, 0.0, -0.5, -0.8)
+            "Night Mode" -> listOf(-1.5, -0.8, 1.0, 1.4, -1.0)
+            else -> null
+        }
+        if (gains == null) {
+            engine.command(arrayOf("af", "clr"))
+            return
+        }
+        val frequencies = listOf(100, 400, 1200, 3500, 9000)
+        val filters = frequencies.zip(gains).map { (frequency, gain) ->
+            "equalizer=f=$frequency:t=h:w=1:g=$gain"
+        }
+        engine.command(arrayOf("af", "set", filters.joinToString(",")))
+    }
+
     fun setVolume(level: Int) {
         if (!closed) mpv?.setPropertyDouble("volume", level.coerceIn(0, 200).toDouble())
     }
