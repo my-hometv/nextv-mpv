@@ -24,6 +24,14 @@ internal object BackgroundProbeUrlPolicy {
         return true
     }
 
+    /** Only safe direct HTTP media URLs are eligible for the decoder-free check.
+     * Other schemes are unknown, never automatically treated as failed. */
+    fun isHttpProbeCandidate(url:String):Boolean {
+        if(!isNativeProbeCandidate(url))return false
+        val scheme=runCatching{URI(url).scheme?.lowercase(Locale.ROOT)}.getOrNull()
+        return scheme=="http" || scheme=="https"
+    }
+
     /** A bounded HTTP range check can legitimately return 206 Partial Content.
      * Reject HTML landing pages and redirects that did not resolve to media. */
     fun isReachableHttpResponse(status: Int, contentType: String?): Boolean =
