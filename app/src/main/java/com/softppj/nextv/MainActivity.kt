@@ -4531,9 +4531,10 @@ class MainActivity: Activity() {
 
     // Background availability is a lightweight HTTP check, not a second video engine.
     // An HTTP success is only reachability evidence: it NEVER confirms playback.
-    private fun probeMpvUrlReachability(url:String,headers:Map<String,String>):Boolean {
-        val scheme=runCatching{java.net.URI(url).scheme?.lowercase(java.util.Locale.ROOT)}.getOrNull()
-        if(scheme!="http" && scheme!="https")return false
+    private fun probeMpvUrlReachability(url:String,headers:Map<String,String>):Boolean? {
+        // Non-HTTP streams (RTSP/RTMP etc.) require MPV-native validation.
+        // Unknown is NOT a failure and must not demote a confirmed working URL.
+        if(!BackgroundProbeUrlPolicy.isHttpProbeCandidate(url))return null
         var connection:java.net.HttpURLConnection?=null
         return try{
             connection=(java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply{
@@ -4543,18 +4544,19 @@ class MainActivity: Activity() {
                 requestMethod="GET"
                 setRequestProperty("Range","bytes=0-1023")
                 headers.forEach{(name,value)->
-                    if(!name.equals("Range",true))setRequestProperty(name,value)
+                    if(!name.equals("Range",true) && !name.equals("Host",true))
+                        setRequestProperty(name,value)
                 }
             }
             val response=connection.responseCode
-            if(response !in 200..299)return false
-            // Fetch no more than a small prefix; never download a full live stream.
-            connection.inputStream.use{input->
-                val buffer=ByteArray(1024)
-                input.read(buffer)
-            }
+            val contentType=connection.contentType
+            if(!BackgroundProbeUrlPolicy.isLikelyMediaResponse(response,contentType))
+                return false
+            // Never download a full live stream. HTTP 200 alone is not
+            // playback confirmation, and a successful check stays provisional.
+            connection.inputStream.use{input->input.read(ByteArray(1024))}
             true
-        }catch(_:Exception){false}
+        }catch(_:Exception){null}
         finally{connection?.disconnect()}
     }
 
@@ -4607,14 +4609,18 @@ class MainActivity: Activity() {
         // One short-lived worker; no additional decoder, no UI-thread network calls.
         kotlin.concurrent.thread(name="nextv-mpv-url-check",isDaemon=true){
             for(candidate in selected){
-                if(generation!=backgroundProbeGeneration || !prefs.getBoolean("background_url_checks",false))
+                if(generation!=backgroundProbeGeneration || !appInForeground ||
+                    !licenseReady || safeStartupMode ||
+                    !prefs.getBoolean("background_url_checks",false))
                     break
                 val reachable=probeMpvUrlReachability(candidate.url,candidate.headers)
                 handler.post{
                     if(generation==backgroundProbeGeneration && channels===playlist &&
                         prefs.getBoolean("background_url_checks",false)){
-                        probeReachable[candidate.url]=reachable
-                        media3ProbeObservedAt[candidate.url]=android.os.SystemClock.elapsedRealtime()
+                        if(reachable!=null){
+                            probeReachable[candidate.url]=reachable
+                            media3ProbeObservedAt[candidate.url]=android.os.SystemClock.elapsedRealtime()
+                        }
                     }
                 }
             }
