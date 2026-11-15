@@ -183,6 +183,12 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
         }
     }
 
+    fun choosePreferredAudioLanguage(language: String) {
+        if (closed) return
+        mpv?.setPropertyString("alang", language)
+        mpv?.setPropertyString("aid", "auto")
+    }
+
     fun chooseDefaultAudioTrack() {
         if (!closed) mpv?.setPropertyString("aid", "auto")
     }
