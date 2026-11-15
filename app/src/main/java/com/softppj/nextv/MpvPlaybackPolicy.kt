@@ -23,5 +23,18 @@ internal object MpvPlaybackPolicy {
         else -> "Auto"
     }
 
+    /**
+     * Software decode is a one-time escape hatch for a first-tune failure.
+     * Never override an explicit user decoder choice, or switch a previously
+     * working channel after a brief signal loss.
+     */
+    fun shouldTrySoftwareAfterStartupFailure(
+        selectedMode: String,
+        previouslyConfirmed: Boolean,
+        alreadyTriedSoftware: Boolean,
+        playbackStarted: Boolean
+    ): Boolean = selectedMode == "Automatic" && !previouslyConfirmed &&
+        !alreadyTriedSoftware && !playbackStarted
+
     fun isValidMode(mode: String): Boolean = mode in setOf("Automatic", "Hardware copy", "Software")
 }
