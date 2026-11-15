@@ -6025,9 +6025,6 @@ class MainActivity: Activity() {
     private fun applyChannelVolume(){
         val c=channels.getOrNull(active) ?:return
         val gain=channelVolumeGain(c)
-        activeChannelGainProcessor?.gain=gain
-        player?.volume=1f
-        try{vlcPlayer?.volume=(gain*100).toInt().coerceIn(0,200)}catch(_:Exception){}
         mpvPlayer?.setVolume((gain*100).toInt())
         val webGain=gain.coerceAtMost(1f)
         web?.evaluateJavascript("try{var v=document.querySelector('video');if(v)v.volume="+webGain+";}catch(e){}",null)
@@ -6056,9 +6053,6 @@ class MainActivity: Activity() {
                 label.text="Channel volume: "+value+"%"
                 if(fromUser && active==index){
                     val gain=value.coerceIn(0,200)/100f
-                    activeChannelGainProcessor?.gain=gain
-                    player?.volume=1f
-                    try{vlcPlayer?.volume=value.coerceIn(0,200)}catch(_:Exception){}
                     mpvPlayer?.setVolume(value.coerceIn(0,200))
                     web?.evaluateJavascript("try{var v=document.querySelector('video');if(v)v.volume="+gain.coerceAtMost(1f)+";}catch(e){}",null)
                 }
