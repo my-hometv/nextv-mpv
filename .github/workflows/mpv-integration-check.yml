@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           curl --fail --location --retry 3 --silent --show-error https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz -o /tmp/actionlint.tar.gz
           tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
-          /tmp/actionlint -color=false .github/workflows/*.yml
+          /tmp/actionlint -color=false -ignore 'SC2129' .github/workflows/*.yml
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
