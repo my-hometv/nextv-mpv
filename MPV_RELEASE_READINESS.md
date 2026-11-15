@@ -30,3 +30,9 @@ This document is an engineering gate, not a legal certification or a claim of ve
 
 ### Release decision
 Do not mark this project distribution-ready until native compliance is documented, final CI is green, user authorizes APK creation, and physical TV testing passes.
+
+## Native artifact inspection — 2026-11-15
+- Inspected downloaded CI artifact `mpv-native-audit` (artifact ID 14148373759) containing `abi-inventory.txt` and `runtime-dependencies.txt`.
+- Runtime dependency tree includes `dev.jdtech.mpv:libmpv:1.0.0`.
+- The ELF `DT_NEEDED` entries for `libmpv.so` include `libavcodec.so`, `libavfilter.so`, `libavformat.so`, `libavutil.so`, `libavdevice.so`, `libswresample.so`, `libswscale.so`, `libc++_shared.so`, plus Android/system libraries. These entries demonstrate dynamic dependencies but do not prove which codec features or static libraries were built in.
+- Audit remains **NOT CLEARED**: collect the upstream AAR's POM and license, all bundled FFmpeg/native build configuration and corresponding-source materials before any distribution. No blanket license assertion is made for the FFmpeg binaries without inspecting their actual build configuration.
