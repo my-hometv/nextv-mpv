@@ -518,13 +518,11 @@ class MainActivity: Activity() {
     private var activeChannelGainProcessor:ChannelGainAudioProcessor?=null
     private var vlcCore:LibVLC?=null
     private var mpvPlayer:MpvPlaybackView?=null
-    private var gstreamerPlayer:GstreamerPlaybackView?=null
     // A missing optional JNI bridge must be detected once, not retried for every channel.
     // Do not repeatedly retry a stream that already failed this experimental engine.
     private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
-    private var vlcAttempted=false
     private val engineAttempts=mutableMapOf<String,MutableSet<String>>()
     private val recoveryAttempts=mutableMapOf<String,Int>()
     private val unavailableChannels=mutableSetOf<String>()
@@ -7000,7 +6998,7 @@ class MainActivity: Activity() {
         }
         val sessionKey=channelKey(c)
         if(alternativeSessionKey!=sessionKey){alternativeAttempted.clear();alternativeSessionKey=sessionKey;engineAttempts.clear();fallbackEngineOverride=null;recoveryPrompted.clear()}
-        if(engineChannelUrl!=c.url){vlcAttempted=false;engineChannelUrl=c.url}
+        if(engineChannelUrl!=c.url)engineChannelUrl=c.url
         if(retryUrl!=c.url)retryCount=0
         retryUrl=c.url
         val sameRecoveryRetry=preservingRecoveryScan &&
@@ -8303,10 +8301,6 @@ class MainActivity: Activity() {
         try{saveCurrentMediaProgress()}catch(e:Throwable){
             HomeTvDiagnostics.w("Playback","Progress save failed during channel switch",e)
         }
-        try{gstreamerPlayer?.release()}catch(e:Throwable){
-            HomeTvDiagnostics.w("GStreamer","Native playback release failed",e)
-        }
-        gstreamerPlayer=null
         try{mpvPlayer?.release()}catch(e:Throwable){
             HomeTvDiagnostics.w("MPV","Native playback release failed",e)
         }
