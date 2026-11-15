@@ -71,10 +71,7 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                         android.view.Display.HdrCapabilities.HDR_TYPE_HDR10) == true
                 } catch (_: RuntimeException) { false }
             } else false
-            selectedOutputMode = when {
-                outputMode == "Force HDR10" && !hdr10Supported -> "Auto (HDR10 unsupported)"
-                else -> outputMode
-            }
+            selectedOutputMode = MpvPlaybackPolicy.effectiveOutputMode(outputMode, hdr10Supported)
             when (selectedOutputMode) {
                 "Force HDR10" -> {
                     engine.setOptionString("target-prim", "bt.2020")
