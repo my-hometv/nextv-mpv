@@ -520,9 +520,7 @@ class MainActivity: Activity() {
     private var mpvPlayer:MpvPlaybackView?=null
     private var gstreamerPlayer:GstreamerPlaybackView?=null
     // A missing optional JNI bridge must be detected once, not retried for every channel.
-    private var gstreamerNativeUnavailable=false
     // Do not repeatedly retry a stream that already failed this experimental engine.
-    private val gstreamerFailedUrls=mutableSetOf<String>()
     private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
