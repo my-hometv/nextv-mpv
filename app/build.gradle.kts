@@ -107,10 +107,7 @@ val verifyMpvRuntime by tasks.registering {
                 (it.group == "io.github.anilbeesetti" && it.name.startsWith("nextlib"))
         }) { "Legacy native playback dependency leaked into MPV runtime" }
         check(modules.none {
-            it.group == "androidx.media3" &&
-                it.name in setOf("media3-ui", "media3-effect", "media3-exoplayer-hls",
-                    "media3-exoplayer-dash", "media3-exoplayer-rtsp",
-                    "media3-exoplayer-smoothstreaming")
+            it.group == "androidx.media3"
         }) { "Unused legacy Media3 playback/UI module leaked into MPV runtime" }
         println("Verified MPV native runtime without LibVLC or nextlib")
     }
@@ -129,6 +126,17 @@ val verifyMpvOnlyEntryPoints by tasks.registering {
         val manifest = file("src/main/AndroidManifest.xml").readText()
         listOf("import org.videolan.libvlc.", "import androidx.media3.").forEach { prefix ->
             check(!activity.contains(prefix)) { "Legacy native player imported into MPV activity: $prefix" }
+        }
+        listOf("IsolatedVlcPlaybackService.kt", "IsolatedVlcRuntime.kt",
+            "IsolatedVlcServiceClient.kt", "IsolatedVlcSessionController.kt",
+            "RemoteIsolatedVlcRuntime.kt", "NativeLibVlcProbe.kt",
+            "NativeVlcPlaybackTracker.kt").forEach { obsolete ->
+            check(!file("src/main/java/com/softppj/nextv/$obsolete").exists()) {
+                "Removed VLC implementation reintroduced: $obsolete"
+            }
+        }
+        check(!file("src/main/aidl/com/softppj/nextv/IIsolatedVlcPlayback.aidl").exists()) {
+            "Obsolete VLC AIDL interface reintroduced"
         }
         check(!manifest.contains("IsolatedVlcPlaybackService")) {
             "Legacy isolated VLC service must not be registered in the MPV APK"
