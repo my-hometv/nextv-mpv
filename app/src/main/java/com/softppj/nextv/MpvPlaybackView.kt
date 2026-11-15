@@ -90,16 +90,17 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
             // Preserve the saved preference; a future verified 10-bit surface
             // implementation can explicitly opt in through the policy.
             selectedOutputMode = MpvPlaybackPolicy.effectiveOutputMode(outputMode, hdr10Supported, hdrSurfaceVerified = false)
-            when (selectedOutputMode) {
-                "Force HDR10" -> {
-                    engine.setOptionString("target-prim", "bt.2020")
-                    engine.setOptionString("target-trc", "pq")
-                }
-                "Force SDR" -> {
-                    engine.setOptionString("target-prim", "bt.709")
-                    engine.setOptionString("target-trc", "bt.1886")
-                }
-            }
+            // The current Android RGBA_8888 SurfaceView is SDR. Explicitly
+            // declare the SDR output target even in Auto: otherwise mpv may
+            // select a PQ target from the HDR source metadata while the Android
+            // compositor interprets its 8-bit pixels as SDR (washed-out image).
+            // mpv's GPU renderer must tone-map PQ/HLG sources into this target.
+            // This does not alter the decoded source's colour metadata.
+            engine.setOptionString("target-prim", "bt.709")
+            engine.setOptionString("target-trc", "bt.1886")
+            engine.setOptionString("tone-mapping", "mobius")
+            engine.setOptionString("tone-mapping-param", "0.3")
+            engine.setOptionString("hdr-compute-peak", "auto")
             // Use source metadata for matrix, range and transfer. Never force BT.709
             // or full-range on SD broadcasts; that causes washed-out colours.
             // Preserve source colour metadata; avoid forcing a fixed output matrix.
