@@ -1324,9 +1324,15 @@ class MainActivity: Activity() {
         dialog.show()
     }
     private fun checkFailedChannelAlternatives(index:Int,screen:FrameLayout){
-        // Foreground MPV is the only decoder. Do not spin up retired engines
-        // to verify alternative URLs or interrupt a confirmed working source.
-        if(mpvPlayer?.hasStarted!=true) offerMpvAlternative(index,screen)
+        // Do not interrupt a previously working channel with a speculative
+        // alternative prompt during a temporary stall or decoder restart.
+        // Initial unconfirmed channels can still offer a manual alternative.
+        val c=channels.getOrNull(index) ?:return
+        val key=channelKey(c)
+        if(mpvPlayer?.hasStarted==true || recoveryPending.contains(key) ||
+            prefs.contains("working_url_"+key) || prefs.contains("manual_url_"+key) ||
+            prefs.contains("confirmed_engine_"+key) || prefs.contains("manual_engine_"+key))return
+        offerMpvAlternative(index,screen)
     }
     private var testingAlternativeKey:String?=null
     // Once a channel has played successfully, the URL and engine are pinned.
@@ -2851,9 +2857,21 @@ class MainActivity: Activity() {
             .setMessage(report).setPositiveButton("OK",null).create())
     }
     private fun resetMpvPictureForCurrentChannel(){
-        val c=channels.getOrNull(active)
+        val index=active
+        val c=channels.getOrNull(index)
         if(c==null){showBanner("Select a channel first");return}
-        prefs.edit().putString(picturePresetKey(c),"Standard").apply()
+        // Cancel any queued picture-preview restart before resetting the source.
+        // Otherwise a delayed preview can overwrite the neutral state.
+        picturePreviewRestartTask?.let{handler.removeCallbacks(it)}
+        picturePreviewRestartTask=null
+        if(previewPictureChannelKey==channelKey(c)){
+            previewPictureChannelKey=null
+            previewPictureMode=null
+        }
+        prefs.edit().putString(picturePresetKey(c),"Standard")
+            .remove(pictureCustomKey(c,"brightness"))
+            .remove(pictureCustomKey(c,"contrast"))
+            .remove(pictureCustomKey(c,"saturation")).apply()
         mpvPlayer?.setPicture(1f,1f,1f)
         showBanner("MPV picture adjustments reset to Standard")
     }
