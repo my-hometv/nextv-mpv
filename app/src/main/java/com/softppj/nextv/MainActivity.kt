@@ -2811,11 +2811,35 @@ class MainActivity: Activity() {
     private fun engineFor(c:Channel):String = "MPV"
     // MPV-only channel settings. Keep keys scoped to the stream so other channels
     // and the global first-run defaults remain untouched.
+    // Temporary first-tune decoder fallback, never persisted over user choices.
+    private val mpvSoftwareFallbackAttempted=mutableSetOf<String>()
+    private val mpvSoftwareFallbackActive=mutableSetOf<String>()
+    private fun tryMpvSoftwareStartupFallback(c:Channel,index:Int,screen:FrameLayout,
+                                              generation:Int,started:Boolean):Boolean{
+        val key=channelKey(c)
+        val confirmed=prefs.contains("working_url_"+key) ||
+            prefs.contains("manual_url_"+key) || playedThisSession.contains(key)
+        if(!MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure(
+                selectedMpvDecoder(c),confirmed,
+                key in mpvSoftwareFallbackAttempted,started))return false
+        if(active!=index || videoScreen!==screen || playbackGeneration!=generation)return false
+        mpvSoftwareFallbackAttempted.add(key)
+        mpvSoftwareFallbackActive.add(key)
+        HomeTvDiagnostics.w("MPV","Automatic hardware startup failed; trying software once")
+        val task=Runnable{
+            if(active==index && videoScreen===screen && playbackGeneration==generation)
+                playIndex(index)
+        }
+        handler.post(task)
+        return true
+    }
     private fun mpvDecoderKey(c:Channel)="mpv_decoder_"+hash(channelKey(c))
     private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(channelKey(c))
     private fun selectedMpvDecoder(c:Channel):String {
         val mode=prefs.getString(mpvDecoderKey(c),"Automatic") ?: "Automatic"
-        return if(MpvPlaybackPolicy.isValidMode(mode))mode else "Automatic"
+        val selected=if(MpvPlaybackPolicy.isValidMode(mode))mode else "Automatic"
+        return if(selected=="Automatic" && channelKey(c) in mpvSoftwareFallbackActive)
+            "Software" else selected
     }
     private fun selectedMpvOutput(c:Channel):String {
         val mode=prefs.getString(mpvOutputKey(c),"Auto") ?: "Auto"
@@ -2831,6 +2855,8 @@ class MainActivity: Activity() {
         val selected=options.indexOf(selectedMpvDecoder(c)).coerceAtLeast(0)
         showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — MPV decoder")
             .setSingleChoiceItems(options,selected){dialog,choice->
+                mpvSoftwareFallbackActive.remove(channelKey(c))
+                mpvSoftwareFallbackAttempted.remove(channelKey(c))
                 prefs.edit().putString(mpvDecoderKey(c),options[choice]).apply()
                 dialog.dismiss()
                 if(active==index && mpvPlayer!=null)playIndex(index)
@@ -7187,7 +7213,8 @@ class MainActivity: Activity() {
                 if(mpvPlayer===view && active==index && videoScreen===screen &&
                     generation==playbackGeneration && !view.hasStarted){
                     HomeTvDiagnostics.w("MPV","First playback did not begin within 15 seconds")
-                    handleEngineFailure(index,screen)
+                    if(!tryMpvSoftwareStartupFallback(c,index,screen,generation,view.hasStarted))
+                        handleEngineFailure(index,screen)
                 }
             }
             screen.addView(view,0,FrameLayout.LayoutParams(-1,-1))
@@ -7219,7 +7246,8 @@ class MainActivity: Activity() {
                     if(mpvPlayer!==view || active!=index || videoScreen!==screen ||
                         generation!=playbackGeneration)return
                     HomeTvDiagnostics.w("MPV",message)
-                    handleEngineFailure(index,screen)
+                    if(!tryMpvSoftwareStartupFallback(c,index,screen,generation,view.hasStarted))
+                        handleEngineFailure(index,screen)
                 }
             }
             view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c))
