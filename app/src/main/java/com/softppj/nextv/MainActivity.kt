@@ -2803,6 +2803,61 @@ class MainActivity: Activity() {
     // MPV edition ignores legacy per-channel engine pins.
     private fun initialEngines(c:Channel):List<String> = listOf("MPV")
     private fun engineFor(c:Channel):String = "MPV"
+    // MPV-only channel settings. Keep keys scoped to the stream so other channels
+    // and the global first-run defaults remain untouched.
+    private fun mpvDecoderKey(c:Channel)="mpv_decoder_"+hash(channelKey(c))
+    private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(channelKey(c))
+    private fun selectedMpvDecoder(c:Channel):String {
+        val mode=prefs.getString(mpvDecoderKey(c),"Automatic") ?: "Automatic"
+        return if(MpvPlaybackPolicy.isValidMode(mode))mode else "Automatic"
+    }
+    private fun selectedMpvOutput(c:Channel):String {
+        val mode=prefs.getString(mpvOutputKey(c),"Auto") ?: "Auto"
+        return if(mode in setOf("Auto","Force HDR10","Force SDR"))mode else "Auto"
+    }
+    private fun chooseMpvDecoderForCurrentChannel(){
+        if(active in channels.indices)chooseMpvDecoder(active)
+        else showBanner("Select a channel before changing its decoder")
+    }
+    private fun chooseMpvDecoder(index:Int){
+        val c=channels.getOrNull(index) ?:return
+        val options=arrayOf("Automatic","Hardware copy","Software")
+        val selected=options.indexOf(selectedMpvDecoder(c)).coerceAtLeast(0)
+        showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — MPV decoder")
+            .setSingleChoiceItems(options,selected){dialog,choice->
+                prefs.edit().putString(mpvDecoderKey(c),options[choice]).apply()
+                dialog.dismiss()
+                if(active==index && mpvPlayer!=null)playIndex(index)
+                else showBanner("Decoder saved for "+c.name)
+            }.setNegativeButton("Cancel",null).create())
+    }
+    private fun chooseMpvOutputForCurrentChannel(){
+        val index=active
+        val c=channels.getOrNull(index)
+        if(c==null){showBanner("Select a channel before changing HDR/SDR output");return}
+        val options=arrayOf("Auto","Force HDR10","Force SDR")
+        val selected=options.indexOf(selectedMpvOutput(c)).coerceAtLeast(0)
+        showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — MPV HDR/SDR output")
+            .setSingleChoiceItems(options,selected){dialog,choice->
+                prefs.edit().putString(mpvOutputKey(c),options[choice]).apply()
+                dialog.dismiss()
+                if(active==index && mpvPlayer!=null)playIndex(index)
+                else showBanner("Output mode saved for "+c.name)
+            }.setNegativeButton("Cancel",null).create())
+    }
+    private fun showMpvPlaybackDiagnostics(){
+        val report=mpvPlayer?.diagnosticSnapshot() ?: "No active MPV playback. Start a channel first."
+        showSideDialog(AlertDialog.Builder(this).setTitle("MPV playback diagnostics")
+            .setMessage(report).setPositiveButton("OK",null).create())
+    }
+    private fun resetMpvPictureForCurrentChannel(){
+        val c=channels.getOrNull(active)
+        if(c==null){showBanner("Select a channel first");return}
+        prefs.edit().putString(picturePresetKey(c),"Standard").apply()
+        mpvPlayer?.setPicture(1f,1f,1f)
+        showBanner("MPV picture adjustments reset to Standard")
+    }
+
     // MPV edition: channel player selection controls decoder mode, not obsolete engines.
     private fun chooseChannelEngine(i:Int) {
         chooseMpvDecoder(i)
@@ -4643,7 +4698,7 @@ class MainActivity: Activity() {
             return
         }
         val tracks=mpv.tracks("sub")
-        val labels=arrayOf("Off","Automatic")+tracks.map{it.label+(if(it.selected)" ✓" else "")}
+        val labels=(listOf("Off","Automatic")+tracks.map{it.label+(if(it.selected)" ✓" else "")}).toTypedArray()
         val saved=subtitlePreference(c)
         val selected=when{
             saved=="off"->0
@@ -4651,7 +4706,7 @@ class MainActivity: Activity() {
             else->tracks.indexOfFirst{it.label==saved}.let{if(it<0)1 else it+2}
         }
         showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Subtitle tracks")
-            .setSingleChoiceItems(labels.toTypedArray(),selected){dialog,choice->
+            .setSingleChoiceItems(labels,selected){dialog,choice->
                 val value=when(choice){
                     0->"off"
                     1->"auto"
