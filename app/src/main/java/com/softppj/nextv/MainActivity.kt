@@ -1228,6 +1228,10 @@ class MainActivity: Activity() {
                 recoveryPrompted.remove(key)
                 initialTried.remove(key)
                 recoveryAttempts.remove(channelKey(c))
+                // "Retry all" is an explicit fresh attempt: re-enable the
+                // bounded automatic software decoder fallback for this channel.
+                mpvSoftwareFallbackActive.remove(key)
+                mpvSoftwareFallbackAttempted.remove(key)
                 fallbackEngineOverride=null
                 if(active==index && videoScreen===screen)playIndex(preferredChannel(index))
             }
