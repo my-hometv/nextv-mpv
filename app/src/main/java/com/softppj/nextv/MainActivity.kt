@@ -7,31 +7,6 @@ import android.view.*
 import android.widget.*
 import android.webkit.*
 import android.net.Uri
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media as VlcMedia
-import org.videolan.libvlc.MediaPlayer as VlcPlayer
-import androidx.media3.common.MediaItem
-import androidx.media3.common.C
-import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.common.Tracks
-import androidx.media3.common.Player
-import androidx.media3.common.PlaybackException
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.DecoderCounters
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.common.AudioAttributes
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.HttpDataSource
-import androidx.media3.ui.PlayerView
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.Brightness
-import androidx.media3.effect.Contrast
-import androidx.media3.effect.HslAdjustment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
@@ -41,7 +16,6 @@ import kotlin.concurrent.thread
 data class Channel(val name:String, val url:String, val group:String, val logo:String="", val source:String="", val headers:Map<String,String> = emptyMap(), val epgId:String="", val webChannel:String="", val mediaType:String="live", val year:String="", val genre:String="", val artist:String="", val album:String="", val season:String="", val episode:String="", val description:String="")
 data class Playlist(val name:String, val url:String, val enabled:Boolean=true)
 
-@UnstableApi
 class MainActivity: Activity() {
     private val prefs by lazy { getSharedPreferences("nextv", MODE_PRIVATE) }
     private var channels = mutableListOf<Channel>()
