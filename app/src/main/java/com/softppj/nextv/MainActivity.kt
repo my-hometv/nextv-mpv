@@ -1220,8 +1220,10 @@ class MainActivity: Activity() {
         if(index !in channels.indices || active!=index || videoScreen!==screen)return
         val c=channels[index]
         val key=channelKey(c)
-        if(prefs.contains("confirmed_engine_"+key) &&
-            !prefs.getString("working_url_"+key,null).isNullOrBlank())return
+        if(MpvPlaybackPolicy.isEstablishedStream(
+                prefs.getString("working_url_"+key,null),
+                prefs.getString("manual_url_"+key,null),
+                key in playedThisSession))return
         if(failurePromptKey==key || prefs.getBoolean("first_failure_prompted_"+key,false))return
         failurePromptKey=key
         // Prompt only once per channel identity, even after an app restart.
@@ -1400,12 +1402,13 @@ class MainActivity: Activity() {
         val current="MPV"
         val pinnedUrl=prefs.getString("manual_url_"+key,null)
             ?:prefs.getString("working_url_"+key,null)
-        val pinnedEngine=prefs.getString("manual_engine_"+key,null)
-            ?:prefs.getString("confirmed_engine_"+key,null)
-        // Legacy Media3/LibVLC engine pins still represent a previously working URL.
-        // Preserve recovery confidence when migrating that URL to the MPV engine.
-        val established=ChannelFailurePolicy.hasEstablishedPlayback(
-            pinnedUrl!=null,pinnedEngine!=null)
+        // The MPV edition has only one native engine. Older app data may
+        // retain a confirmed URL without an engine pin, and foreground playback
+        // can be established before asynchronous preferences are observed.
+        val established=MpvPlaybackPolicy.isEstablishedStream(
+            prefs.getString("working_url_"+key,null),
+            prefs.getString("manual_url_"+key,null),
+            key in playedThisSession)
         if(established){
             // Never let a previous unestablished-channel failure blacklist a
             // channel that has since confirmed playback.
@@ -2821,8 +2824,10 @@ class MainActivity: Activity() {
     private fun tryMpvSoftwareStartupFallback(c:Channel,index:Int,screen:FrameLayout,
                                               generation:Int,started:Boolean):Boolean{
         val key=channelKey(c)
-        val confirmed=prefs.contains("working_url_"+key) ||
-            prefs.contains("manual_url_"+key) || playedThisSession.contains(key)
+        val confirmed=MpvPlaybackPolicy.isEstablishedStream(
+            prefs.getString("working_url_"+key,null),
+            prefs.getString("manual_url_"+key,null),
+            key in playedThisSession)
         if(!MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure(
                 selectedMpvDecoder(c),confirmed,
                 key in mpvSoftwareFallbackAttempted,started))return false
