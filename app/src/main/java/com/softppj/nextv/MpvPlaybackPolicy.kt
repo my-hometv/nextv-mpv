@@ -62,5 +62,17 @@ internal object MpvPlaybackPolicy {
         else -> "Automatic output; actual HDR signalling not verified"
     }
 
+    /**
+     * A saved working URL is sufficient to suppress first-tune prompts.
+     * Older installations may have a URL pin without a matching engine pin;
+     * MPV is the only native engine in this edition.
+     */
+    fun isEstablishedStream(
+        workingUrl: String?,
+        manualUrl: String?,
+        playedThisSession: Boolean
+    ): Boolean = !workingUrl.isNullOrBlank() ||
+        !manualUrl.isNullOrBlank() || playedThisSession
+
     fun isValidMode(mode: String): Boolean = mode in setOf("Automatic", "Hardware copy", "Software")
 }
