@@ -524,7 +524,6 @@ class MainActivity: Activity() {
     private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
-    private var isolatedActiveEngineId:String?=null
     private var vlcAttempted=false
     private val engineAttempts=mutableMapOf<String,MutableSet<String>>()
     private val recoveryAttempts=mutableMapOf<String,Int>()
@@ -556,7 +555,6 @@ class MainActivity: Activity() {
     private var alternativeSessionKey:String?=null
     private var playbackGeneration=0
     // Uses a process-wide atomic high-water mark, surviving Activity recreation.
-    private val nativeGenerationAllocator = NativePlaybackGenerationAllocator()
     private var startupWatchdog:Runnable?=null
     private var channelIndexOwner:MutableList<Channel>?=null
     private var channelIndexSize=-1
@@ -3135,24 +3133,6 @@ class MainActivity: Activity() {
             else->"http"
         }
     }
-    // Only the LibVLC runtime packaged by this flavor is available.
-    // Never expose an unbundled native player through persisted preferences.
-    // The isolated service can initialize only the current Gradle flavor's
-    // native runtime. All other version IDs remain unavailable until their
-    // independently namespaced native libraries can coexist in one APK.
-    private val isolatedVlcRegistry by lazy {
-        val client = isolatedVlcClient
-        IsolatedVlcRegistry(
-            if (client == null) emptyList() else listOf(
-                RemoteIsolatedVlcRuntime("3.5.1", client),
-                RemoteIsolatedVlcRuntime("3.7.7", client),
-                RemoteIsolatedVlcRuntime("4.0.0-eap29", client)
-            )
-        )
-    }
-    private var isolatedVlcClient: IsolatedVlcServiceClient? = null
-    private val isolatedVlcSessions by lazy { IsolatedVlcSessionController(isolatedVlcRegistry) }
-
     private fun packagedEngines():List<String> =
         // Only MPV is selectable in this experimental edition.
         listOf("MPV")
@@ -3307,8 +3287,6 @@ class MainActivity: Activity() {
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(14,12,14,12) }
         root.setBackgroundColor(0xFF101E31.toInt())
         setContentView(android.widget.ScrollView(this).apply{isFillViewport=true;addView(root)})
-        // Service currently fails closed; binding must not block licensing or playback.
-        isolatedVlcClient = IsolatedVlcServiceClient(this).also { it.bind() }
         beginLicensedSession()
         registerLicenseNetworkCallback()
     }
@@ -8146,213 +8124,6 @@ class MainActivity: Activity() {
             handler.postDelayed(task,2000L*retryCount)
         }else showBanner("Stream stopped. Try another source or channel.",true)
     }
-    /**
-     * Surface lifecycle entry for the explicitly selected, packaged isolated
-     * LibVLC version. A service accepting a start is not proof of decoded video.
-     * Keep the existing direct LibVLC path as a separate, stable fallback.
-     */
-    private fun startIsolatedVlc(c:Channel,index:Int,screen:FrameLayout,engineId:String){
-        if (!isolatedVlcRegistry.verifiedIds().contains(engineId)) {
-            // Preserve the requested version for recovery bookkeeping. A
-            // missing native adapter must never be misreported as Media3.
-            isolatedActiveEngineId=engineId
-            showBanner("Native engine unavailable: "+engineId,true)
-            handleEngineFailure(index,screen)
-            return
-        }
-        val activityGeneration = playbackGeneration
-        val generation = nativeGenerationAllocator.next()
-        isolatedActiveEngineId=engineId
-        val surfaceView = SurfaceView(this)
-        screen.addView(surfaceView,0,FrameLayout.LayoutParams(-1,-1))
-        surfaceView.holder.addCallback(object:SurfaceHolder.Callback {
-            private var attached = false
-            private var confirmed = false
-            private var watchdog: NativePlaybackWatchdog? = null
-            private val surfaceRecovery = NativeSurfaceRecoveryGate()
-            private var poll: Runnable? = null
-            private fun cancelPoll() {
-                poll?.let { handler.removeCallbacks(it) }
-                poll = null
-            }
-            private fun watchPlayback() {
-                val check = object:Runnable {
-                    override fun run() {
-                        if (!attached || active!=index || videoScreen!==screen ||
-                            playbackGeneration!=activityGeneration) return
-                        val state = isolatedVlcClient?.playbackState(generation) ?: 0
-                        val progress = isolatedVlcClient?.playbackProgressCount(generation) ?: -1L
-                        val monitor = watchdog ?: return
-                        val status = monitor.check(
-                            state, progress, android.os.SystemClock.elapsedRealtime()
-                        )
-                        if (status == NativePlaybackWatchdog.Result.PLAYING &&
-                            monitor.hasObservedProgress && !confirmed) {
-                            confirmed = true
-                            rememberWorking(c)
-                            autoBufferHealthy()
-                        }
-                        val failure = when (status) {
-                            NativePlaybackWatchdog.Result.FAILED -> "Native playback failed"
-                            NativePlaybackWatchdog.Result.ENDED -> "Native playback ended"
-                            NativePlaybackWatchdog.Result.STARTUP_TIMEOUT -> "Native startup timed out"
-                            NativePlaybackWatchdog.Result.FIRST_PROGRESS_TIMEOUT -> "Native stream made no progress"
-                            NativePlaybackWatchdog.Result.STALLED -> "Native playback stalled"
-                            else -> null
-                        }
-                        if (failure != null) {
-                            if (!surfaceRecovery.requestRecovery()) return
-                            attached = false
-                            cancelPoll()
-                            isolatedVlcSessions.stop(generation)
-                            showBanner(failure + ". Trying recovery.", true)
-                            handleEngineFailure(index,screen)
-                            return
-                        }
-                        handler.postDelayed(this,500L)
-                    }
-                }
-                poll = check
-                handler.postDelayed(check,500L)
-            }
-            override fun surfaceCreated(holder:SurfaceHolder) {
-                if (!surfaceRecovery.canStart() || attached || active!=index || videoScreen!==screen ||
-                    playbackGeneration!=activityGeneration || !holder.surface.isValid) return
-                attached = isolatedVlcSessions.startWithSurface(
-                    engineId,c.url,generation,holder.surface
-                )
-                if (attached) {
-                    watchdog = NativePlaybackWatchdog(android.os.SystemClock.elapsedRealtime())
-                    watchPlayback()
-                } else {
-                    // Keep the requested native engine identity until recovery
-                    // has selected its next engine, even when Binder start fails.
-                    handler.post {
-                        if (active==index && videoScreen===screen &&
-                            playbackGeneration==activityGeneration) {
-                            if (!surfaceRecovery.requestRecovery()) return@post
-                            showBanner("Native playback could not start",true)
-                            handleEngineFailure(index,screen)
-                        }
-                    }
-                }
-            }
-            override fun surfaceChanged(holder:SurfaceHolder,format:Int,width:Int,height:Int) = Unit
-            override fun surfaceDestroyed(holder:SurfaceHolder) {
-                cancelPoll()
-                watchdog = null
-                val wasAttached = attached
-                attached = false
-                if (wasAttached) isolatedVlcSessions.stop(generation)
-                val shouldRecover = surfaceRecovery.onSurfaceDestroyed(wasAttached)
-                // A destroyed Surface cannot be reused by the same native
-                // generation. Trigger one fresh recovery session, unless the
-                // Activity is switching channels or being torn down.
-                if (shouldRecover) {
-                    handler.post {
-                        if (active==index && videoScreen===screen &&
-                            playbackGeneration==activityGeneration) {
-                            showBanner("Native video surface lost. Trying recovery.", true)
-                            handleEngineFailure(index,screen)
-                        }
-                    }
-                }
-            }
-        })
-    }
-
-    // Decoder selection changes only this channel's LibVLC playback path.
-    // Automatic preserves the known-working decoder and picture pipeline.
-    private val vlcDecoderModes=arrayOf("Automatic","Hardware (direct rendering)","Hardware (decoding only)","Software decoding")
-    private fun vlcDecoderKey(c:Channel)="vlc_decoder_"+hash(c.url)
-    private fun selectedVlcDecoder(c:Channel)=prefs.getString(vlcDecoderKey(c),"Automatic")
-        ?.takeIf{it in vlcDecoderModes} ?: "Automatic"
-    private fun chooseVlcDecoder(index:Int){
-        val c=channels.getOrNull(index)?:return
-        val current=selectedVlcDecoder(c)
-        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — LibVLC video decoder")
-            .setSingleChoiceItems(vlcDecoderModes,vlcDecoderModes.indexOf(current)){d,which->
-                val chosen=vlcDecoderModes[which]
-                d.dismiss()
-                if(chosen==current)return@setSingleChoiceItems
-                prefs.edit().putString(vlcDecoderKey(c),chosen).apply()
-                if(active==index && vlcPlayer!=null)playIndex(index)
-                else showBanner("LibVLC decoder: "+chosen)
-            }.setNegativeButton("Cancel",null).create()
-        showSideDialog(dialog)
-    }
-    private val mpvDecoderOptions=arrayOf("Automatic","Hardware copy","Software")
-    private val mpvOutputOptions=arrayOf("Auto","Force HDR10","Force SDR")
-    private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(c.url)
-    // Auto is the first-run default for every URL. MPV uses the actual video
-    // colour metadata; only explicit user overrides force an HDR/SDR target.
-    private fun selectedMpvOutput(c:Channel)=prefs.getString(mpvOutputKey(c),"Auto")
-        ?.takeIf{it in mpvOutputOptions} ?: "Auto"
-    private fun chooseMpvOutputForCurrentChannel(){
-        val index=active
-        val c=channels.getOrNull(index)
-        if(c==null){showBanner("Play a channel first to choose HDR/SDR output",true);return}
-        val current=selectedMpvOutput(c)
-        showSideDialog(AlertDialog.Builder(this)
-            .setTitle(c.name+" — MPV HDR/SDR output")
-            .setSingleChoiceItems(mpvOutputOptions,mpvOutputOptions.indexOf(current)){dialog,which->
-                val chosen=mpvOutputOptions[which]
-                dialog.dismiss()
-                if(chosen!=current){
-                    prefs.edit().putString(mpvOutputKey(c),chosen).apply()
-                    if(active==index)playIndex(index)
-                }
-            }.setNegativeButton("Cancel",null).create())
-    }
-    private fun resetMpvPictureForCurrentChannel(){
-        val c=channels.getOrNull(active)
-        if(c==null){
-            showBanner("Play a channel before resetting picture adjustments",true)
-            return
-        }
-        // Preserve the user's stored settings; neutralize the active MPV
-        // renderer only, to isolate stream colour problems from picture presets.
-        mpvPlayer?.setPicture(1f,1f,1f)
-        showBanner("MPV picture adjustments neutralized for this playback")
-    }
-    private fun chooseMpvDecoderForCurrentChannel(){
-        val i=active
-        if(i !in channels.indices){
-            showBanner("Play a channel first to choose its MPV decoder",true)
-            return
-        }
-        chooseMpvDecoder(i)
-    }
-    private fun showMpvPlaybackDiagnostics(){
-        val player=mpvPlayer
-        if(player==null){
-            showBanner("Play a channel to view MPV decoder diagnostics",true)
-            return
-        }
-        val details=player.diagnosticSnapshot()
-        HomeTvDiagnostics.i("MPV",details.replace("\\n","; "))
-        showSideDialog(AlertDialog.Builder(this)
-            .setTitle("MPV playback diagnostics")
-            .setMessage(details)
-            .setPositiveButton("OK",null).create())
-    }
-    private fun mpvDecoderKey(c:Channel)="mpv_decoder_"+hash(c.url)
-    private fun selectedMpvDecoder(c:Channel)=prefs.getString(mpvDecoderKey(c),"Automatic")
-        ?.takeIf{it in mpvDecoderOptions} ?: "Automatic"
-    private fun chooseMpvDecoder(index:Int){
-        val c=channels.getOrNull(index) ?:return
-        val mode=selectedMpvDecoder(c)
-        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — MPV video decoder")
-            .setSingleChoiceItems(mpvDecoderOptions,mpvDecoderOptions.indexOf(mode)){d,choice->
-                val next=mpvDecoderOptions[choice]
-                d.dismiss()
-                if(mode!=next){
-                    prefs.edit().putString(mpvDecoderKey(c),next).apply()
-                    if(active==index)playIndex(index)
-                }
-            }.setNegativeButton("Cancel",null).create()
-        showSideDialog(dialog)
-    }
     private fun startMpv(c:Channel,index:Int,screen:FrameLayout){
         // MPV Edition has one native video engine for all native video routes.
         // Preserve signed licensing and parental-lock checks done by playIndex.
@@ -9504,10 +9275,6 @@ class MainActivity: Activity() {
         // that error must never initiate recovery or replace the next channel.
         playbackGeneration++
         // Preserve MPV resume position before releasing the player.
-        // Stop any isolated session before tearing down the legacy player.
-        // The session controller rejects stale generations and is safe when idle.
-        isolatedVlcSessions.stopActive()
-        isolatedActiveEngineId=null
         startupWatchdog?.let{handler.removeCallbacks(it)}
         startupWatchdog=null
         autoBufferHealthyTask?.let{handler.removeCallbacks(it)}
@@ -9628,9 +9395,6 @@ class MainActivity: Activity() {
         alternativeAttempted.clear()
         if(isFinishing)HomeTvDiagnostics.markCleanExit(this)
         unregisterLicenseNetworkCallback()
-        isolatedVlcSessions.release()
-        isolatedVlcClient?.close()
-        isolatedVlcClient = null
         super.onDestroy()
     }
 }
