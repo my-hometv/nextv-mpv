@@ -377,7 +377,12 @@ class MpvPlaybackView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                 }
             }.getOrDefault("unknown")
         } else "unavailable"
+        val hdr10Supported=displayHdr.split(",").any { it.trim()=="HDR10" }
+        val sourceTransfer=str("video-params/gamma")
+        val sourcePrimaries=str("video-params/primaries")
         return listOf(
+            "Source dynamic range: "+MpvPlaybackPolicy.sourceDynamicRange(sourceTransfer,sourcePrimaries),
+            "Output interpretation: "+MpvPlaybackPolicy.outputInterpretation(selectedOutputMode,hdr10Supported),
             "Display HDR capabilities: "+displayHdr,
             "MPV version: "+str("mpv-version"),
             "FFmpeg version: "+str("ffmpeg-version"),
