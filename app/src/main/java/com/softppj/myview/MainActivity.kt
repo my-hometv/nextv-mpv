@@ -21,6 +21,10 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Toast
+import java.net.HttpURLConnection
+import java.net.URL
+import java.io.ByteArrayOutputStream
 import android.widget.TextView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -38,6 +42,12 @@ class MainActivity : Activity() {
     private var mode = "menu"
     private var playlistChannels: List<PlaylistParser.Channel> = emptyList()
     private var channelIndex = -1
+    private var favoritesOnly = false
+    private var drawerView: View? = null
+    private var numericView: TextView? = null
+    private var numericBuffer = ""
+    private var epgProgrammes: List<XmlTvGuide.Programme> = emptyList()
+    private var guideGeneration = 0
     private var playbackGeneration = 0
     private var showDiagnostics = false
     private var originalDisplayModeId: Int? = null
@@ -50,8 +60,144 @@ class MainActivity : Activity() {
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         root = FrameLayout(this)
         setContentView(root)
-        playlistChannels = PlaylistParser.parse(prefs.getString("playlist_text", "").orEmpty())
+        loadPlaylist()
+        val guideUrl = prefs.getString("xmltv_url", "").orEmpty()
+        if (guideUrl.isNotBlank()) refreshGuide(guideUrl)
         showMenu()
+    }
+
+    private fun playlistCount(): Int = prefs.getInt("playlist_count", 1).coerceIn(1, 5)
+    private fun activePlaylist(): Int = prefs.getInt("active_playlist", 0).coerceIn(0, playlistCount() - 1)
+    private fun playlistKey(index: Int) = "playlist_data_$index"
+    private fun playlistName(index: Int): String =
+        prefs.getString("playlist_name_$index", if (index == 0) "My Playlist" else "Playlist ${index + 1}")
+            .orEmpty()
+
+    private fun loadPlaylist() {
+        val index = activePlaylist()
+        val raw = prefs.getString(playlistKey(index),
+            if (index == 0) prefs.getString("playlist_text", "") else "").orEmpty()
+        playlistChannels = PlaylistParser.parse(raw)
+        channelIndex = prefs.getInt("last_channel_$index", -1)
+            .takeIf { it in playlistChannels.indices } ?: -1
+    }
+
+    private fun setActivePlaylist(index: Int) {
+        if (index !in 0 until playlistCount()) return
+        prefs.edit().putInt("active_playlist", index).apply()
+        loadPlaylist()
+        favoritesOnly = false
+        showMenu()
+    }
+
+    private fun favoriteSet(): Set<String> =
+        prefs.getStringSet("fav_${activePlaylist()}", emptySet())?.toSet() ?: emptySet()
+
+    private fun toggleFavorite() {
+        val item = playlistChannels.getOrNull(channelIndex) ?: return
+        val updated = favoriteSet().toMutableSet()
+        if (!updated.add(item.url)) updated.remove(item.url)
+        prefs.edit().putStringSet("fav_${activePlaylist()}", updated).apply()
+        Toast.makeText(this, if (item.url in updated) "Favorite saved" else "Favorite removed",
+            Toast.LENGTH_SHORT).show()
+    }
+
+    private fun choosePlaylist() {
+        val labels = (0 until playlistCount()).map { playlistName(it) }.toTypedArray()
+        AlertDialog.Builder(this).setTitle("Choose playlist")
+            .setSingleChoiceItems(labels, activePlaylist()) { dialog, which ->
+                dialog.dismiss()
+                setActivePlaylist(which)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun addPlaylist() {
+        if (playlistCount() >= 5) {
+            Toast.makeText(this, "Maximum five local playlists", Toast.LENGTH_LONG).show()
+            return
+        }
+        val index = playlistCount()
+        prefs.edit().putInt("playlist_count", index + 1).putInt("active_playlist", index)
+            .putString("playlist_name_$index", "Playlist ${index + 1}").apply()
+        loadPlaylist()
+        askPlaylist()
+    }
+
+    private fun renamePlaylist() {
+        val index = activePlaylist()
+        val field = EditText(this).apply { setText(playlistName(index)); setSingleLine(true) }
+        AlertDialog.Builder(this).setTitle("Rename playlist").setView(field)
+            .setPositiveButton("Save") { _, _ ->
+                prefs.edit().putString("playlist_name_$index",
+                    field.text.toString().trim().take(50).ifBlank { "Playlist ${index + 1}" }).apply()
+                showMenu()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun setChannel(index: Int) {
+        if (index !in playlistChannels.indices) return
+        channelIndex = index
+        prefs.edit().putInt("last_channel_${activePlaylist()}", index).apply()
+        openMedia(playlistChannels[index].url)
+    }
+
+    private fun refreshGuide(url: String) {
+        if (!PlaylistParser.validHttpsUrl(url)) return
+        val request = ++guideGeneration
+        Thread {
+            var connection: HttpURLConnection? = null
+            try {
+                connection = URL(url).openConnection() as HttpURLConnection
+                connection.connectTimeout = 7000
+                connection.readTimeout = 9000
+                connection.instanceFollowRedirects = false
+                val data = ByteArrayOutputStream()
+                connection.inputStream.use { input ->
+                    val block = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(block)
+                        if (n < 0) break
+                        if (data.size() + n > 8_000_000) error("EPG too large")
+                        data.write(block, 0, n)
+                    }
+                }
+                val guide = XmlTvGuide.parse(data.toByteArray())
+                runOnUiThread {
+                    if (request == guideGeneration) {
+                        epgProgrammes = guide
+                        Toast.makeText(this, "Guide loaded: ${guide.size} programmes", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (_: Exception) {
+                runOnUiThread {
+                    if (request == guideGeneration)
+                        Toast.makeText(this, "Unable to load XMLTV guide", Toast.LENGTH_LONG).show()
+                }
+            } finally { connection?.disconnect() }
+        }.start()
+    }
+
+    private fun askGuide() {
+        val field = EditText(this).apply {
+            setSingleLine(true)
+            hint = "https://provider.example/guide.xml"
+            setText(prefs.getString("xmltv_url", ""))
+        }
+        AlertDialog.Builder(this).setTitle("XMLTV guide URL (HTTPS)").setView(field)
+            .setPositiveButton("Load") { _, _ ->
+                val url = field.text.toString().trim()
+                if (PlaylistParser.validHttpsUrl(url)) {
+                    prefs.edit().putString("xmltv_url", url).apply()
+                    refreshGuide(url)
+                } else Toast.makeText(this, "Invalid HTTPS guide URL", Toast.LENGTH_LONG).show()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun guideLine(index: Int): String {
+        val id = playlistChannels.getOrNull(index)?.tvgId.orEmpty()
+        val (now, next) = XmlTvGuide.nowNext(epgProgrammes, id)
+        if (now == null && next == null) return "No guide data"
+        return "Now: ${now?.title ?: "—"}  ·  Next: ${next?.title ?: "—"}"
     }
 
     private fun showMenu() {
@@ -64,7 +210,7 @@ class MainActivity : Activity() {
             setBackgroundColor(android.graphics.Color.rgb(18, 26, 38))
         }
         panel.addView(TextView(this).apply {
-            text = "MyView • Android TV playback test"
+            text = "MyView • Live TV"
             textSize = 24f
             setTextColor(android.graphics.Color.WHITE)
         })
@@ -91,9 +237,17 @@ class MainActivity : Activity() {
             showDiagnostics = !showDiagnostics
             showMenu()
         }
+        addButton("Playlist: ${playlistName(activePlaylist())} (switch)") { choosePlaylist() }
+        addButton("Add playlist") { addPlaylist() }
+        addButton("Rename playlist") { renamePlaylist() }
+        addButton("Set XMLTV guide URL") { askGuide() }
         addButton("Paste M3U playlist (HTTPS)") { askPlaylist() }
         if (playlistChannels.isNotEmpty()) {
-            addButton("Browse ${playlistChannels.size} channels") { showChannelList() }
+            addButton("Watch last channel") {
+                setChannel(channelIndex.takeIf { it in playlistChannels.indices } ?: 0)
+            }
+            addButton("Browse ${playlistChannels.size} channels") { favoritesOnly = false; showChannelList() }
+            addButton("Favorites") { favoritesOnly = true; showChannelList() }
         }
         addButton("Play stream (Media3)") { askUrl("stream", "HTTPS .mpd / .m3u8 / .mp4 URL") }
         addButton("Open provider webpage (WebView)") { askUrl("web", "HTTPS webpage URL") }
@@ -106,7 +260,8 @@ class MainActivity : Activity() {
         val field = EditText(this).apply {
             minLines = 7
             maxLines = 14
-            setText(prefs.getString("playlist_text", ""))
+            setText(prefs.getString(playlistKey(activePlaylist()),
+                if (activePlaylist() == 0) prefs.getString("playlist_text", "") else ""))
             hint = "#EXTM3U\\n#EXTINF:-1,Example channel\\nhttps://example.org/live.m3u8"
         }
         val dialog = AlertDialog.Builder(this).setTitle("Paste your authorized HTTPS M3U")
@@ -121,7 +276,9 @@ class MainActivity : Activity() {
                 } else {
                     playlistChannels = parsed
                     // User-provided playlist is device-local, never bundled into a public repository.
-                    prefs.edit().putString("playlist_text", raw).apply()
+                    prefs.edit().putString(playlistKey(activePlaylist()), raw)
+                        .putInt("last_channel_${activePlaylist()}", 0).apply()
+                    channelIndex = 0
                     dialog.dismiss()
                     showChannelList()
                 }
@@ -139,23 +296,32 @@ class MainActivity : Activity() {
             setPadding(32, 20, 32, 20)
             setBackgroundColor(android.graphics.Color.rgb(18, 26, 38))
         }
-        list.addView(Button(this).apply {
-            text = "Back to MyView"
-            setOnClickListener { showMenu() }
+        list.addView(TextView(this).apply {
+            text = "${playlistName(activePlaylist())} • ${if (favoritesOnly) "Favorites" else "Channels"}"
+            textSize = 22f
+            setTextColor(android.graphics.Color.WHITE)
         })
-        playlistChannels.forEachIndexed { index, channel ->
+        list.addView(Button(this).apply { text = "Back"; setOnClickListener { showMenu() } })
+        list.addView(Button(this).apply {
+            text = if (favoritesOnly) "Show all channels" else "Favorites only"
+            setOnClickListener { favoritesOnly = !favoritesOnly; showChannelList() }
+        })
+        val indices = ChannelNavigation.filteredIndices(playlistChannels, "", favoritesOnly, favoriteSet())
+        if (indices.isEmpty()) list.addView(TextView(this).apply {
+            text = "No channels in this view"
+            setTextColor(android.graphics.Color.WHITE)
+        })
+        for (index in indices) {
+            val channel = playlistChannels[index]
             list.addView(Button(this).apply {
-                text = "${index + 1}. ${channel.name}" + if (channel.group.isNotBlank()) " • ${channel.group}" else ""
+                text = "${index + 1}. ${channel.name}  ${if (channel.url in favoriteSet()) "★" else ""}" +
+                    "\n${guideLine(index)}"
                 isFocusable = true
-                setOnClickListener {
-                    channelIndex = index
-                    openMedia(channel.url)
-                }
+                setOnClickListener { setChannel(index) }
             })
         }
-        root.addView(ScrollView(this).apply { addView(list) },
-            FrameLayout.LayoutParams(-1, -1))
-        list.getChildAt((channelIndex + 1).coerceIn(0, list.childCount - 1)).requestFocus()
+        root.addView(ScrollView(this).apply { addView(list) }, FrameLayout.LayoutParams(-1, -1))
+        list.getChildAt(1).requestFocus()
     }
 
     private fun askUrl(type: String, title: String) {
