@@ -12,6 +12,16 @@ internal object ChannelNavigation {
         }
     }
 
+    /** Scan within the selected playlist only; never cross into other playlists. */
+    fun nextVisible(current: Int, urls: List<String>, hidden: Set<String>, direction: Int): Int? {
+        if (current !in urls.indices) return null
+        for (step in 1..urls.size) {
+            val proposed = ((current + step * (if (direction < 0) -1 else 1)) % urls.size + urls.size) % urls.size
+            if (urls[proposed] !in hidden) return proposed
+        }
+        return null
+    }
+
     fun filteredIndices(
         channels: List<PlaylistParser.Channel>,
         query: String,
