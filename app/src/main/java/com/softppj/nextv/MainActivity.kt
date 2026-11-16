@@ -6972,7 +6972,7 @@ class MainActivity: Activity() {
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
-            text=(selectedPlaylistSource() ?: "ALL PLAYLISTS")+"  •  LEFT for Groups / Home"
+            text="MYVIEW LIVE  •  "+(selectedPlaylistSource() ?: "ALL PLAYLISTS")+"  •  LEFT: Groups"
             textSize=19f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(16,16,8,12)
@@ -6995,7 +6995,16 @@ class MainActivity: Activity() {
                     showOverlayList()
                 }.setNegativeButton("Cancel",null).show()
         })
-        val list=ListView(this)
+        val list=ListView(this).apply{
+            // Consistent visible selected-channel focus on Android TV.
+            val highlight=android.graphics.drawable.GradientDrawable().apply{
+                setColor(0xFF23628D.toInt())
+                setCornerRadius(tvDp(8).toFloat())
+                setStroke(tvDp(2),0xFFB7EAFF.toInt())
+            }
+            selector=highlight
+            isDrawSelectorOnTop=false
+        }
         val available=playlistIndices().filter{
             !isGroupHidden(channels[it].group) &&
                 (searchQuery==null || channels[it].name.contains(searchQuery,true) ||
@@ -7009,7 +7018,15 @@ class MainActivity: Activity() {
                 logoRow(channels[available[position]],channelLabel(available[position]),convertView)
         }
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
-
+        val focusedInfo=TextView(this).apply{
+            text="▲ ▼ Choose channel  •  OK Play  •  LEFT Groups"
+            textSize=14f
+            setTextColor(0xFFE2F0FA.toInt())
+            setBackgroundColor(0xE0183147.toInt())
+            setPadding(tvDp(12),tvDp(8),tvDp(12),tvDp(8))
+            maxLines=3
+        }
+        drawer.addView(focusedInfo)
         val width=(resources.displayMetrics.widthPixels*0.43f).toInt().coerceAtLeast(260)
         screen.addView(drawer,FrameLayout.LayoutParams(width,-1,Gravity.START))
         fun close(){if(drawer.parent===screen)screen.removeView(drawer);screen.requestFocus()}
@@ -7041,6 +7058,27 @@ class MainActivity: Activity() {
             list.setSelection(playingPosition)
         }
         focusRemoteList(list,if(playingPosition>=0)playingPosition else 0)
+        // Focus only updates metadata. Never open another stream or decoder on
+        // D-pad scrolling; the playing picture stays live until OK.
+        list.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
+            override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long){
+                val selected=available.getOrNull(position)?.let{channels.getOrNull(it)} ?:return
+                val now=System.currentTimeMillis()
+                val epg=if(prefs.getBoolean("nextv_epg_enabled",true) &&
+                    prefs.getBoolean("show_channel_epg",true))programmeList(selected) else emptyList()
+                val current=epg.firstOrNull{it.start<=now && it.end>now}
+                val next=epg.asSequence().filter{it.start>now}.minByOrNull{it.start}
+                focusedInfo.text=buildString{
+                    append(selected.name)
+                    current?.let{append("\nNOW  ").append(it.title)}
+                    next?.let{append("\nNEXT  ").append(it.title)}
+                    append("\nOK to play  •  LEFT for groups")
+                }
+            }
+            override fun onNothingSelected(parent:AdapterView<*>?){
+                focusedInfo.text="▲ ▼ Choose channel  •  OK Play"
+            }
+        }
     }
     private fun showLeftNavigation(){
         val screen=videoScreen ?:return
