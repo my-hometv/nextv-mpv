@@ -17,8 +17,8 @@ android {
         applicationId = "com.softppj.myview"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1-myview-integrated-test"
+        versionCode = 3
+        versionName = "1.0.2-myview-live-tv-test"
         // Exactly one LibVLC baseline is packaged in this APK.
         // Other native versions require separate JNI isolation.
         buildConfigField("String", "LIBVLC_VERSION", "\"3.5.1\"")
