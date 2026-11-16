@@ -50,11 +50,15 @@ jobs:
           # already include the Android command-line tools.
           "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
 
+      - name: Install Gradle for private source without wrapper
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
       - name: Build and test MyView
         working-directory: myview
         run: |
-          chmod +x ./gradlew
-          ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:verifySingleLibVlc
+          gradle --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:verifySingleLibVlc
 
       - name: Package MyView APK
         run: |
