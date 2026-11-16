@@ -8199,6 +8199,9 @@ class MainActivity: Activity() {
     }
 
     private fun playIndex(index:Int){
+        // Explicit tune, numeric input and menu selection supersede any
+        // outstanding rapid-CH request before it can retune unexpectedly.
+        cancelRapidSurf()
         // No cached or delayed playback callback may bypass license validation.
         if(!licenseReady)return
         if(index !in channels.indices)return
@@ -9198,16 +9201,41 @@ class MainActivity: Activity() {
         if(position==null)return if(direction>0)available.first() else available.last()
         return available[(position+direction+available.size)%available.size]
     }
+    private var rapidSurfTask:Runnable?=null
+    private var rapidSurfTarget=-1
+    private fun cancelRapidSurf(){
+        rapidSurfTask?.let{handler.removeCallbacks(it)}
+        rapidSurfTask=null
+        rapidSurfTarget=-1
+    }
     private fun switchChannel(delta:Int){
         clearChannelPreview()
         surfingDirection=if(delta>=0)1 else -1
+        if(!licenseReady || playbackTeardownInProgress)return
         val available=surfingIndices()
         if(available.isEmpty())return
-        val next=preferredChannel(nextSurfingIndex(active,delta,available))
-        if(!HomeTvPolicies.shouldRetuneSurfingChannel(
-                active,next,videoScreen!=null &&
-                    (player!=null || vlcPlayer!=null || web!=null)))return
-        playIndex(next)
+        // CH+ / CH- repeats must not tear down multiple decoders in succession.
+        // Navigate from the queued target, but tune only after the last keypress.
+        val from=if(rapidSurfTarget in channels.indices)rapidSurfTarget else active
+        val next=preferredChannel(nextSurfingIndex(from,delta,available))
+        if(next !in channels.indices)return
+        cancelRapidSurf()
+        rapidSurfTarget=next
+        val requestedGeneration=playbackGeneration
+        val targetIdentity=id(channels[next])
+        val task=Runnable{
+            rapidSurfTask=null
+            rapidSurfTarget=-1
+            if(!licenseReady || playbackTeardownInProgress ||
+                requestedGeneration!=playbackGeneration ||
+                next !in channels.indices || id(channels[next])!=targetIdentity)return@Runnable
+            if(!HomeTvPolicies.shouldRetuneSurfingChannel(
+                    active,next,videoScreen!=null &&
+                        (player!=null || vlcPlayer!=null || web!=null)))return@Runnable
+            playIndex(next)
+        }
+        rapidSurfTask=task
+        handler.postDelayed(task,120L)
     }
     private fun resumeLast(){
         if(channels.isEmpty()){showHome();return}
@@ -10105,6 +10133,7 @@ class MainActivity: Activity() {
         }
     }
     private fun stopPlayback(){
+        cancelRapidSurf()
         if(playbackTeardownInProgress)return
         playbackTeardownInProgress=true
         try{
