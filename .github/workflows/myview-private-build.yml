@@ -19,7 +19,7 @@ jobs:
     steps:
       - run: echo "Manual public APK build available"
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'Build MyView full NexTV with real MultiView and today improvements')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'Verify MyView complete integration with MultiView Smart Logos playback diagnostics')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
