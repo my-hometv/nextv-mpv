@@ -523,6 +523,82 @@ class MainActivity : Activity() {
         view.requestFocus()
     }
 
+    private fun showLiveDrawer() {
+        if (mode != "media" || drawerView != null) return
+        val overlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(22, 24, 22, 24)
+            setBackgroundColor(0xDD101924.toInt())
+            isFocusable = true
+        }
+        overlay.addView(TextView(this).apply {
+            text = "MyView • ${playlistName(activePlaylist())}"
+            textSize = 20f
+            setTextColor(android.graphics.Color.WHITE)
+        })
+        val indices = ChannelNavigation.filteredIndices(playlistChannels, "", favoritesOnly, favoriteSet())
+        val selector = ScrollView(this)
+        val items = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        for (index in indices) {
+            val channel = playlistChannels[index]
+            items.addView(Button(this).apply {
+                text = "${index + 1}. ${channel.name} ${if (channel.url in favoriteSet()) "★" else ""}\n${guideLine(index)}"
+                isFocusable = true
+                setOnClickListener { hideLiveDrawer(); setChannel(index) }
+            })
+        }
+        selector.addView(items)
+        overlay.addView(selector, LinearLayout.LayoutParams(-1, 0, 1f))
+        overlay.addView(Button(this).apply {
+            text = "Favorite / Unfavorite"
+            setOnClickListener {
+                toggleFavorite()
+                hideLiveDrawer()
+                showLiveDrawer()
+            }
+        })
+        overlay.addView(Button(this).apply {
+            text = "Close drawer"
+            setOnClickListener { hideLiveDrawer() }
+        })
+        val params = FrameLayout.LayoutParams(
+            (resources.displayMetrics.widthPixels * 0.46f).toInt().coerceAtLeast(280),
+            FrameLayout.LayoutParams.MATCH_PARENT, android.view.Gravity.START)
+        root.addView(overlay, params)
+        drawerView = overlay
+        (items.getChildAt(indices.indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
+            ?: overlay.getChildAt(0)).requestFocus()
+    }
+
+    private fun hideLiveDrawer() {
+        drawerView?.let { root.removeView(it) }
+        drawerView = null
+    }
+
+    private fun numericInput(digit: Int) {
+        if (mode != "media" || playlistChannels.isEmpty()) return
+        numericBuffer = (numericBuffer + digit).takeLast(4)
+        numericView?.let { root.removeView(it) }
+        val target = ChannelNavigation.selectNumber(numericBuffer.toIntOrNull() ?: 0, playlistChannels.size)
+        numericView = TextView(this).apply {
+            setPadding(30, 20, 30, 20)
+            textSize = 26f
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(0xD9000000.toInt())
+            text = "Channel $numericBuffer ${if (target == null) "(not found)" else playlistChannels[target].name}"
+        }.also { root.addView(it, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.END)) }
+        val pending = numericBuffer
+        handler.postDelayed({
+            if (mode == "media" && pending == numericBuffer) {
+                val index = ChannelNavigation.selectNumber(pending.toIntOrNull() ?: 0, playlistChannels.size)
+                numericBuffer = ""
+                numericView?.let { root.removeView(it) }
+                numericView = null
+                if (index != null) setChannel(index)
+            }
+        }, 1800L)
+    }
+
     private fun openWeb(url: String) {
         releasePlayback()
         mode = "web"
@@ -568,6 +644,9 @@ class MainActivity : Activity() {
         restoreRefresh()
         playbackGeneration++
         handler.removeCallbacksAndMessages(null)
+        hideLiveDrawer()
+        numericView = null
+        numericBuffer = ""
         hideFullscreen()
         player?.release()
         player = null
@@ -576,16 +655,33 @@ class MainActivity : Activity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (mode == "media" && playlistChannels.isNotEmpty() &&
-            (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN) &&
-            channelIndex >= 0) {
-            val change = if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) -1 else 1
-            channelIndex = (channelIndex + change + playlistChannels.size) % playlistChannels.size
-            openMedia(playlistChannels[channelIndex].url)
-            return true
+        if (mode == "media") {
+            if (keyCode in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
+                numericInput(keyCode - KeyEvent.KEYCODE_0)
+                return true
+            }
+            if (keyCode in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9) {
+                numericInput(keyCode - KeyEvent.KEYCODE_NUMPAD_0)
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_MENU) {
+                if (drawerView == null) showLiveDrawer() else hideLiveDrawer()
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN) {
+                val next = ChannelNavigation.next(channelIndex, playlistChannels.size,
+                    if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) -1 else 1)
+                if (next != null) setChannel(next)
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_PROG_RED) {
+                toggleFavorite()
+                return true
+            }
         }
         if (keyCode == KeyEvent.KEYCODE_BACK && mode != "menu") {
             if (fullscreen != null) hideFullscreen()
+            else if (drawerView != null) hideLiveDrawer()
             else if (mode == "media" && playlistChannels.isNotEmpty()) showChannelList()
             else showMenu()
             return true
