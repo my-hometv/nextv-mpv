@@ -22,6 +22,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
+import android.content.Intent
 import android.text.format.DateFormat
 import android.view.Gravity
 import java.util.Date
@@ -49,6 +50,10 @@ class MainActivity : Activity() {
     private var channelQuery = ""
     private var selectedGroup = ""
     private var showClock = true
+    private var channelPage = 0
+    private val channelPageSize = 80
+    private val exportRequest = 1001
+    private val importRequest = 1002
     private var clockView: TextView? = null
     private var drawerView: View? = null
     private var numericView: TextView? = null
@@ -333,7 +338,7 @@ class MainActivity : Activity() {
         for (index in playlistChannels.indices) {
             if (playlistChannels[index].url in hiddenSet()) continue
             panel.addView(Button(this).apply {
-                text = "\${index + 1}. \${playlistChannels[index].name}\n\${guideLine(index)}"
+                text = "${index + 1}. ${playlistChannels[index].name}\n${guideLine(index)}"
                 isFocusable = true
                 setOnClickListener { setChannel(index) }
             })
@@ -341,6 +346,76 @@ class MainActivity : Activity() {
         root.addView(ScrollView(this).apply { addView(panel) },
             FrameLayout.LayoutParams(-1, -1))
         panel.getChildAt(0).requestFocus()
+    }
+
+
+    private fun confirmExport() {
+        AlertDialog.Builder(this).setTitle("Export MyView settings")
+            .setMessage("The exported file contains your playlist addresses and may include provider tokens. Keep it private and never publish it to GitHub.")
+            .setPositiveButton("Choose destination") { _, _ ->
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "MyView-settings.json")
+                }, exportRequest)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun confirmImport() {
+        AlertDialog.Builder(this).setTitle("Restore MyView settings")
+            .setMessage("This replaces your local playlist, hidden-channel and favorite-list settings. Continue?")
+            .setPositiveButton("Choose backup") { _, _ ->
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                }, importRequest)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    @Deprecated("Uses Android's Storage Access Framework result callback")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != Activity.RESULT_OK) return
+        val uri = data?.data ?: return
+        try {
+            when (requestCode) {
+                exportRequest -> {
+                    val output = contentResolver.openOutputStream(uri, "wt")
+                        ?: error("Export location cannot be written")
+                    output.use { it.write(SettingsBackup.export(prefs).toByteArray(Charsets.UTF_8)) }
+                    Toast.makeText(this, "MyView settings exported", Toast.LENGTH_SHORT).show()
+                }
+                importRequest -> {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: error("Backup cannot be opened")
+                    val buffer = ByteArrayOutputStream()
+                    input.use { stream ->
+                        val chunk = ByteArray(8192)
+                        while (true) {
+                            val count = stream.read(chunk)
+                            if (count < 0) break
+                            require(buffer.size() + count <= 12_000_000)
+                            buffer.write(chunk, 0, count)
+                        }
+                    }
+                    SettingsBackup.restore(prefs, buffer.toString("UTF-8"))
+                    guideGeneration++
+                    epgProgrammes = emptyList()
+                    val guideUrl = prefs.getString("xmltv_url", "").orEmpty()
+                    if (guideUrl.isNotBlank()) refreshGuide(guideUrl)
+                    channelQuery = ""
+                    selectedGroup = ""
+                    favoritesOnly = false
+                    channelPage = 0
+                    loadPlaylist()
+                    showMenu()
+                    Toast.makeText(this, "MyView settings restored", Toast.LENGTH_SHORT).show()
+                }
+            }
+        } catch (_: Exception) {
+            Toast.makeText(this, "Settings transfer failed. Check the backup file.",
+                Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun showMenu() {
@@ -383,6 +458,8 @@ class MainActivity : Activity() {
         addButton("Playlist: ${playlistName(activePlaylist())} (switch)") { choosePlaylist() }
         addButton("Add playlist") { addPlaylist() }
         addButton("Rename playlist") { renamePlaylist() }
+        addButton("Export MyView settings") { confirmExport() }
+        addButton("Import MyView settings") { confirmImport() }
         addButton("Manage favorite lists") { manageFavorites() }
         addButton("Search channels") { askChannelSearch() }
         addButton("Choose channel group") { chooseChannelGroup() }
@@ -404,7 +481,10 @@ class MainActivity : Activity() {
         addButton("Play stream (Media3)") { askUrl("stream", "HTTPS .mpd / .m3u8 / .mp4 URL") }
         addButton("Open provider webpage (WebView)") { askUrl("web", "HTTPS webpage URL") }
         addButton("Exit") { finish() }
-        root.addView(panel, FrameLayout.LayoutParams(-1, -1))
+        root.addView(ScrollView(this).apply {
+            isFillViewport = true
+            addView(panel)
+        }, FrameLayout.LayoutParams(-1, -1))
         panel.getChildAt(2).requestFocus()
     }
 
@@ -473,7 +553,13 @@ class MainActivity : Activity() {
             text = "No channels in this view"
             setTextColor(android.graphics.Color.WHITE)
         })
-        for (index in indices) {
+        val totalPages = ((indices.size + channelPageSize - 1) / channelPageSize).coerceAtLeast(1)
+        channelPage = channelPage.coerceIn(0, totalPages - 1)
+        if (totalPages > 1) list.addView(Button(this).apply {
+            text = "Page ${channelPage + 1} of $totalPages • next page"
+            setOnClickListener { channelPage = (channelPage + 1) % totalPages; showChannelList() }
+        })
+        for (index in indices.drop(channelPage * channelPageSize).take(channelPageSize)) {
             val channel = playlistChannels[index]
             list.addView(Button(this).apply {
                 text = "${index + 1}. ${channel.name}  ${if (channel.url in favoriteSet()) "★" else ""}" +
@@ -718,7 +804,8 @@ class MainActivity : Activity() {
                 (selectedGroup.isEmpty() || playlistChannels[it].group == selectedGroup) }
         val selector = ScrollView(this)
         val items = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        for (index in indices) {
+        // Keep the live drawer small; opening it must not allocate 2,000 buttons.
+        for (index in indices.take(90)) {
             val channel = playlistChannels[index]
             items.addView(Button(this).apply {
                 text = "${index + 1}. ${channel.name} ${if (channel.url in favoriteSet()) "★" else ""}\n${guideLine(index)}"
@@ -749,7 +836,7 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, android.view.Gravity.START)
         root.addView(overlay, params)
         drawerView = overlay
-        (items.getChildAt(indices.indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
+        (items.getChildAt(indices.take(90).indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
             ?: overlay.getChildAt(0)).requestFocus()
     }
 
@@ -848,8 +935,12 @@ class MainActivity : Activity() {
                 numericInput(keyCode - KeyEvent.KEYCODE_NUMPAD_0)
                 return true
             }
-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_MENU) {
+            if (keyCode == KeyEvent.KEYCODE_MENU) {
                 if (drawerView == null) showLiveDrawer() else hideLiveDrawer()
+                return true
+            }
+            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && drawerView == null) {
+                showLiveDrawer()
                 return true
             }
             if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN) {
