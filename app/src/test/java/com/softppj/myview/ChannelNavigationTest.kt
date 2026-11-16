@@ -18,6 +18,14 @@ class ChannelNavigationTest {
         assertNull(ChannelNavigation.next(4, 3, 1))
     }
 
+    @Test fun hiddenChannelsAreSkippedAndCanBeRestored() {
+        val urls = listOf("one", "two", "three")
+        assertEquals(2, ChannelNavigation.nextVisible(0, urls, setOf("two"), 1))
+        assertEquals(1, ChannelNavigation.nextVisible(0, urls, emptySet(), 1))
+        assertEquals(2, ChannelNavigation.nextVisible(0, urls, setOf("two"), -1))
+        assertNull(ChannelNavigation.nextVisible(0, urls, urls.toSet(), 1))
+    }
+
     @Test fun favoritesAndSearchMatchWithinSelectedPlaylist() {
         val channels = listOf(
             PlaylistParser.Channel("Malayalam News", "https://example.org/1", "News"),
