@@ -1,0 +1,64 @@
+name: MyView APK (private source)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-myview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Validate private repository access token
+        env:
+          PRIVATE_TOKEN: ${{ secrets.MYVIEW_PRIVATE_READ_TOKEN }}
+        run: |
+          if [ -z "$PRIVATE_TOKEN" ]; then
+            echo "::error::Set the repository secret MYVIEW_PRIVATE_READ_TOKEN (read-only access to my-hometv/nextv)."
+            exit 1
+          fi
+
+      - name: Check out private MyView source
+        uses: actions/checkout@v4
+        with:
+          repository: my-hometv/nextv
+          ref: dash-standalone
+          token: ${{ secrets.MYVIEW_PRIVATE_READ_TOKEN }}
+          persist-credentials: false
+          path: myview
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build and test MyView
+        working-directory: myview
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:verifySingleLibVlc
+
+      - name: Package MyView APK
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          APK="myview/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          cp "$APK" output/MyView.apk
+          sha256sum output/MyView.apk > output/MyView.apk.sha256
+
+      - name: Upload MyView APK only
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-AndroidTV-Test
+          path: |
+            output/MyView.apk
+            output/MyView.apk.sha256
+          if-no-files-found: error
+          retention-days: 3
