@@ -19,7 +19,7 @@ jobs:
     steps:
       - run: echo "Manual public APK build available"
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'MyView full NexTV all compatible today policies public APK')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
