@@ -21,7 +21,9 @@ jobs:
       - name: Confirm manual-only APK packaging
         run: echo "MyView APK build is available only by workflow_dispatch."
   build:
-    if: github.event_name == 'workflow_dispatch'
+    # ONE-TIME, exact-commit trigger for the user-approved standalone test APK.
+    # Other pushes only run the lightweight register job; workflow_dispatch remains available.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.event.head_commit.message == 'MyView standalone public one-time test APK build')
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
