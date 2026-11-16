@@ -56,6 +56,9 @@ class MainActivity : Activity() {
     private val channelPageSize = 80
     private val exportRequest = 1001
     private val importRequest = 1002
+    private val diagnosticsExportRequest = 1003
+    private var lastDiagnostics = "No playback observations yet"
+    private var pausedByLifecycle = false
     private var clockView: TextView? = null
     private var drawerView: View? = null
     private var numericView: TextView? = null
@@ -251,7 +254,7 @@ class MainActivity : Activity() {
     private fun setChannel(index: Int) {
         if (index !in playlistChannels.indices) return
         channelIndex = index
-        prefs.edit().putInt("last_channel_${activePlaylist()}", index).apply()
+        // Do not commit last-watched until the Media3 player reports READY.
         openMedia(playlistChannels[index].url)
     }
 
@@ -371,6 +374,19 @@ class MainActivity : Activity() {
     }
 
 
+
+    private fun confirmDiagnosticsExport() {
+        AlertDialog.Builder(this).setTitle("Export playback diagnostics")
+            .setMessage("Exports the last Media3 health snapshot without stream URLs or credentials. Diagnostics are only written to a document you select.")
+            .setPositiveButton("Choose destination") { _, _ ->
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, "MyView-Diagnostics.txt")
+                }, diagnosticsExportRequest)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
     private fun confirmExport() {
         AlertDialog.Builder(this).setTitle("Export MyView settings")
             .setMessage("The exported file contains your playlist addresses and may include provider tokens. Keep it private and never publish it to GitHub.")
@@ -401,6 +417,15 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         try {
             when (requestCode) {
+                diagnosticsExportRequest -> {
+                    val output = contentResolver.openOutputStream(uri, "wt")
+                        ?: error("Cannot open diagnostics destination")
+                    output.use {
+                        it.write(("MyView Playback Diagnostics\n" + lastDiagnostics +
+                            "\nNo URLs or provider credentials included\n").toByteArray(Charsets.UTF_8))
+                    }
+                    Toast.makeText(this, "Playback diagnostics saved", Toast.LENGTH_SHORT).show()
+                }
                 exportRequest -> {
                     val output = contentResolver.openOutputStream(uri, "wt")
                         ?: error("Export location cannot be written")
@@ -482,6 +507,7 @@ class MainActivity : Activity() {
         addButton("Rename playlist") { renamePlaylist() }
         addButton("Export MyView settings") { confirmExport() }
         addButton("Import MyView settings") { confirmImport() }
+        addButton("Export playback diagnostics") { confirmDiagnosticsExport() }
         addButton("Manage favorite lists") { manageFavorites() }
         addButton("Search channels") { askChannelSearch() }
         addButton("Choose channel group") { chooseChannelGroup() }
@@ -687,6 +713,7 @@ class MainActivity : Activity() {
         val clockGuard = PlaybackClockGuard()
         var recoveryScheduled = false
         var readyEver = false
+        var bufferingStartedAt = -1L
         var failureLabel = "none"
         var bufferCount = 0
         clockView = if (showClock) TextView(this).apply {
@@ -750,18 +777,24 @@ class MainActivity : Activity() {
             if (player !== exo || generation != playbackGeneration) return
             val isPlaying = exo.isPlaying
             if (!isPlaying) clockGuard.reset()
-            else if (!recoveryScheduled && prefs.getBoolean("clock_recovery", true) &&
+            if (BufferingPolicy.expired(exo.playbackState == Player.STATE_BUFFERING,
+                    exo.playWhenReady, bufferingStartedAt, SystemClock.elapsedRealtime()) &&
+                !recoveryScheduled) {
+                // Prolonged buffering is not an excuse to silently change the URL.
+                retryCurrentStream(ProviderFailurePolicy.Kind.NETWORK)
+            }
+            else if (isPlaying && !recoveryScheduled && prefs.getBoolean("clock_recovery", true) &&
                 clockGuard.sample(SystemClock.elapsedRealtime(), exo.currentPosition,
                     true, exo.playbackParameters.speed)) {
                 // This identifies sustained abnormal progression, not actual audio/video lip-sync.
                 // One bounded same-source recovery only; never switch to another provider URL.
                 retryCurrentStream(ProviderFailurePolicy.Kind.NETWORK)
             }
-            if (showDiagnostics) {
+            run {
                 val video = exo.videoFormat
                 val audio = exo.audioFormat
                 val dimension = exo.videoSize
-                diagnostics.text = "Media3 | ${if (isPlaying) "playing" else "waiting"}" +
+                val detail = "Media3 | ${if (isPlaying) "playing" else "waiting"}" +
                     "\nVideo: ${dimension.width}x${dimension.height}  " +
                     "fps: ${video?.frameRate ?: "?"}" +
                     "\nCodec: ${video?.sampleMimeType ?: "?"} | " +
@@ -770,6 +803,8 @@ class MainActivity : Activity() {
                     "speed: ${exo.playbackParameters.speed}x" +
                     "\nBuffers: $bufferCount | retry: $attempt/2 | error: $failureLabel" +
                     "\n${healthLine(url)}"
+                lastDiagnostics = detail
+                if (showDiagnostics) diagnostics.text = detail
             }
             handler.postDelayed({ healthTick() }, 5000L)
         clockTick()
@@ -781,20 +816,28 @@ class MainActivity : Activity() {
                 when (state) {
                     Player.STATE_READY -> {
                         status.text = "Playing • Media3"
-                        if (!readyEver) recordStart(url, true)
+                        if (!readyEver) {
+                            recordStart(url, true)
+                            if (playlistChannels.getOrNull(channelIndex)?.url == url) {
+                                prefs.edit().putInt("last_channel_${activePlaylist()}", channelIndex).apply()
+                            }
+                        }
                         readyEver = true
+                        bufferingStartedAt = -1L
                         maybeMatchVodRefresh(exo, url)
                         handler.postDelayed({
                             if (player === exo && !recoveryScheduled) status.visibility = View.GONE
                         }, 3000L)
                     }
                     Player.STATE_BUFFERING -> {
+                        if (bufferingStartedAt < 0L) bufferingStartedAt = SystemClock.elapsedRealtime()
                         if (readyEver) bufferCount++
                         clockGuard.reset()
                         status.text = "Buffering; keeping selected channel…"
                         status.visibility = View.VISIBLE
                     }
                     Player.STATE_ENDED -> {
+                        bufferingStartedAt = -1L
                         clockGuard.reset()
                         status.text = "Stream ended"
                         status.visibility = View.VISIBLE
@@ -952,6 +995,7 @@ class MainActivity : Activity() {
     private fun releasePlayback() {
         restoreRefresh()
         playbackGeneration++
+        pausedByLifecycle = false
         handler.removeCallbacksAndMessages(null)
         hideLiveDrawer()
         numericView = null
@@ -1003,7 +1047,17 @@ class MainActivity : Activity() {
         return super.onKeyDown(keyCode, event)
     }
 
-    override fun onPause() { browser?.onPause(); super.onPause() }
-    override fun onResume() { super.onResume(); browser?.onResume() }
+    override fun onPause() {
+        pausedByLifecycle = player?.isPlaying == true
+        player?.pause()
+        browser?.onPause()
+        super.onPause()
+    }
+    override fun onResume() {
+        super.onResume()
+        browser?.onResume()
+        if (pausedByLifecycle && mode == "media") player?.play()
+        pausedByLifecycle = false
+    }
     override fun onDestroy() { releasePlayback(); super.onDestroy() }
 }

@@ -3,29 +3,20 @@ package com.softppj.myview
 import android.util.Xml
 import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayInputStream
-import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 /** Small, bounded, on-device XMLTV importer. Never contains a bundled EPG or provider URL. */
 internal object XmlTvGuide {
     data class Programme(val channelId: String, val startMs: Long, val endMs: Long, val title: String)
 
-    private fun parseTime(value: String): Long? {
-        // XMLTV timestamps usually use yyyyMMddHHmmss +/-HHMM.
-        val normalized = value.trim().replace(Regex("\\s+"), " ")
-        val formats = listOf("yyyyMMddHHmmss Z", "yyyyMMddHHmm Z", "yyyyMMddHHmmss", "yyyyMMddHHmm")
-        for (format in formats) {
-            try {
-                val parser = SimpleDateFormat(format, Locale.US).apply { isLenient = false }
-                parser.parse(normalized)?.time?.let { return it }
-            } catch (_: java.text.ParseException) { }
-        }
-        return null
-    }
+    private fun parseTime(value: String): Long? = XmlTvTime.parse(value)
+
 
     fun parse(bytes: ByteArray, maximum: Int = 6000): List<Programme> {
         if (bytes.size > 8_000_000 || maximum <= 0) return emptyList()
+        // Reject DTDs and entity declarations rather than allowing entity expansion.
+        if (String(bytes, Charsets.UTF_8).contains(
+                Regex("""<!\s*(?:DOCTYPE|ENTITY)""", RegexOption.IGNORE_CASE))) return emptyList()
         val reader = Xml.newPullParser()
         reader.setInput(ByteArrayInputStream(bytes), "UTF-8")
         val result = ArrayList<Programme>()

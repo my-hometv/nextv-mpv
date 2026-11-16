@@ -70,3 +70,12 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - A real lip-sync analyzer, multi-engine decoder support, and full EPG grid are
   not implemented. Device testing is essential for the user's picture quality needs.
 - Settings exports can contain sensitive playlist URLs and must be kept private.
+
+## Post-audit reliability batch
+
+- Last-watched channel is now committed only on Media3 READY for the selected channel.
+- Prolonged 30-second buffering triggers bounded same-source recovery when playback is requested.
+- Lifecycle pauses and resumes active playback rather than leaving it running in background.
+- User-initiated diagnostics export excludes URLs, playlist text and provider tokens.
+- XMLTV importer rejects DTD/ENTITY declarations and timestamps must parse completely.
+- Final build and device verification still required for the newest code.
