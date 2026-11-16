@@ -20,7 +20,8 @@ internal object SettingsBackup {
             entry.put("name", prefs.getString("playlist_name_$index", "Playlist ${index + 1}").orEmpty())
             entry.put("playlist", prefs.getString("playlist_data_$index",
                 if (index == 0) prefs.getString("playlist_text", "") else "").orEmpty())
-            entry.put("lastChannel", prefs.getInt("last_channel_$index", 0))
+            entry.put("lastChannel", prefs.getInt("last_channel_$index", -1))
+            entry.put("sourceUrl", prefs.getString("playlist_source_$index", "").orEmpty())
             entry.put("hidden", urlSet(prefs, "hidden_$index"))
             val numFavorites = prefs.getInt("favorites_count_$index", 1).coerceIn(1, 5)
             entry.put("favoriteCount", numFavorites)
@@ -71,6 +72,8 @@ internal object SettingsBackup {
                 return (0 until array.length()).map { array.getString(it) }
                     .filter { it in validUrls }.toSet()
             }
+            val sourceUrl = entry.optString("sourceUrl", "")
+            require(sourceUrl.isBlank() || PlaylistParser.validHttpsUrl(sourceUrl))
             val countFav = entry.getInt("favoriteCount")
             val list = entry.getJSONArray("favoriteLists")
             require(countFav in 1..5 && list.length() == countFav)
@@ -81,7 +84,8 @@ internal object SettingsBackup {
             validated.add(ValidatedPlaylist(
                 entry.getString("name").take(50),
                 raw,
-                entry.optInt("lastChannel", 0).coerceIn(0, (channels.size - 1).coerceAtLeast(0)),
+                entry.optInt("lastChannel", -1).takeIf { it in channels.indices } ?: -1,
+                sourceUrl,
                 readUrls(entry.getJSONArray("hidden")),
                 favs,
                 entry.optInt("activeFavorite", 0).coerceIn(0, countFav - 1)))
@@ -93,6 +97,7 @@ internal object SettingsBackup {
             editor.putString("playlist_name_$index", entry.name)
                 .putString("playlist_data_$index", entry.m3u)
                 .putInt("last_channel_$index", entry.last)
+                .putString("playlist_source_$index", entry.sourceUrl)
                 .putStringSet("hidden_$index", entry.hidden)
                 .putInt("favorites_count_$index", entry.favoriteLists.size)
                 .putInt("favorites_active_$index", entry.activeFavorite)
@@ -113,6 +118,7 @@ internal object SettingsBackup {
         val name: String,
         val m3u: String,
         val last: Int,
+        val sourceUrl: String,
         val hidden: Set<String>,
         val favoriteLists: List<Pair<String, Set<String>>>,
         val activeFavorite: Int

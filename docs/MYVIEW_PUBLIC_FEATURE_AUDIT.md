@@ -95,3 +95,12 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - Switching playlists resets search, group, list pagination and guide page, preventing stale cross-playlist selection.
 - Backup restoration clears stale settings only after the entire import passes validation; it then atomically writes the validated replacement.
 - Full feature parity and real HDR/SDR and A/V sync correction still require separate engineering and on-device verification.
+
+## User-driven M3U input completion stage
+
+- Supports local M3U import through Android's document picker (bounded 2 MB).
+- Supports user-supplied HTTPS playlist source and explicit manual refresh; no background polling.
+- Rejects empty/unsupported refreshed playlists without erasing the existing playlist.
+- On playlist reorder, retains the last confirmed channel only when the exact URL still exists.
+- Playlist source URL is included in explicit private backup/export and validated on import.
+- Protected sources, provider authorization, advanced engines, actual on-TV HDR and lip-sync verification remain out of automated test coverage.

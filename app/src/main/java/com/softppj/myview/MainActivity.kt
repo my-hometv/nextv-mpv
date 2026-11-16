@@ -59,6 +59,8 @@ class MainActivity : Activity() {
     private val channelPageSize = 80
     private val exportRequest = 1001
     private val importRequest = 1002
+    private val playlistFileRequest = 1004
+    private var playlistRefreshGeneration = 0
     private val diagnosticsExportRequest = 1003
     private var lastDiagnostics = "No playback observations yet"
     private var pausedByLifecycle = false
@@ -102,9 +104,29 @@ class MainActivity : Activity() {
             .takeIf { it in playlistChannels.indices } ?: -1
     }
 
+    private fun commitPlaylistContent(index: Int, raw: String): Boolean {
+        if (index !in 0 until playlistCount()) return false
+        val parsed = PlaylistParser.parse(raw)
+        if (parsed.isEmpty()) return false
+        val old = PlaylistParser.parse(prefs.getString(playlistKey(index), "").orEmpty())
+        val previousConfirmed = prefs.getInt("last_channel_$index", -1)
+        val retained = PlaylistReplacement.confirmedIndex(old, previousConfirmed, parsed)
+        if (!prefs.edit().putString(playlistKey(index), raw)
+                .putInt("last_channel_$index", retained).commit()) return false
+        if (index == activePlaylist()) {
+            loadPlaylist()
+            channelQuery = ""
+            selectedGroup = ""
+            channelPage = 0
+            drawerPage = 0
+        }
+        return true
+    }
+
     private fun setActivePlaylist(index: Int) {
         if (index !in 0 until playlistCount()) return
         prefs.edit().putInt("active_playlist", index).apply()
+        ++playlistRefreshGeneration
         loadPlaylist()
         favoritesOnly = false
         selectedGroup = ""
@@ -293,6 +315,83 @@ class MainActivity : Activity() {
         }.start()
     }
 
+    private fun askPlaylistSource() {
+        val index = activePlaylist()
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(prefs.getString("playlist_source_$index", "").orEmpty())
+            hint = "https://provider.example/channels.m3u"
+        }
+        AlertDialog.Builder(this).setTitle("HTTPS M3U playlist source")
+            .setMessage("Source URL is stored on this device only. It may contain private provider credentials.")
+            .setView(input)
+            .setPositiveButton("Save source") { _, _ ->
+                val url = input.text.toString().trim()
+                if (PlaylistParser.validHttpsUrl(url)) {
+                    prefs.edit().putString("playlist_source_$index", url).apply()
+                    refreshPlaylistSource()
+                } else Toast.makeText(this, "Use a valid HTTPS URL", Toast.LENGTH_LONG).show()
+            }.setNeutralButton("Clear source") { _, _ ->
+                prefs.edit().remove("playlist_source_$index").apply()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun refreshPlaylistSource() {
+        val index = activePlaylist()
+        val url = prefs.getString("playlist_source_$index", "").orEmpty()
+        if (!PlaylistParser.validHttpsUrl(url)) {
+            Toast.makeText(this, "Set a playlist HTTPS source first", Toast.LENGTH_LONG).show()
+            return
+        }
+        val token = ++playlistRefreshGeneration
+        Thread {
+            var connection: HttpURLConnection? = null
+            try {
+                connection = URL(url).openConnection() as HttpURLConnection
+                connection.connectTimeout = 7000
+                connection.readTimeout = 10000
+                connection.instanceFollowRedirects = false
+                require(connection.responseCode in 200..299) { "Playlist download failed" }
+                val data = ByteArrayOutputStream()
+                connection.inputStream.use { stream ->
+                    val bytes = ByteArray(8192)
+                    while (true) {
+                        val size = stream.read(bytes)
+                        if (size < 0) break
+                        require(data.size() + size <= 2_000_000) { "Playlist too large" }
+                        data.write(bytes, 0, size)
+                    }
+                }
+                val raw = data.toString("UTF-8")
+                runOnUiThread {
+                    if (token == playlistRefreshGeneration && index == activePlaylist()) {
+                        if (commitPlaylistContent(index, raw)) {
+                            Toast.makeText(this, "Playlist refreshed", Toast.LENGTH_SHORT).show()
+                            showChannelList()
+                        } else Toast.makeText(this, "Source has no supported HTTPS channels",
+                            Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (_: Exception) {
+                runOnUiThread {
+                    if (token == playlistRefreshGeneration)
+                        Toast.makeText(this, "Playlist refresh failed; existing channels kept",
+                            Toast.LENGTH_LONG).show()
+                }
+            } finally { connection?.disconnect() }
+        }.start()
+    }
+
+    private fun choosePlaylistFile() {
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES,
+                arrayOf("audio/x-mpegurl", "application/vnd.apple.mpegurl", "text/plain",
+                    "application/octet-stream"))
+        }, playlistFileRequest)
+    }
+
     private fun askGuide() {
         val field = EditText(this).apply {
             setSingleLine(true)
@@ -429,6 +528,23 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         try {
             when (requestCode) {
+                playlistFileRequest -> {
+                    val input = contentResolver.openInputStream(uri) ?: error("Cannot open playlist")
+                    val bytes = ByteArrayOutputStream()
+                    input.use { stream ->
+                        val block = ByteArray(8192)
+                        while (true) {
+                            val length = stream.read(block)
+                            if (length < 0) break
+                            require(bytes.size() + length <= 2_000_000)
+                            bytes.write(block, 0, length)
+                        }
+                    }
+                    if (!commitPlaylistContent(activePlaylist(), bytes.toString("UTF-8")))
+                        error("File contains no supported HTTPS channels")
+                    showChannelList()
+                    Toast.makeText(this, "Playlist imported", Toast.LENGTH_SHORT).show()
+                }
                 diagnosticsExportRequest -> {
                     val output = contentResolver.openOutputStream(uri, "wt")
                         ?: error("Cannot open diagnostics destination")
@@ -531,6 +647,9 @@ class MainActivity : Activity() {
         addButton("Restore hidden channels") { showHiddenChannels() }
         addButton("TV Guide") { showGuideScreen() }
         addButton("Paste M3U playlist (HTTPS)") { askPlaylist() }
+        addButton("Import M3U from local file") { choosePlaylistFile() }
+        addButton("Set remote M3U source") { askPlaylistSource() }
+        addButton("Refresh M3U from source") { refreshPlaylistSource() }
         if (playlistChannels.isNotEmpty()) {
             addButton("Watch last visible channel") {
                 val index = ChannelNavigation.preferredVisible(channelIndex,
@@ -570,17 +689,12 @@ class MainActivity : Activity() {
                 if (parsed.isEmpty()) {
                     field.error = "No valid HTTPS channel URLs found"
                 } else {
-                    playlistChannels = parsed
-                    // User-provided playlist is device-local, never bundled into a public repository.
-                    prefs.edit().putString(playlistKey(activePlaylist()), raw)
-                        .putInt("last_channel_${activePlaylist()}", 0).apply()
-                    channelIndex = 0
-                    channelPage = 0
-                    drawerPage = 0
-                    selectedGroup = ""
-                    channelQuery = ""
-                    dialog.dismiss()
-                    showChannelList()
+                    if (!commitPlaylistContent(activePlaylist(), raw)) {
+                        field.error = "Unable to save playlist"
+                    } else {
+                        dialog.dismiss()
+                        showChannelList()
+                    }
                 }
             }
         }
