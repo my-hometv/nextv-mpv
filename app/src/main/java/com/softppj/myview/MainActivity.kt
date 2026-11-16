@@ -22,6 +22,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
+import android.widget.ImageView
+import java.security.MessageDigest
 import android.content.Intent
 import android.text.format.DateFormat
 import android.view.Gravity
@@ -100,6 +102,26 @@ class MainActivity : Activity() {
         loadPlaylist()
         favoritesOnly = false
         showMenu()
+    }
+
+    // Never write raw stream URLs or provider credentials to diagnostics keys.
+    private fun healthKey(url: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(url.toByteArray(Charsets.UTF_8))
+        return digest.take(10).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun recordStart(url: String, succeeded: Boolean) {
+        val key = healthKey(url)
+        val prefix = if (succeeded) "start_ok_" else "start_fail_"
+        val oldCount = prefs.getInt(prefix + key, 0)
+        prefs.edit().putInt(prefix + key, (oldCount + 1).coerceAtMost(100000)).apply()
+    }
+
+    private fun healthLine(url: String): String {
+        val key = healthKey(url)
+        return ChannelHealth.label(prefs.getInt("start_ok_" + key, 0),
+            prefs.getInt("start_fail_" + key, 0))
     }
 
     private fun favoriteListCount(): Int =
@@ -561,12 +583,20 @@ class MainActivity : Activity() {
         })
         for (index in indices.drop(channelPage * channelPageSize).take(channelPageSize)) {
             val channel = playlistChannels[index]
-            list.addView(Button(this).apply {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val icon = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = channel.name
+            }
+            row.addView(icon, LinearLayout.LayoutParams(68, 68))
+            if (channel.logo.isNotBlank()) ChannelLogoLoader.bind(icon, channel.logo)
+            row.addView(Button(this).apply {
                 text = "${index + 1}. ${channel.name}  ${if (channel.url in favoriteSet()) "★" else ""}" +
-                    "\n${guideLine(index)}"
+                    "\n${guideLine(index)} • ${healthLine(channel.url)}"
                 isFocusable = true
                 setOnClickListener { setChannel(index) }
-            })
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            list.addView(row)
         }
         root.addView(ScrollView(this).apply { addView(list) }, FrameLayout.LayoutParams(-1, -1))
         list.getChildAt(1).requestFocus()
@@ -738,7 +768,8 @@ class MainActivity : Activity() {
                     "Audio: ${audio?.sampleMimeType ?: "?"}" +
                     "\nPosition: ${exo.currentPosition / 1000}s | " +
                     "speed: ${exo.playbackParameters.speed}x" +
-                    "\nBuffers: $bufferCount | retry: $attempt/2 | error: $failureLabel"
+                    "\nBuffers: $bufferCount | retry: $attempt/2 | error: $failureLabel" +
+                    "\n${healthLine(url)}"
             }
             handler.postDelayed({ healthTick() }, 5000L)
         clockTick()
@@ -750,6 +781,7 @@ class MainActivity : Activity() {
                 when (state) {
                     Player.STATE_READY -> {
                         status.text = "Playing • Media3"
+                        if (!readyEver) recordStart(url, true)
                         readyEver = true
                         maybeMatchVodRefresh(exo, url)
                         handler.postDelayed({
@@ -772,6 +804,7 @@ class MainActivity : Activity() {
             }
             override fun onPlayerError(error: PlaybackException) {
                 if (player !== exo) return
+                if (!readyEver) recordStart(url, false)
                 retryCurrentStream(classifyFailure(error))
             }
         })
@@ -807,11 +840,16 @@ class MainActivity : Activity() {
         // Keep the live drawer small; opening it must not allocate 2,000 buttons.
         for (index in indices.take(90)) {
             val channel = playlistChannels[index]
-            items.addView(Button(this).apply {
-                text = "${index + 1}. ${channel.name} ${if (channel.url in favoriteSet()) "★" else ""}\n${guideLine(index)}"
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val icon = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+            row.addView(icon, LinearLayout.LayoutParams(52, 52))
+            if (channel.logo.isNotBlank()) ChannelLogoLoader.bind(icon, channel.logo)
+            row.addView(Button(this).apply {
+                text = "${index + 1}. ${channel.name} ${if (channel.url in favoriteSet()) "★" else ""}\n${guideLine(index)} • ${healthLine(channel.url)}"
                 isFocusable = true
                 setOnClickListener { hideLiveDrawer(); setChannel(index) }
-            })
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            items.addView(row)
         }
         selector.addView(items)
         overlay.addView(selector, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -836,8 +874,9 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, android.view.Gravity.START)
         root.addView(overlay, params)
         drawerView = overlay
-        (items.getChildAt(indices.take(90).indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
-            ?: overlay.getChildAt(0)).requestFocus()
+        val selectedRow = items.getChildAt(indices.take(90).indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
+        if (selectedRow is LinearLayout) selectedRow.getChildAt(1).requestFocus()
+        else overlay.getChildAt(0).requestFocus()
     }
 
     private fun hideLiveDrawer() {
