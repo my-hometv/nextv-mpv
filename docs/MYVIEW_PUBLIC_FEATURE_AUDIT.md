@@ -8,7 +8,10 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - Standalone Android ID `com.softppj.myview` and Android TV launcher.
 - Media3 player for user-entered HTTPS HLS/DASH/MP4; provider HTTPS webpage test.
 - Local-only user-supplied M3U parser, bounded at 2,000 HTTPS entries.
-- DPAD-focusable channel selection and CHANNEL_UP / CHANNEL_DOWN switching.
+- DPAD-focusable channel selection, number-key preview and channel switching.
+- Up to five local user playlists, per-playlist resume, per-playlist favorite sets.
+- Translucent side channel drawer over active video, XMLTV HTTPS URL import
+  with bounded data and now/next labels (user-provided sources only).
 - Bounded *same-URL* retry; distinguishes transient network/provider-busy
   errors from authorization, DRM, decoder and source errors.
 - Conservative sustained fast-forward playback-clock guard, toggle ON by
@@ -24,10 +27,16 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 
 ## Not yet implemented / not verified
 
-1. Full transparent Live TV side drawer with logos and now/next EPG.
-2. Production EPG ingestion, guide, provider metadata, artwork and logos.
-3. Full LEFT-to-navigation, numeric channel preview and universal focus policy.
-4. Multiple playlists, per-playlist last-channel memory and favorites lists.
+1. Channel drawer, number-key preview, multiple local playlists, per-playlist
+   last-channel memory, a single favorites set per playlist, and XMLTV now/next
+   importer have now been added to the public code. Their newest integration
+   still needs a full CI pass and TV validation.
+2. Full channel-logo rendering, complete EPG grid, provider metadata and
+   extended visual polish remain incomplete.
+3. Full LEFT → LEFT → LEFT navigation, D-pad focus edge cases and multiple
+   independently named favorite lists remain incomplete.
+4. Hidden channel review, per-channel visibility controls and complete
+   app data backup/restore remain incomplete.
 5. Automatic alternative URL/engine discovery and validated health scoring.
    Deliberately not added until safe source-pinning and tests exist.
 6. Audio/video *lip-sync measurement* and direct timestamp correction.
@@ -37,8 +46,8 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 8. Native LibVLC/GStreamer engines, their format support and fallback tests.
 9. HDR/SDR color-path verification, SuryaTV image clarity verification and
    actual Android TV playback performance (reserved for device testing).
-10. Profiles, hidden-channel review, playlist ordering, backup/restore,
-    and other full-app features.
+10. Profiles, comprehensive playlist ordering, backup/restore,
+    and other full-app features remain incomplete.
 11. Private licensing / activation systems and private provider assets:
     must not be published in this public repository.
 12. Compilation of the newest MainActivity integration commit must pass
