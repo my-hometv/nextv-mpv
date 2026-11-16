@@ -5597,6 +5597,7 @@ class MainActivity: Activity() {
     private fun effectiveLogo(channel:Channel):String {
         if (channel.logo.startsWith("https://",true) || channel.logo.startsWith("http://",true))
             return channel.logo.trim()
+        if (!prefs.getBoolean("nextv_smart_logos_enabled",true)) return ""
         // Index rebuilding is linear and happens only when the loaded list changes.
         if(smartLogoSource !== channels || smartLogoSourceSize != channels.size || smartLogoIndex==null){
             smartLogoSource=channels
@@ -7765,7 +7766,9 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Settings backup and restore","nextv_backup_enabled",true))
         root.addView(settingsToggle("Live channel preview","live_channel_preview",false))
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
-        root.addView(label("Planned for a later release: Instant Switching, Smart Logos and MultiView. No unfinished feature is enabled."))
+        root.addView(settingsToggle("Smart Logos — reuse matching playlist channel logos","nextv_smart_logos_enabled",true))
+        root.addView(label("Smart Logos matches existing tvg-logo metadata using the EPG ID or normalized channel name. External logo discovery is not yet included."))
+        root.addView(label("Planned for a later release: Instant Switching and MultiView. No unfinished feature is enabled."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
         root.addView(label("Native playback uses MPV only. Legacy engine controls are being retired."))
         root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
