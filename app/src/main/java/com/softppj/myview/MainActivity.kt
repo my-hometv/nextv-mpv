@@ -107,6 +107,11 @@ class MainActivity : Activity() {
         prefs.edit().putInt("active_playlist", index).apply()
         loadPlaylist()
         favoritesOnly = false
+        selectedGroup = ""
+        channelQuery = ""
+        channelPage = 0
+        drawerPage = 0
+        guidePage = 0
         showMenu()
     }
 
@@ -255,7 +260,8 @@ class MainActivity : Activity() {
     }
 
     private fun setChannel(index: Int) {
-        if (index !in playlistChannels.indices) return
+        if (index !in playlistChannels.indices ||
+            playlistChannels[index].url in hiddenSet()) return
         channelIndex = index
         // Do not commit last-watched until the Media3 player reports READY.
         openMedia(playlistChannels[index].url)
@@ -526,8 +532,12 @@ class MainActivity : Activity() {
         addButton("TV Guide") { showGuideScreen() }
         addButton("Paste M3U playlist (HTTPS)") { askPlaylist() }
         if (playlistChannels.isNotEmpty()) {
-            addButton("Watch last channel") {
-                setChannel(channelIndex.takeIf { it in playlistChannels.indices } ?: 0)
+            addButton("Watch last visible channel") {
+                val index = ChannelNavigation.preferredVisible(channelIndex,
+                    playlistChannels.map { it.url }, hiddenSet())
+                if (index == null) Toast.makeText(this, "No visible channels",
+                    Toast.LENGTH_SHORT).show()
+                else setChannel(index)
             }
             addButton("Browse ${playlistChannels.size} channels") { favoritesOnly = false; showChannelList() }
             addButton("Favorites") { favoritesOnly = true; showChannelList() }
@@ -565,6 +575,10 @@ class MainActivity : Activity() {
                     prefs.edit().putString(playlistKey(activePlaylist()), raw)
                         .putInt("last_channel_${activePlaylist()}", 0).apply()
                     channelIndex = 0
+                    channelPage = 0
+                    drawerPage = 0
+                    selectedGroup = ""
+                    channelQuery = ""
                     dialog.dismiss()
                     showChannelList()
                 }

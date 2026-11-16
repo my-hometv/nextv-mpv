@@ -86,7 +86,9 @@ internal object SettingsBackup {
                 favs,
                 entry.optInt("activeFavorite", 0).coerceIn(0, countFav - 1)))
         }
-        val editor = prefs.edit()
+        // Replace the complete previous configuration atomically, including obsolete
+        // playlists/favorite lists. Validation above finishes before clearing anything.
+        val editor = prefs.edit().clear()
         for ((index, entry) in validated.withIndex()) {
             editor.putString("playlist_name_$index", entry.name)
                 .putString("playlist_data_$index", entry.m3u)

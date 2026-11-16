@@ -21,6 +21,13 @@ internal object ChannelNavigation {
         return null
     }
 
+    /** Honor playlist-local visibility and resume only a currently visible channel. */
+    fun preferredVisible(preferred: Int, urls: List<String>, hidden: Set<String>): Int? {
+        if (urls.isEmpty()) return null
+        if (preferred in urls.indices && urls[preferred] !in hidden) return preferred
+        return urls.indices.firstOrNull { urls[it] !in hidden }
+    }
+
     fun filteredIndices(
         channels: List<PlaylistParser.Channel>,
         query: String,

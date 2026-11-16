@@ -87,3 +87,11 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - XMLTV URL imports accept bounded, optionally gzip-compressed XMLTV.
 - Manual-only APK job now uses the known-working Android SDK setup and runs tests first.
 - These are source-level changes; TV display, HDR color and format behavior still need device validation.
+
+## Visibility and restore consistency audit
+
+- Playback selection now refuses hidden channels, including direct list/guide actions.
+- 'Watch last visible channel' resumes a visible entry, not the old hidden index.
+- Switching playlists resets search, group, list pagination and guide page, preventing stale cross-playlist selection.
+- Backup restoration clears stale settings only after the entire import passes validation; it then atomically writes the validated replacement.
+- Full feature parity and real HDR/SDR and A/V sync correction still require separate engineering and on-device verification.

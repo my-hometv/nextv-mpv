@@ -31,6 +31,15 @@ class ChannelNavigationTest {
         assertNull(ChannelNavigation.nextVisible(0, urls, urls.toSet(), 1))
     }
 
+    @Test fun lastChannelFallsBackOnlyToVisibleEntry() {
+        val urls = listOf("first", "second", "third")
+        assertEquals(2, ChannelNavigation.preferredVisible(2, urls, setOf("first")))
+        assertEquals(1, ChannelNavigation.preferredVisible(2, urls, setOf("first", "third")))
+        assertEquals(1, ChannelNavigation.preferredVisible(-1, urls, setOf("first")))
+        assertNull(ChannelNavigation.preferredVisible(0, urls, urls.toSet()))
+        assertNull(ChannelNavigation.preferredVisible(0, emptyList(), emptySet()))
+    }
+
     @Test fun favoritesAndSearchMatchWithinSelectedPlaylist() {
         val channels = listOf(
             PlaylistParser.Channel("Malayalam News", "https://example.org/1", "News"),
