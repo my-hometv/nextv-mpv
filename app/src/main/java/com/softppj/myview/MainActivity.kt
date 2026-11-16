@@ -54,6 +54,7 @@ class MainActivity : Activity() {
     private var selectedGroup = ""
     private var showClock = true
     private var channelPage = 0
+    private var drawerPage = 0
     private var guidePage = 0
     private val channelPageSize = 80
     private val exportRequest = 1001
@@ -270,17 +271,7 @@ class MainActivity : Activity() {
                 connection.connectTimeout = 7000
                 connection.readTimeout = 9000
                 connection.instanceFollowRedirects = false
-                val data = ByteArrayOutputStream()
-                connection.inputStream.use { input ->
-                    val block = ByteArray(8192)
-                    while (true) {
-                        val n = input.read(block)
-                        if (n < 0) break
-                        if (data.size() + n > 8_000_000) error("EPG too large")
-                        data.write(block, 0, n)
-                    }
-                }
-                val guide = XmlTvGuide.parse(data.toByteArray())
+                val guide = XmlTvGuide.parse(EpgPayload.readBounded(connection.inputStream))
                 runOnUiThread {
                     if (request == guideGeneration) {
                         epgProgrammes = guide
@@ -822,7 +813,6 @@ class MainActivity : Activity() {
                 if (showDiagnostics) diagnostics.text = detail
             }
             handler.postDelayed({ healthTick() }, 5000L)
-        clockTick()
         }
 
         exo.addListener(object : Player.Listener {
@@ -874,6 +864,7 @@ class MainActivity : Activity() {
         exo.prepare()
         exo.playWhenReady = true
         handler.postDelayed({ healthTick() }, 5000L)
+        if (clockView != null) clockTick()
         view.requestFocus()
     }
 
@@ -895,8 +886,22 @@ class MainActivity : Activity() {
                 (selectedGroup.isEmpty() || playlistChannels[it].group == selectedGroup) }
         val selector = ScrollView(this)
         val items = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        // Keep the live drawer small; opening it must not allocate 2,000 buttons.
-        for (index in indices.take(90)) {
+        // Page the live drawer so every channel remains reachable without rendering all at once.
+        val pageSize = 45
+        val pages = ((indices.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        drawerPage = drawerPage.coerceIn(0, pages - 1)
+        val visibleIndices = indices.drop(drawerPage * pageSize).take(pageSize)
+        if (pages > 1) {
+            overlay.addView(Button(this).apply {
+                text = "Channels page ${drawerPage + 1}/$pages • Next page"
+                setOnClickListener {
+                    drawerPage = (drawerPage + 1) % pages
+                    hideLiveDrawer()
+                    showLiveDrawer()
+                }
+            })
+        }
+        for (index in visibleIndices) {
             val channel = playlistChannels[index]
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             val icon = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
@@ -932,7 +937,7 @@ class MainActivity : Activity() {
             FrameLayout.LayoutParams.MATCH_PARENT, android.view.Gravity.START)
         root.addView(overlay, params)
         drawerView = overlay
-        val selectedRow = items.getChildAt(indices.take(90).indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
+        val selectedRow = items.getChildAt(visibleIndices.indexOf(channelIndex).takeIf { it >= 0 } ?: 0)
         if (selectedRow is LinearLayout) selectedRow.getChildAt(1).requestFocus()
         else overlay.getChildAt(0).requestFocus()
     }

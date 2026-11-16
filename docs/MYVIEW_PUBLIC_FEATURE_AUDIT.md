@@ -79,3 +79,11 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - User-initiated diagnostics export excludes URLs, playlist text and provider tokens.
 - XMLTV importer rejects DTD/ENTITY declarations and timestamps must parse completely.
 - Final build and device verification still required for the newest code.
+
+## Final-source hardening stage (public only)
+
+- Removed repeated clock-timer scheduling from the periodic health tick.
+- Paged the Live TV drawer to keep every channel accessible without 2,000 buttons.
+- XMLTV URL imports accept bounded, optionally gzip-compressed XMLTV.
+- Manual-only APK job now uses the known-working Android SDK setup and runs tests first.
+- These are source-level changes; TV display, HDR color and format behavior still need device validation.

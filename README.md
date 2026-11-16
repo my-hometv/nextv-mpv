@@ -7,8 +7,15 @@ with other TV applications.
 
 ## Current features
 
+This remains a standalone, public-source MyView test application, not a complete
+port of the private NexTV project. The following features are implemented in
+public source but some require on-device TV verification.
+
 - Media3 HTTPS HLS/DASH/MP4 playback from URLs entered on the device
-- Paste a user-provided HTTPS M3U playlist and browse its channels
+- Up to five user-provided local M3U playlists, named favorites, hidden channels
+- DPAD navigation, numeric channel preview, paged overlay drawer, channel logos
+- User-provided XMLTV (plain or gzip), now/next EPG and paginated guide
+- Local settings backup/restore and redacted playback diagnostics export
 - DPAD-focusable channel list and channel-up/channel-down remote shortcuts
 - Limited same-URL retry after eligible playback failures; no automatic URL substitutions
 - Provider webpage compatibility test using a restricted HTTPS WebView
@@ -22,7 +29,8 @@ DRM bypass, private playlists, or additional playback engines.
 
 Pushes to `myview-public-build` run `.github/workflows/myview-verify.yml`.
 The verification workflow compiles Android Kotlin and runs local JVM tests;
-it never assembles or uploads an APK.
+it never assembles or uploads an APK. The manually dispatched APK workflow
+uses the same verified SDK initialization and runs unit tests before packaging.
 
 The separate `.github/workflows/myview-public-apk.yml` is **manual-only** and
 should be used after compilation passes and the user approves APK preparation.
