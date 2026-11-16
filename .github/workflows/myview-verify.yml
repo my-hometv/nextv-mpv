@@ -1,0 +1,35 @@
+name: MyView Public - Compile and Tests (No APK)
+on:
+  push:
+    branches: [myview-public-build]
+    paths:
+      - 'app/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/myview-verify.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: myview-public-verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android 36 platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Compile and run JVM tests
+        run: gradle --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Confirm APK is not assembled
+        run: test ! -e app/build/outputs/apk/debug/app-debug.apk
