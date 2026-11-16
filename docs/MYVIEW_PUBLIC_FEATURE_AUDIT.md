@@ -104,3 +104,13 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - On playlist reorder, retains the last confirmed channel only when the exact URL still exists.
 - Playlist source URL is included in explicit private backup/export and validated on import.
 - Protected sources, provider authorization, advanced engines, actual on-TV HDR and lip-sync verification remain out of automated test coverage.
+
+## Picture controls and diagnostic metadata
+
+- User-selectable Media3 aspect ratio modes are available in menu and playback drawer:
+  fit, fill, zoom, fixed-width, and fixed-height.
+- Video format color transfer, range, and space numeric metadata is included
+  in the playback health snapshot for HDR/SDR investigation.
+- Aspect selection persists locally and is included in private backup/restore.
+- This is diagnostic visibility, NOT HDR tone-mapping, display-color calibration,
+  frame-exact A/V lip-sync measurement, or on-device verification.

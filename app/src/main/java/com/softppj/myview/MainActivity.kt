@@ -39,10 +39,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 
 class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private var player: ExoPlayer? = null
+    private var playerView: PlayerView? = null
     private var browser: WebView? = null
     private var fullscreen: View? = null
     private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
@@ -486,6 +488,26 @@ class MainActivity : Activity() {
         panel.getChildAt(0).requestFocus()
     }
 
+    private fun aspectMode(index: Int): Int = when (index) {
+        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        3 -> AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH
+        4 -> AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+
+    private fun chooseAspectRatio() {
+        val labels = arrayOf("Fit (original proportions)", "Fill (stretch)",
+            "Zoom (crop edges)", "Fixed width", "Fixed height")
+        val chosen = prefs.getInt("aspect_mode", 0).coerceIn(0, 4)
+        AlertDialog.Builder(this).setTitle("Video aspect ratio")
+            .setSingleChoiceItems(labels, chosen) { dialog, selected ->
+                prefs.edit().putInt("aspect_mode", selected).apply()
+                playerView?.resizeMode = aspectMode(selected)
+                dialog.dismiss()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
     private fun confirmDiagnosticsExport() {
         AlertDialog.Builder(this).setTitle("Export playback diagnostics")
             .setMessage("Exports the last Media3 health snapshot without stream URLs or credentials. Diagnostics are only written to a document you select.")
@@ -639,6 +661,7 @@ class MainActivity : Activity() {
         addButton("Manage favorite lists") { manageFavorites() }
         addButton("Search channels") { askChannelSearch() }
         addButton("Choose channel group") { chooseChannelGroup() }
+        addButton("Video aspect ratio") { chooseAspectRatio() }
         addButton("Live clock: " + if (showClock) "ON" else "OFF") {
             showClock = !showClock
             showMenu()
@@ -860,7 +883,9 @@ class MainActivity : Activity() {
             player = exo
             useController = true
             isFocusable = true
+            resizeMode = aspectMode(prefs.getInt("aspect_mode", 0))
         }
+        playerView = view
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
         clockView?.let { root.addView(it,
             FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END)) }
@@ -933,6 +958,9 @@ class MainActivity : Activity() {
                     "fps: ${video?.frameRate ?: "?"}" +
                     "\nCodec: ${video?.sampleMimeType ?: "?"} | " +
                     "Audio: ${audio?.sampleMimeType ?: "?"}" +
+                    "\nColor transfer: ${video?.colorInfo?.colorTransfer ?: "?"} | " +
+                    "range: ${video?.colorInfo?.colorRange ?: "?"} | " +
+                    "space: ${video?.colorInfo?.colorSpace ?: "?"}" +
                     "\nPosition: ${exo.currentPosition / 1000}s | " +
                     "speed: ${exo.playbackParameters.speed}x" +
                     "\nBuffers: $bufferCount | retry: $attempt/2 | error: $failureLabel" +
@@ -1053,6 +1081,10 @@ class MainActivity : Activity() {
             }
         })
         overlay.addView(Button(this).apply {
+            text = "Aspect ratio"
+            setOnClickListener { chooseAspectRatio() }
+        })
+        overlay.addView(Button(this).apply {
             text = "Hide / Unhide current channel"
             setOnClickListener { toggleHidden(); hideLiveDrawer(); showLiveDrawer() }
         })
@@ -1153,6 +1185,7 @@ class MainActivity : Activity() {
         numericBuffer = ""
         clockView = null
         hideFullscreen()
+        playerView = null
         player?.release()
         player = null
         browser?.apply { stopLoading(); loadUrl("about:blank"); destroy() }

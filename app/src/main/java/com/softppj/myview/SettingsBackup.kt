@@ -45,6 +45,7 @@ internal object SettingsBackup {
             .put("xmltvUrl", prefs.getString("xmltv_url", "").orEmpty())
             .put("clockRecovery", prefs.getBoolean("clock_recovery", true))
             .put("vodRefresh", prefs.getBoolean("vod_refresh", false))
+            .put("aspectMode", prefs.getInt("aspect_mode", 0).coerceIn(0, 4))
             .toString(2)
     }
 
@@ -111,6 +112,7 @@ internal object SettingsBackup {
             .putString("xmltv_url", guideUrl)
             .putBoolean("clock_recovery", json.optBoolean("clockRecovery", true))
             .putBoolean("vod_refresh", json.optBoolean("vodRefresh", false))
+            .putInt("aspect_mode", json.optInt("aspectMode", 0).coerceIn(0, 4))
         check(editor.commit()) { "Settings could not be saved" }
     }
 
