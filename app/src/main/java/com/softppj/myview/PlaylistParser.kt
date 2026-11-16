@@ -2,7 +2,7 @@ package com.softppj.myview
 
 /** Parses user-supplied M3U; no bundled providers, streams, or credentials. */
 internal object PlaylistParser {
-    data class Channel(val name: String, val url: String, val group: String = "", val logo: String = "")
+    data class Channel(val name: String, val url: String, val group: String = "", val logo: String = "", val tvgId: String = "")
 
     private fun attr(info: String, name: String): String {
         val found = Regex("""(?:^|\s)${Regex.escape(name)}="([^"]*)"""").find(info)
@@ -22,21 +22,24 @@ internal object PlaylistParser {
         var title = ""
         var group = ""
         var logo = ""
+        var tvgId = ""
         for (line in input.lineSequence()) {
             val item = line.trim()
             if (item.startsWith("#EXTINF:", true)) {
                 title = item.substringAfter(',', "").trim().take(150)
                 group = attr(item, "group-title").take(80)
                 logo = attr(item, "tvg-logo").takeIf(::validHttpsUrl).orEmpty()
+                tvgId = attr(item, "tvg-id").take(120)
                 if (title.isBlank()) title = attr(item, "tvg-name").take(150)
             } else if (item.isNotBlank() && !item.startsWith('#')) {
                 if (validHttpsUrl(item)) {
-                    channels.add(Channel(title.ifBlank { "Channel ${channels.size + 1}" }, item, group, logo))
+                    channels.add(Channel(title.ifBlank { "Channel ${channels.size + 1}" }, item, group, logo, tvgId))
                     if (channels.size == maxChannels) break
                 }
                 title = ""
                 group = ""
                 logo = ""
+                tvgId = ""
             }
         }
         return channels
