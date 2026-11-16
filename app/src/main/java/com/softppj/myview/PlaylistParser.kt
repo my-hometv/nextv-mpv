@@ -10,7 +10,7 @@ internal object PlaylistParser {
     }
 
     fun validHttpsUrl(raw: String): Boolean {
-        if (raw.length !in 9..4096 || !raw.startsWith("https://", true)) return false
+        if (raw.length !in 9..4096 || !raw.startsWith("https://", true) || raw.any { it == '\\' || it.isWhitespace() }) return false
         val hostPort = raw.substringAfter("://").substringBefore('/').substringBefore('?').substringBefore('#')
         if (hostPort.isBlank() || '@' in hostPort || ' ' in hostPort || '\\' in hostPort) return false
         return hostPort.none { it == '\n' || it == '\r' || it == '\t' }
