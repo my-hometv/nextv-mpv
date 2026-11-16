@@ -22,6 +22,9 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
+import android.text.format.DateFormat
+import android.view.Gravity
+import java.util.Date
 import java.net.HttpURLConnection
 import java.net.URL
 import java.io.ByteArrayOutputStream
@@ -43,6 +46,10 @@ class MainActivity : Activity() {
     private var playlistChannels: List<PlaylistParser.Channel> = emptyList()
     private var channelIndex = -1
     private var favoritesOnly = false
+    private var channelQuery = ""
+    private var selectedGroup = ""
+    private var showClock = true
+    private var clockView: TextView? = null
     private var drawerView: View? = null
     private var numericView: TextView? = null
     private var numericBuffer = ""
@@ -90,8 +97,58 @@ class MainActivity : Activity() {
         showMenu()
     }
 
+    private fun favoriteListCount(): Int =
+        prefs.getInt("favorites_count_${activePlaylist()}", 1).coerceIn(1, 5)
+
+    private fun activeFavoriteList(): Int =
+        prefs.getInt("favorites_active_${activePlaylist()}", 0).coerceIn(0, favoriteListCount() - 1)
+
+    private fun favoriteName(index: Int): String =
+        prefs.getString("favorites_name_${activePlaylist()}_$index",
+            if (index == 0) "Favorites" else "Favorites ${index + 1}").orEmpty()
+
+    private fun favoriteKey(): String =
+        if (activeFavoriteList() == 0) "fav_${activePlaylist()}"
+        else "fav_${activePlaylist()}_${activeFavoriteList()}"
+
     private fun favoriteSet(): Set<String> =
-        prefs.getStringSet("fav_${activePlaylist()}", emptySet())?.toSet() ?: emptySet()
+        prefs.getStringSet(favoriteKey(), emptySet())?.toSet() ?: emptySet()
+
+    private fun manageFavorites() {
+        val count = favoriteListCount()
+        val labels = (0 until count).map { favoriteName(it) }.toMutableList()
+        if (count < 5) labels.add("Add favorite list")
+        labels.add("Rename active favorite list")
+        AlertDialog.Builder(this).setTitle("Favorite lists")
+            .setItems(labels.toTypedArray()) { _, option ->
+                when {
+                    option < count -> {
+                        prefs.edit().putInt("favorites_active_${activePlaylist()}", option).apply()
+                        favoritesOnly = true
+                        showChannelList()
+                    }
+                    option == count && count < 5 -> {
+                        prefs.edit().putInt("favorites_count_${activePlaylist()}", count + 1)
+                            .putInt("favorites_active_${activePlaylist()}", count).apply()
+                        favoritesOnly = true
+                        showChannelList()
+                    }
+                    else -> {
+                        val active = activeFavoriteList()
+                        val input = EditText(this).apply {
+                            setSingleLine(true)
+                            setText(favoriteName(active))
+                        }
+                        AlertDialog.Builder(this).setTitle("Rename favorite list").setView(input)
+                            .setPositiveButton("Save") { _, _ ->
+                                prefs.edit().putString("favorites_name_${activePlaylist()}_$active",
+                                    input.text.toString().take(45).ifBlank { "Favorites" }).apply()
+                                showMenu()
+                            }.setNegativeButton("Cancel", null).show()
+                    }
+                }
+            }.setNegativeButton("Cancel", null).show()
+    }
 
     private fun hiddenSet(): Set<String> =
         prefs.getStringSet("hidden_${activePlaylist()}", emptySet())?.toSet() ?: emptySet()
@@ -127,7 +184,7 @@ class MainActivity : Activity() {
         val item = playlistChannels.getOrNull(channelIndex) ?: return
         val updated = favoriteSet().toMutableSet()
         if (!updated.add(item.url)) updated.remove(item.url)
-        prefs.edit().putStringSet("fav_${activePlaylist()}", updated).apply()
+        prefs.edit().putStringSet(favoriteKey(), updated).apply()
         Toast.makeText(this, if (item.url in updated) "Favorite saved" else "Favorite removed",
             Toast.LENGTH_SHORT).show()
     }
@@ -230,6 +287,62 @@ class MainActivity : Activity() {
         return "Now: ${now?.title ?: "—"}  ·  Next: ${next?.title ?: "—"}"
     }
 
+
+    private fun askChannelSearch() {
+        val input = EditText(this).apply {
+            setSingleLine(true)
+            setText(channelQuery)
+            hint = "Search channel name or group"
+        }
+        AlertDialog.Builder(this).setTitle("Find channel").setView(input)
+            .setPositiveButton("Search") { _, _ ->
+                channelQuery = input.text.toString().trim().take(90)
+                showChannelList()
+            }.setNeutralButton("Clear filters") { _, _ ->
+                channelQuery = ""
+                selectedGroup = ""
+                showChannelList()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun chooseChannelGroup() {
+        val groups = playlistChannels.map { it.group }.filter { it.isNotBlank() }
+            .distinct().sorted()
+        AlertDialog.Builder(this).setTitle("Channel groups")
+            .setItems((listOf("All groups") + groups).toTypedArray()) { _, item ->
+                selectedGroup = if (item == 0) "" else groups[item - 1]
+                showChannelList()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun showGuideScreen() {
+        releasePlayback()
+        mode = "guide"
+        root.removeAllViews()
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 24, 28, 24)
+            setBackgroundColor(android.graphics.Color.rgb(18, 26, 38))
+        }
+        panel.addView(Button(this).apply { text = "Back"; setOnClickListener { showMenu() } })
+        panel.addView(TextView(this).apply {
+            text = "TV Guide • Now / Next"
+            textSize = 24f
+            setTextColor(android.graphics.Color.WHITE)
+        })
+        for (index in playlistChannels.indices) {
+            if (playlistChannels[index].url in hiddenSet()) continue
+            panel.addView(Button(this).apply {
+                text = "\${index + 1}. \${playlistChannels[index].name}\n\${guideLine(index)}"
+                isFocusable = true
+                setOnClickListener { setChannel(index) }
+            })
+        }
+        root.addView(ScrollView(this).apply { addView(panel) },
+            FrameLayout.LayoutParams(-1, -1))
+        panel.getChildAt(0).requestFocus()
+    }
+
     private fun showMenu() {
         releasePlayback()
         mode = "menu"
@@ -270,9 +383,16 @@ class MainActivity : Activity() {
         addButton("Playlist: ${playlistName(activePlaylist())} (switch)") { choosePlaylist() }
         addButton("Add playlist") { addPlaylist() }
         addButton("Rename playlist") { renamePlaylist() }
+        addButton("Manage favorite lists") { manageFavorites() }
+        addButton("Search channels") { askChannelSearch() }
+        addButton("Choose channel group") { chooseChannelGroup() }
+        addButton("Live clock: " + if (showClock) "ON" else "OFF") {
+            showClock = !showClock
+            showMenu()
+        }
         addButton("Set XMLTV guide URL") { askGuide() }
         addButton("Restore hidden channels") { showHiddenChannels() }
-        addButton("TV Guide") { favoritesOnly = false; showChannelList() }
+        addButton("TV Guide") { showGuideScreen() }
         addButton("Paste M3U playlist (HTTPS)") { askPlaylist() }
         if (playlistChannels.isNotEmpty()) {
             addButton("Watch last channel") {
@@ -335,11 +455,20 @@ class MainActivity : Activity() {
         })
         list.addView(Button(this).apply { text = "Back"; setOnClickListener { showMenu() } })
         list.addView(Button(this).apply {
+            text = "Search / group: ${channelQuery.ifBlank { "All channels" }} / ${selectedGroup.ifBlank { "All groups" }}"
+            setOnClickListener { askChannelSearch() }
+        })
+        list.addView(Button(this).apply {
             text = if (favoritesOnly) "Show all channels" else "Favorites only"
             setOnClickListener { favoritesOnly = !favoritesOnly; showChannelList() }
         })
-        val indices = ChannelNavigation.filteredIndices(playlistChannels, "", favoritesOnly, favoriteSet())
-            .filter { playlistChannels[it].url !in hiddenSet() }
+        val indices = ChannelNavigation.filteredIndices(playlistChannels, channelQuery, favoritesOnly, favoriteSet())
+            .filter { playlistChannels[it].url !in hiddenSet() &&
+                (selectedGroup.isEmpty() || playlistChannels[it].group == selectedGroup) }
+        if (favoritesOnly) list.addView(Button(this).apply {
+            text = "Favorite list: ${favoriteName(activeFavoriteList())} (change)"
+            setOnClickListener { manageFavorites() }
+        })
         if (indices.isEmpty()) list.addView(TextView(this).apply {
             text = "No channels in this view"
             setTextColor(android.graphics.Color.WHITE)
@@ -444,12 +573,20 @@ class MainActivity : Activity() {
         var readyEver = false
         var failureLabel = "none"
         var bufferCount = 0
+        clockView = if (showClock) TextView(this).apply {
+            textSize = 14f
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(0x99000000.toInt())
+            setPadding(12, 8, 12, 8)
+        } else null
         val view = PlayerView(this).apply {
             player = exo
             useController = true
             isFocusable = true
         }
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
+        clockView?.let { root.addView(it,
+            FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END)) }
         val status = TextView(this).apply {
             setPadding(18, 12, 18, 12)
             setTextColor(android.graphics.Color.WHITE)
@@ -487,6 +624,12 @@ class MainActivity : Activity() {
             }, delay)
         }
 
+        fun clockTick() {
+            if (player !== exo || generation != playbackGeneration) return
+            clockView?.text = DateFormat.format("EEE dd MMM yy  HH:mm:ss", Date())
+            handler.postDelayed({ clockTick() }, 1000L)
+        }
+
         fun healthTick() {
             if (player !== exo || generation != playbackGeneration) return
             val isPlaying = exo.isPlaying
@@ -512,6 +655,7 @@ class MainActivity : Activity() {
                     "\nBuffers: $bufferCount | retry: $attempt/2 | error: $failureLabel"
             }
             handler.postDelayed({ healthTick() }, 5000L)
+        clockTick()
         }
 
         exo.addListener(object : Player.Listener {
@@ -569,8 +713,9 @@ class MainActivity : Activity() {
             textSize = 20f
             setTextColor(android.graphics.Color.WHITE)
         })
-        val indices = ChannelNavigation.filteredIndices(playlistChannels, "", favoritesOnly, favoriteSet())
-            .filter { playlistChannels[it].url !in hiddenSet() }
+        val indices = ChannelNavigation.filteredIndices(playlistChannels, channelQuery, favoritesOnly, favoriteSet())
+            .filter { playlistChannels[it].url !in hiddenSet() &&
+                (selectedGroup.isEmpty() || playlistChannels[it].group == selectedGroup) }
         val selector = ScrollView(this)
         val items = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         for (index in indices) {
@@ -685,6 +830,7 @@ class MainActivity : Activity() {
         hideLiveDrawer()
         numericView = null
         numericBuffer = ""
+        clockView = null
         hideFullscreen()
         player?.release()
         player = null

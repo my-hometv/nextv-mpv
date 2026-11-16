@@ -18,6 +18,11 @@ class ChannelNavigationTest {
         assertNull(ChannelNavigation.next(4, 3, 1))
     }
 
+    @Test fun navigationMiddleChannelsWorksInBothDirections() {
+        assertEquals(1, ChannelNavigation.next(2, 5, -1))
+        assertEquals(3, ChannelNavigation.next(2, 5, 1))
+    }
+
     @Test fun hiddenChannelsAreSkippedAndCanBeRestored() {
         val urls = listOf("one", "two", "three")
         assertEquals(2, ChannelNavigation.nextVisible(0, urls, setOf("two"), 1))
