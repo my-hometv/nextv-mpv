@@ -41,6 +41,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
 
+@androidx.media3.common.util.UnstableApi
 class MainActivity : Activity() {
     private lateinit var root: FrameLayout
     private var player: ExoPlayer? = null
