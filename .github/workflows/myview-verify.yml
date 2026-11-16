@@ -43,5 +43,9 @@ jobs:
           gradle-version: '8.13'
       - name: Compile and run JVM tests
         run: gradle --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Android Lint
+        run: gradle --no-daemon :app:lintDebug
+      - name: Confirm unique MyView application ID
+        run: grep -Fq 'applicationId = "com.softppj.myview"' app/build.gradle.kts
       - name: Confirm APK is not assembled
         run: test ! -e app/build/outputs/apk/debug/app-debug.apk

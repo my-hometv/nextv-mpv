@@ -114,3 +114,10 @@ No private NexTV source, configuration, assets, playlists or credentials were ex
 - Aspect selection persists locally and is included in private backup/restore.
 - This is diagnostic visibility, NOT HDR tone-mapping, display-color calibration,
   frame-exact A/V lip-sync measurement, or on-device verification.
+
+## Final guard and static analysis changes
+
+- Intentional playback speeds other than ~1.0x reset the clock guard and do not trigger false stream recovery.
+- Player seek/discontinuity and speed-change callbacks reset the guard.
+- The public no-APK verification workflow now also runs Android Lint and asserts the separate application ID.
+- These checks do not validate physical-TV video color, decoder compatibility or precise lip sync.

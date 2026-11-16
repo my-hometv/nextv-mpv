@@ -20,6 +20,15 @@ class PlaybackPoliciesTest {
         assertFalse(guard.sample(20000, 30000, true, 1f))
     }
 
+    @Test fun userSelectedFastPlaybackNeverTriggersRecovery() {
+        val guard = PlaybackClockGuard()
+        assertFalse(guard.sample(0L, 0L, true, 1.5f))
+        for (n in 1..10) {
+            assertFalse(guard.sample(n * 5000L, n * 7500L, true, 1.5f))
+        }
+        assertFalse(guard.sample(60000L, 90000L, true, 1f))
+    }
+
     @Test fun bufferingAndDiscontinuitiesDoNotTrigger() {
         val guard = PlaybackClockGuard()
         guard.sample(0, 0, true, 1f)

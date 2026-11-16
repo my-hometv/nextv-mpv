@@ -16,7 +16,9 @@ internal class PlaybackClockGuard {
     }
 
     fun sample(wallMs: Long, mediaMs: Long, playing: Boolean, speed: Float): Boolean {
-        if (!playing || mediaMs < 0 || !speed.isFinite()) {
+        // Intentional slow/fast playback is a user preference, not a clock fault.
+        if (!playing || mediaMs < 0 || !speed.isFinite() ||
+            speed < 0.97f || speed > 1.03f) {
             reset()
             return false
         }
@@ -34,7 +36,7 @@ internal class PlaybackClockGuard {
             consecutiveFast = 0
             return false
         }
-        val excessive = speed > 1.15f || mediaDelta.toDouble() / wallDelta > 1.65
+        val excessive = mediaDelta.toDouble() / wallDelta > 1.65
         consecutiveFast = if (excessive) consecutiveFast + 1 else 0
         return consecutiveFast >= 3
     }

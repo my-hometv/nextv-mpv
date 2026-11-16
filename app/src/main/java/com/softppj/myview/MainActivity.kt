@@ -1006,6 +1006,16 @@ class MainActivity : Activity() {
                     else -> clockGuard.reset()
                 }
             }
+            override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                if (player === exo) clockGuard.reset()
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                if (player === exo) clockGuard.reset()
+            }
             override fun onPlayerError(error: PlaybackException) {
                 if (player !== exo) return
                 if (!readyEver) recordStart(url, false)
