@@ -12,7 +12,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout ONLY public standalone MyView source
+        uses: actions/checkout@v4
+        with:
+          ref: myview-public-build
+          persist-credentials: false
+      - name: Ensure clean public MyView source branch
+        run: |
+          test "$(git branch --show-current)" = "myview-public-build"
+          test -f app/src/main/java/com/softppj/myview/MainActivity.kt
+          grep -Fq 'applicationId = "com.softppj.myview"' app/build.gradle.kts
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -37,15 +46,22 @@ jobs:
           gradle-version: '8.13'
       - name: Compile and verify before packaging
         run: gradle --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Android Lint release gate
+        run: gradle --no-daemon :app:lintDebug
       - name: Build test APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Rename APK
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk MyView.apk
-          sha256sum MyView.apk
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          test -x "$AAPT"
+          "$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk > /tmp/myview-apk-badging.txt
+          grep -E "^package: name='com.softppj.myview' " /tmp/myview-apk-badging.txt
+          grep -F "application-label:'MyView'" /tmp/myview-apk-badging.txt
+          cp app/build/outputs/apk/debug/app-debug.apk MyView-public-test.apk
+          sha256sum MyView-public-test.apk
       - uses: actions/upload-artifact@v4
         with:
           name: MyView-public-test-${{ github.run_number }}
-          path: MyView.apk
+          path: MyView-public-test.apk
           retention-days: 14
