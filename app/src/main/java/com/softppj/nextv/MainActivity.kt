@@ -5591,6 +5591,20 @@ class MainActivity: Activity() {
         java.util.concurrent.ArrayBlockingQueue<Runnable>(96))
     private val logoLoading=mutableSetOf<String>()
     private val logoWaiting=mutableMapOf<String,MutableList<ImageView>>()
+    private var smartLogoSource:List<Channel>?=null
+    private var smartLogoSourceSize=-1
+    private var smartLogoIndex:SmartLogoPolicy.Index?=null
+    private fun effectiveLogo(channel:Channel):String {
+        if (channel.logo.startsWith("https://",true) || channel.logo.startsWith("http://",true))
+            return channel.logo.trim()
+        // Index rebuilding is linear and happens only when the loaded list changes.
+        if(smartLogoSource !== channels || smartLogoSourceSize != channels.size || smartLogoIndex==null){
+            smartLogoSource=channels
+            smartLogoSourceSize=channels.size
+            smartLogoIndex=SmartLogoPolicy.Index(channels)
+        }
+        return smartLogoIndex?.resolve(channel).orEmpty()
+    }
     private fun logoView(channel:Channel,size:Int=52,reuse:ImageView?=null):ImageView{
         val pixels=(size*resources.displayMetrics.density).toInt()
         val view=reuse ?: ImageView(this)
@@ -5600,7 +5614,7 @@ class MainActivity: Activity() {
         view.tag=null
         view.setImageResource(android.R.drawable.ic_menu_gallery)
         view.imageTintList=android.content.res.ColorStateList.valueOf(0xFFB6C9DD.toInt())
-        val url=channel.logo.trim()
+        val url=effectiveLogo(channel)
         if(!url.startsWith("http://") && !url.startsWith("https://"))return view
         view.tag=url
         val cached=logoCache.get(url)
