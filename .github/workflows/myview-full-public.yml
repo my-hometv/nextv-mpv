@@ -1,0 +1,71 @@
+name: MyView Full Public - Compile Test APK
+on:
+  push:
+    branches: [myview-full-public]
+    paths:
+      - 'app/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/myview-full-public.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: myview-full-public-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate unique MyView identity and public full source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'applicationId = "com.softppj.myview"' app/build.gradle.kts
+          grep -Fq 'name="app_name">MyView' app/src/main/res/values/strings.xml
+          test -f app/src/main/java/com/softppj/nextv/MainActivity.kt
+          test -f app/src/main/java/com/softppj/nextv/M3uParser.kt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure native Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-37.0" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+          if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
+            ln -s "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
+          fi
+          test -f "$ANDROID_HOME/platforms/android-37/android.jar"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+      - name: Verify native engine and Kotlin tests
+        run: gradle --no-daemon --stacktrace :app:verifyMpvRuntime :app:verifyGstreamerPreservation :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Assemble MyView full public test APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Validate APK identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > /tmp/myview-badging.txt
+          grep -F "package: name='com.softppj.myview'" /tmp/myview-badging.txt
+          grep -F "application-label:'MyView'" /tmp/myview-badging.txt
+          cp "$apk" MyView-Full-Public-Test.apk
+          sha256sum MyView-Full-Public-Test.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Public-Test-${{ github.run_number }}
+          path: MyView-Full-Public-Test.apk
+          if-no-files-found: error
+          retention-days: 7

@@ -38,12 +38,12 @@ android {
                 cmake { arguments("-DNEXTV_GSTREAMER_SDK=$nextvGstreamerSdkPath") }
             }
         }
-        // MPV edition application ID: installs independently beside stable NexTV.
-        applicationId = "com.softppj.nextv.mpv"
+        // MyView full public source build; installs separately from NexTV.
+        applicationId = "com.softppj.myview"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.0-mpv-experiment"
+        versionName = "1.0.0-myview-public-full-test"
     }
 
     compileOptions {
@@ -189,7 +189,7 @@ val verifyGstreamerPreservation by tasks.registering {
         check(manifest.contains("android:allowBackup=\"false\"")) {
             "Unexpected backup security policy change"
         }
-        check(build.contains("applicationId = \"com.softppj.nextv.mpv\"")) {
+        check(build.contains("applicationId = \"com.softppj.myview\"")) {
             "Independent app ID changed; would affect existing installations"
         }
         println("Verified NexTV licensing, persistence, playlist and TV launcher invariants")
