@@ -93,6 +93,36 @@ class MainActivity : Activity() {
     private fun favoriteSet(): Set<String> =
         prefs.getStringSet("fav_${activePlaylist()}", emptySet())?.toSet() ?: emptySet()
 
+    private fun hiddenSet(): Set<String> =
+        prefs.getStringSet("hidden_${activePlaylist()}", emptySet())?.toSet() ?: emptySet()
+
+    private fun toggleHidden() {
+        val item = playlistChannels.getOrNull(channelIndex) ?: return
+        val updated = hiddenSet().toMutableSet()
+        if (!updated.add(item.url)) updated.remove(item.url)
+        prefs.edit().putStringSet("hidden_${activePlaylist()}", updated).apply()
+        Toast.makeText(this, if (item.url in updated) "Channel hidden" else "Channel visible",
+            Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showHiddenChannels() {
+        val hidden = hiddenSet()
+        val indices = playlistChannels.indices.filter { playlistChannels[it].url in hidden }
+        val names = indices.map { playlistChannels[it].name }.toTypedArray()
+        if (indices.isEmpty()) {
+            Toast.makeText(this, "No hidden channels", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this).setTitle("Restore hidden channels")
+            .setItems(names) { _, position ->
+                val index = indices[position]
+                val update = hiddenSet().toMutableSet()
+                update.remove(playlistChannels[index].url)
+                prefs.edit().putStringSet("hidden_${activePlaylist()}", update).apply()
+                showMenu()
+            }.setNegativeButton("Cancel", null).show()
+    }
+
     private fun toggleFavorite() {
         val item = playlistChannels.getOrNull(channelIndex) ?: return
         val updated = favoriteSet().toMutableSet()
@@ -241,6 +271,8 @@ class MainActivity : Activity() {
         addButton("Add playlist") { addPlaylist() }
         addButton("Rename playlist") { renamePlaylist() }
         addButton("Set XMLTV guide URL") { askGuide() }
+        addButton("Restore hidden channels") { showHiddenChannels() }
+        addButton("TV Guide") { favoritesOnly = false; showChannelList() }
         addButton("Paste M3U playlist (HTTPS)") { askPlaylist() }
         if (playlistChannels.isNotEmpty()) {
             addButton("Watch last channel") {
@@ -307,6 +339,7 @@ class MainActivity : Activity() {
             setOnClickListener { favoritesOnly = !favoritesOnly; showChannelList() }
         })
         val indices = ChannelNavigation.filteredIndices(playlistChannels, "", favoritesOnly, favoriteSet())
+            .filter { playlistChannels[it].url !in hiddenSet() }
         if (indices.isEmpty()) list.addView(TextView(this).apply {
             text = "No channels in this view"
             setTextColor(android.graphics.Color.WHITE)
@@ -537,6 +570,7 @@ class MainActivity : Activity() {
             setTextColor(android.graphics.Color.WHITE)
         })
         val indices = ChannelNavigation.filteredIndices(playlistChannels, "", favoritesOnly, favoriteSet())
+            .filter { playlistChannels[it].url !in hiddenSet() }
         val selector = ScrollView(this)
         val items = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         for (index in indices) {
@@ -556,6 +590,10 @@ class MainActivity : Activity() {
                 hideLiveDrawer()
                 showLiveDrawer()
             }
+        })
+        overlay.addView(Button(this).apply {
+            text = "Hide / Unhide current channel"
+            setOnClickListener { toggleHidden(); hideLiveDrawer(); showLiveDrawer() }
         })
         overlay.addView(Button(this).apply {
             text = "Close drawer"
@@ -594,7 +632,7 @@ class MainActivity : Activity() {
                 numericBuffer = ""
                 numericView?.let { root.removeView(it) }
                 numericView = null
-                if (index != null) setChannel(index)
+                if (index != null && playlistChannels[index].url !in hiddenSet()) setChannel(index)
             }
         }, 1800L)
     }
@@ -669,8 +707,8 @@ class MainActivity : Activity() {
                 return true
             }
             if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP || keyCode == KeyEvent.KEYCODE_CHANNEL_DOWN) {
-                val next = ChannelNavigation.next(channelIndex, playlistChannels.size,
-                    if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) -1 else 1)
+                val next = ChannelNavigation.nextVisible(channelIndex, playlistChannels.map { it.url },
+                    hiddenSet(), if (keyCode == KeyEvent.KEYCODE_CHANNEL_UP) -1 else 1)
                 if (next != null) setChannel(next)
                 return true
             }
