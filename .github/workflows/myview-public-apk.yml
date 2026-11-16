@@ -2,13 +2,26 @@ name: MyView public test APK
 # APK packaging is deliberately manual; commits only trigger verification.
 on:
   workflow_dispatch:
+  # One lightweight workflow run registers the entry in Actions.
+  # No APK is compiled or uploaded on push.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/myview-public-apk.yml'
 permissions:
   contents: read
 concurrency:
   group: myview-public-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  register:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm manual-only APK packaging
+        run: echo "MyView APK build is available only by workflow_dispatch."
   build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
