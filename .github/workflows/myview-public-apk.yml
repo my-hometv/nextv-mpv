@@ -1,7 +1,6 @@
 name: MyView public test APK
+# APK packaging is deliberately manual; commits only trigger verification.
 on:
-  push:
-    branches: [myview-public-build]
   workflow_dispatch:
 permissions:
   contents: read
