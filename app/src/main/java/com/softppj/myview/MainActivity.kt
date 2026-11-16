@@ -3,6 +3,10 @@ package com.softppj.myview
 import android.app.Activity
 import android.app.AlertDialog
 import android.os.Bundle
+import android.os.Build
+import android.os.SystemClock
+import androidx.media3.datasource.HttpDataSource
+import java.io.IOException
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
@@ -35,6 +39,9 @@ class MainActivity : Activity() {
     private var playlistChannels: List<PlaylistParser.Channel> = emptyList()
     private var channelIndex = -1
     private var playbackGeneration = 0
+    private var showDiagnostics = false
+    private var originalDisplayModeId: Int? = null
+    private var requestedDisplayModeId: Int? = null
     private val handler = Handler(Looper.getMainLooper())
     private val prefs by lazy { getSharedPreferences("myview_test", MODE_PRIVATE) }
 
@@ -71,6 +78,18 @@ class MainActivity : Activity() {
                 isFocusable = true
                 setOnClickListener { action() }
             })
+        }
+        addButton("Recover sustained fast-forward: " + if (prefs.getBoolean("clock_recovery", true)) "ON" else "OFF") {
+            prefs.edit().putBoolean("clock_recovery", !prefs.getBoolean("clock_recovery", true)).apply()
+            showMenu()
+        }
+        addButton("VOD refresh match: " + if (prefs.getBoolean("vod_refresh", false)) "ON" else "OFF") {
+            prefs.edit().putBoolean("vod_refresh", !prefs.getBoolean("vod_refresh", false)).apply()
+            showMenu()
+        }
+        addButton("Playback diagnostics: " + if (showDiagnostics) "ON" else "OFF") {
+            showDiagnostics = !showDiagnostics
+            showMenu()
         }
         addButton("Paste M3U playlist (HTTPS)") { askPlaylist() }
         if (playlistChannels.isNotEmpty()) {
@@ -151,9 +170,7 @@ class MainActivity : Activity() {
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val url = field.text.toString().trim()
-                val uri = android.net.Uri.parse(url)
-                if (uri.scheme != "https" || uri.host.isNullOrBlank() ||
-                    uri.encodedAuthority?.contains("@") == true || url.length > 4096) {
+                if (!PlaylistParser.validHttpsUrl(url)) {
                     field.error = "Use a valid HTTPS URL"
                 } else {
                     prefs.edit().putString("last_" + type, url).apply()
@@ -165,6 +182,56 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
+    private fun classifyFailure(error: PlaybackException): ProviderFailurePolicy.Kind {
+        var cause: Throwable? = error
+        var status: Int? = null
+        var networkFailure = false
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                status = cause.responseCode
+                break
+            }
+            if (cause is IOException) networkFailure = true
+            cause = cause.cause
+        }
+        val isDrm = error.errorCode == PlaybackException.ERROR_CODE_DRM_CONTENT_ERROR ||
+            error.errorCode == PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED
+        return ProviderFailurePolicy.classify(status, isDrm,
+            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED, networkFailure)
+    }
+
+    // Explicit VOD only: a direct MP4/M4V file, not HLS/DASH live streams.
+    private fun isVodUrl(url: String): Boolean {
+        val path = android.net.Uri.parse(url).path.orEmpty().lowercase()
+        return path.endsWith(".mp4") || path.endsWith(".m4v")
+    }
+
+    private fun maybeMatchVodRefresh(exo: ExoPlayer, url: String) {
+        if (!prefs.getBoolean("vod_refresh", false) || !isVodUrl(url) ||
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val display = windowManager.defaultDisplay
+        val current = display.mode
+        val fps = exo.videoFormat?.frameRate ?: return
+        val selected = FrameRateMatchPolicy.select(true, true, fps,
+            FrameRateMatchPolicy.Mode(current.modeId, current.physicalWidth,
+                current.physicalHeight, current.refreshRate),
+            display.supportedModes.map {
+                FrameRateMatchPolicy.Mode(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate)
+            }) ?: return
+        if (requestedDisplayModeId == selected.id) return
+        if (originalDisplayModeId == null) originalDisplayModeId = current.modeId
+        requestedDisplayModeId = selected.id
+        window.attributes = window.attributes.apply { preferredDisplayModeId = selected.id }
+    }
+
+    private fun restoreRefresh() {
+        if (requestedDisplayModeId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            window.attributes = window.attributes.apply { preferredDisplayModeId = 0 }
+        }
+        requestedDisplayModeId = null
+        originalDisplayModeId = null
+    }
+
     private fun openMedia(url: String, attempt: Int = 0) {
         releasePlayback()
         mode = "media"
@@ -173,6 +240,11 @@ class MainActivity : Activity() {
         val generation = playbackGeneration
         val exo = ExoPlayer.Builder(this).build()
         player = exo
+        val clockGuard = PlaybackClockGuard()
+        var recoveryScheduled = false
+        var readyEver = false
+        var failureLabel = "none"
+        var bufferCount = 0
         val view = PlayerView(this).apply {
             player = exo
             useController = true
@@ -183,45 +255,105 @@ class MainActivity : Activity() {
             setPadding(18, 12, 18, 12)
             setTextColor(android.graphics.Color.WHITE)
             setBackgroundColor(0xA0000000.toInt())
-            text = if (attempt == 0) "Loading stream…" else "Retrying stream ($attempt/2)…"
+            text = if (attempt == 0) "Loading stream…" else "Retrying this stream ($attempt/2)…"
         }
-        root.addView(status, FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.START))
+        root.addView(status, FrameLayout.LayoutParams(-2, -2,
+            android.view.Gravity.TOP or android.view.Gravity.START))
+        val diagnostics = TextView(this).apply {
+            setPadding(18, 12, 18, 12)
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(0xB0000000.toInt())
+            textSize = 12f
+            visibility = if (showDiagnostics) View.VISIBLE else View.GONE
+        }
+        root.addView(diagnostics, FrameLayout.LayoutParams(-2, -2,
+            android.view.Gravity.BOTTOM or android.view.Gravity.START))
+
+        fun retryCurrentStream(kind: ProviderFailurePolicy.Kind) {
+            if (recoveryScheduled || player !== exo || generation != playbackGeneration) return
+            val delay = ProviderFailurePolicy.retryDelayMs(kind, attempt)
+            if (delay == null) {
+                status.text = "${ProviderFailurePolicy.description(kind)}. Press BACK."
+                status.visibility = View.VISIBLE
+                return
+            }
+            recoveryScheduled = true
+            failureLabel = kind.name
+            status.text = "${ProviderFailurePolicy.description(kind)}; retrying same URL…"
+            status.visibility = View.VISIBLE
+            handler.postDelayed({
+                if (generation == playbackGeneration && player === exo) {
+                    openMedia(url, attempt + 1)
+                }
+            }, delay)
+        }
+
+        fun healthTick() {
+            if (player !== exo || generation != playbackGeneration) return
+            val isPlaying = exo.isPlaying
+            if (!isPlaying) clockGuard.reset()
+            else if (!recoveryScheduled && prefs.getBoolean("clock_recovery", true) &&
+                clockGuard.sample(SystemClock.elapsedRealtime(), exo.currentPosition,
+                    true, exo.playbackParameters.speed)) {
+                // This identifies sustained abnormal progression, not actual audio/video lip-sync.
+                // One bounded same-source recovery only; never switch to another provider URL.
+                retryCurrentStream(ProviderFailurePolicy.Kind.NETWORK)
+            }
+            if (showDiagnostics) {
+                val video = exo.videoFormat
+                val audio = exo.audioFormat
+                val dimension = exo.videoSize
+                diagnostics.text = "Media3 | ${if (isPlaying) "playing" else "waiting"}" +
+                    "\nVideo: ${dimension.width}x${dimension.height}  " +
+                    "fps: ${video?.frameRate ?: "?"}" +
+                    "\nCodec: ${video?.sampleMimeType ?: "?"} | " +
+                    "Audio: ${audio?.sampleMimeType ?: "?"}" +
+                    "\nPosition: ${exo.currentPosition / 1000}s | " +
+                    "speed: ${exo.playbackParameters.speed}x" +
+                    "\nBuffers: $bufferCount | retry: $attempt/2 | error: $failureLabel"
+            }
+            handler.postDelayed({ healthTick() }, 5000L)
+        }
+
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (player !== exo) return
-                status.text = when (state) {
-                    Player.STATE_READY -> "Playing • Media3"
-                    Player.STATE_BUFFERING -> "Buffering…"
-                    Player.STATE_ENDED -> "Stream ended"
-                    else -> "Loading stream…"
+                when (state) {
+                    Player.STATE_READY -> {
+                        status.text = "Playing • Media3"
+                        readyEver = true
+                        maybeMatchVodRefresh(exo, url)
+                        handler.postDelayed({
+                            if (player === exo && !recoveryScheduled) status.visibility = View.GONE
+                        }, 3000L)
+                    }
+                    Player.STATE_BUFFERING -> {
+                        if (readyEver) bufferCount++
+                        clockGuard.reset()
+                        status.text = "Buffering; keeping selected channel…"
+                        status.visibility = View.VISIBLE
+                    }
+                    Player.STATE_ENDED -> {
+                        clockGuard.reset()
+                        status.text = "Stream ended"
+                        status.visibility = View.VISIBLE
+                    }
+                    else -> clockGuard.reset()
                 }
-                if (state == Player.STATE_READY) handler.postDelayed({
-                    if (player === exo) status.visibility = View.GONE
-                }, 3000)
-                else status.visibility = View.VISIBLE
             }
             override fun onPlayerError(error: PlaybackException) {
                 if (player !== exo) return
-                // Never replace a user-selected channel or source after a transient failure.
-                val retryable = error.errorCode != PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED &&
-                    error.errorCode != PlaybackException.ERROR_CODE_DRM_CONTENT_ERROR
-                if (retryable && attempt < 2) {
-                    status.text = "Stream interrupted; retrying same URL…"
-                    handler.postDelayed({
-                        if (generation == playbackGeneration && player === exo) openMedia(url, attempt + 1)
-                    }, (attempt + 1) * 2000L)
-                } else {
-                    status.text = "Cannot play stream (code ${error.errorCode}). Press BACK."
-                }
+                retryCurrentStream(classifyFailure(error))
             }
         })
         val builder = MediaItem.Builder().setUri(url)
-        val path = android.net.Uri.parse(url).path.orEmpty().lowercase()
-        if (path.endsWith(".mpd")) builder.setMimeType(MimeTypes.APPLICATION_MPD)
-        if (path.endsWith(".m3u8")) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+        val mediaPath = android.net.Uri.parse(url).path.orEmpty().lowercase()
+        if (mediaPath.endsWith(".mpd")) builder.setMimeType(MimeTypes.APPLICATION_MPD)
+        if (mediaPath.endsWith(".m3u8")) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
         exo.setMediaItem(builder.build())
         exo.prepare()
         exo.playWhenReady = true
+        handler.postDelayed({ healthTick() }, 5000L)
         view.requestFocus()
     }
 
@@ -267,6 +399,7 @@ class MainActivity : Activity() {
     }
 
     private fun releasePlayback() {
+        restoreRefresh()
         playbackGeneration++
         handler.removeCallbacksAndMessages(null)
         hideFullscreen()
