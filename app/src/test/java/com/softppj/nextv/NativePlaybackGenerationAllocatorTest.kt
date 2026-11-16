@@ -39,4 +39,14 @@ class NativePlaybackGenerationAllocatorTest {
         assertEquals(800, values.size)
     }
 
+    @Test fun staleStopsCannotStopLaterNativeRequests() {
+        val ids = NativePlaybackGenerationAllocator({ 900L }, AtomicLong(Long.MIN_VALUE))
+        val first = ids.next()
+        val second = ids.next()
+        val gate = IsolatedVlcRequestGate()
+        assertTrue(gate.reserveStart("LibVLC-3.5.1", "https://example.invalid/1", first))
+        assertTrue(gate.reserveStart("LibVLC-3.5.1", "https://example.invalid/2", second))
+        assertFalse(gate.stop(first))
+        assertTrue(gate.stop(second))
+    }
 }

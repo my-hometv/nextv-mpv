@@ -1,0 +1,300 @@
+name: NexTV LibVLC native dependency inventory (no APK)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    name: Inspect three LibVLC AARs
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Resolve actual LibVLC AAR artifacts without assembling an APK
+        run: |
+          gradle --no-daemon :app:compileVlc351DebugKotlin :app:compileVlc377DebugKotlin :app:compileVlc400eap29DebugKotlin
+          # Gradle dependency reports alone may resolve metadata but not download AAR bytes.
+          # Compilation forces Android Gradle Plugin to resolve the actual artifacts.
+      - name: Inspect AAR Java classes, JNI libraries and collisions
+        shell: bash
+        run: |
+          mkdir -p build/reports/libvlc-inventory
+          python3 - <<'PY'
+          import io, os, pathlib, zipfile, json, hashlib
+          root=pathlib.Path(os.environ.get('GRADLE_USER_HOME',str(pathlib.Path.home()/'.gradle')))/'caches/modules-2/files-2.1/org.videolan.android/libvlc-all'
+          versions=['3.5.1','3.7.7','4.0.0-eap29']
+          report={'versions':{},'collisions':{}}
+          for version in versions:
+              candidates=list((root/version).rglob('*.aar'))
+              if len(candidates)!=1:
+                  raise SystemExit(f'Expected exactly one AAR for {version}; found {len(candidates)}: {candidates}')
+              aar=candidates[0]
+              classes=set()
+              native={}
+              with zipfile.ZipFile(aar) as z:
+                  for name in z.namelist():
+                      if name=='classes.jar':
+                          with zipfile.ZipFile(io.BytesIO(z.read(name))) as jar:
+                              classes.update(x for x in jar.namelist() if x.endswith('.class'))
+                      if name.startswith('jni/') and name.endswith('.so'):
+                          native[name]=hashlib.sha256(z.read(name)).hexdigest()
+              report['versions'][version]={'aar_sha256':hashlib.sha256(aar.read_bytes()).hexdigest(),'class_count':len(classes),'classes':sorted(classes),'native':native}
+              print(f'{version}: {len(classes)} classes, {len(native)} native libraries')
+          for i,left in enumerate(versions):
+              for right in versions[i+1:]:
+                  a=report['versions'][left]; b=report['versions'][right]
+                  pair=f'{left} vs {right}'
+                  overlap=sorted(set(a['classes'])&set(b['classes']))
+                  common=sorted(set(a['native'])&set(b['native']))
+                  different=[x for x in common if a['native'][x]!=b['native'][x]]
+                  report['collisions'][pair]={'duplicate_classes':len(overlap),'duplicate_class_examples':overlap[:25],'duplicate_native_paths':common,'different_native_binaries':different}
+                  print(f'{pair}: {len(overlap)} duplicate Java classes, {len(common)} native path collisions, {len(different)} differing native binaries')
+          out=pathlib.Path('build/reports/libvlc-inventory')
+          (out/'inventory.json').write_text(json.dumps(report,indent=2))
+          (out/'summary.txt').write_text('\n'.join(f"{pair}: {item['duplicate_classes']} Java class collisions; {len(item['duplicate_native_paths'])} native path collisions; {len(item['different_native_binaries'])} different native binaries" for pair,item in report['collisions'].items())+'\n')
+          PY
+      - name: Inspect ELF SONAME and NEEDED dependencies per ABI
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess, tempfile, zipfile
+          root=pathlib.Path(os.environ.get('GRADLE_USER_HOME',str(pathlib.Path.home()/'.gradle')))/'caches/modules-2/files-2.1/org.videolan.android/libvlc-all'
+          versions=['3.5.1','3.7.7','4.0.0-eap29']
+          report={}
+          with tempfile.TemporaryDirectory() as temp:
+              for version in versions:
+                  aar=next((root/version).rglob('*.aar'))
+                  entries={}
+                  with zipfile.ZipFile(aar) as archive:
+                      for name in archive.namelist():
+                          if not (name.startswith('jni/') and name.endswith('.so')): continue
+                          target=pathlib.Path(temp)/version/name
+                          target.parent.mkdir(parents=True,exist_ok=True)
+                          target.write_bytes(archive.read(name))
+                          result=subprocess.run(['readelf','-d',str(target)],capture_output=True,text=True,check=True)
+                          soname=re.findall(r'\(SONAME\).*?\[(.*?)\]',result.stdout)
+                          needed=re.findall(r'\(NEEDED\).*?\[(.*?)\]',result.stdout)
+                          entries[name]={'soname':soname[0] if soname else None,'needed':needed}
+                  report[version]=entries
+          out=pathlib.Path('build/reports/libvlc-inventory')
+          (out/'elf-dependencies.json').write_text(json.dumps(report,indent=2))
+          lines=[]
+          for version,entries in report.items():
+              lines.append(f'{version}:')
+              for path,info in sorted(entries.items()):
+                  lines.append(f"  {path}: SONAME={info['soname'] or '(none)'} NEEDED={','.join(info['needed']) or '(none)'}")
+          (out/'elf-summary.txt').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PY
+      - name: Inspect JNI registration and exported symbols
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess, tempfile, zipfile
+          root=pathlib.Path(os.environ.get('GRADLE_USER_HOME',str(pathlib.Path.home()/'.gradle')))/'caches/modules-2/files-2.1/org.videolan.android/libvlc-all'
+          versions=['3.5.1','3.7.7','4.0.0-eap29']
+          report={}
+          with tempfile.TemporaryDirectory() as temp:
+              for version in versions:
+                  aar=next((root/version).rglob('*.aar'))
+                  report[version]={}
+                  with zipfile.ZipFile(aar) as archive:
+                      for name in archive.namelist():
+                          if not (name.startswith('jni/') and name.endswith('libvlcjni.so')): continue
+                          target=pathlib.Path(temp)/version/name
+                          target.parent.mkdir(parents=True,exist_ok=True)
+                          target.write_bytes(archive.read(name))
+                          symbols=subprocess.run(['readelf','--dyn-syms','--wide',str(target)],capture_output=True,text=True,check=True).stdout
+                          exported=sorted(set(re.findall(r'\b(Java_[A-Za-z0-9_]+|JNI_OnLoad|JNI_OnUnload)\b',symbols)))
+                          report[version][name]={'jni_exports':exported,'jni_onload':('JNI_OnLoad' in exported)}
+          out=pathlib.Path('build/reports/libvlc-inventory')
+          (out/'jni-symbols.json').write_text(json.dumps(report,indent=2))
+          lines=[]
+          for version,abis in report.items():
+              for path,details in sorted(abis.items()):
+                  lines.append(f"{version} {path}: JNI_OnLoad={details['jni_onload']} Java_exports={len(details['jni_exports'])-int(details['jni_onload'])}")
+          for i,left in enumerate(versions):
+              for right in versions[i+1:]:
+                  for path in sorted(set(report[left]) & set(report[right])):
+                      overlap=set(report[left][path]['jni_exports']) & set(report[right][path]['jni_exports'])
+                      lines.append(f"{left} vs {right} {path}: {len(overlap)} overlapping JNI exports")
+          (out/'jni-summary.txt').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PY
+      - name: Detect embedded JNI class names and native loader references
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, zipfile
+          root=pathlib.Path(os.environ.get('GRADLE_USER_HOME',str(pathlib.Path.home()/'.gradle')))/'caches/modules-2/files-2.1/org.videolan.android/libvlc-all'
+          report={}
+          for version in ('3.5.1','3.7.7','4.0.0-eap29'):
+              aar=next((root/version).rglob('*.aar'))
+              report[version]={}
+              with zipfile.ZipFile(aar) as archive:
+                  for name in archive.namelist():
+                      if not (name.startswith('jni/') and name.endswith('.so')): continue
+                      data=archive.read(name)
+                      strings=re.findall(rb'[ -~]{8,}',data)
+                      classes=sorted({value.decode('ascii') for string in strings for value in re.findall(rb'org/videolan/(?:libvlc|medialibrary)/[A-Za-z0-9_/$]+',string)})
+                      loaders=sorted({value.decode('ascii') for string in strings for value in re.findall(rb'lib(?:vlc|vlcjni|c\+\+_shared)\.so',string)})
+                      report[version][name]={'jni_class_references':classes,'native_library_references':loaders}
+          out=pathlib.Path('build/reports/libvlc-inventory')
+          (out/'embedded-references.json').write_text(json.dumps(report,indent=2))
+          lines=[]
+          for version,entries in report.items():
+              for name,info in sorted(entries.items()):
+                  if name.endswith('/libvlcjni.so'):
+                      lines.append(f"{version} {name}: {len(info['jni_class_references'])} embedded class references, {len(info['native_library_references'])} library references")
+                      lines.extend('  '+value for value in info['jni_class_references'][:12])
+          (out/'embedded-summary.txt').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines))
+          PY
+      - name: Validate JNI class-reference inventory
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          report=json.loads(pathlib.Path('build/reports/libvlc-inventory/embedded-references.json').read_text())
+          for version in ('3.5.1','3.7.7','4.0.0-eap29'):
+              for abi in ('arm64-v8a','armeabi-v7a','x86','x86_64'):
+                  path=f'jni/{abi}/libvlcjni.so'
+                  refs=report[version][path]['jni_class_references']
+                  assert refs, f'No embedded JNI class paths: {version} {abi}'
+                  assert any(x.startswith('org/videolan/libvlc/') for x in refs), f'No LibVLC class references: {version} {abi}'
+          print('Embedded JNI class-reference inventory validated for all 12 LibVLC JNI binaries')
+          PY
+      - name: Validate ELF inventory completeness
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          base=pathlib.Path('build/reports/libvlc-inventory')
+          report=json.loads((base/'elf-dependencies.json').read_text())
+          for version in ('3.5.1','3.7.7','4.0.0-eap29'):
+              entries=report[version]
+              for abi in ('arm64-v8a','armeabi-v7a','x86','x86_64'):
+                  for library in ('libvlc.so','libvlcjni.so','libc++_shared.so'):
+                      path=f'jni/{abi}/{library}'
+                      assert path in entries, f'Missing {version} {path}'
+                      assert entries[path]['soname']==library, f'Invalid SONAME: {version} {path}'
+                  assert 'libvlc.so' in entries[f'jni/{abi}/libvlcjni.so']['needed'], f'Missing LibVLC dependency: {version} {abi}'
+          print('ELF inventory passed: 3 versions, 4 ABIs, SONAMEs and JNI dependency links')
+          PY
+      - name: Inspect native symbol collision surfaces by ABI
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import collections, json, os, pathlib, subprocess, tempfile, zipfile
+          root=pathlib.Path(os.environ.get('GRADLE_USER_HOME',str(pathlib.Path.home()/'.gradle')))/'caches/modules-2/files-2.1/org.videolan.android/libvlc-all'
+          versions=('3.5.1','3.7.7','4.0.0-eap29')
+          result={}
+          with tempfile.TemporaryDirectory() as tmp:
+              for version in versions:
+                  aar=next((root/version).rglob('*.aar'))
+                  result[version]={}
+                  with zipfile.ZipFile(aar) as archive:
+                      for name in archive.namelist():
+                          if not (name.startswith('jni/') and name.endswith('.so')): continue
+                          target=pathlib.Path(tmp)/version/name
+                          target.parent.mkdir(parents=True,exist_ok=True)
+                          target.write_bytes(archive.read(name))
+                          output=subprocess.run(['readelf','--dyn-syms','--wide',str(target)],capture_output=True,text=True,check=True).stdout
+                          exports=set()
+                          for line in output.splitlines():
+                              parts=line.split()
+                              if len(parts)<8 or parts[4] not in ('FUNC','OBJECT') or parts[6]=='UND' or parts[5] not in ('GLOBAL','WEAK'): continue
+                              symbol=parts[7].split('@@')[0].split('@')[0]
+                              if symbol: exports.add(symbol)
+                          result[version][name]=exports
+          comparisons=[]
+          for i,left in enumerate(versions):
+              for right in versions[i+1:]:
+                  for path in sorted(set(result[left]) & set(result[right])):
+                      shared=result[left][path] & result[right][path]
+                      comparisons.append({'left':left,'right':right,'native_path':path,'shared_export_count':len(shared),'examples':sorted(shared)[:12]})
+          out=pathlib.Path('build/reports/libvlc-inventory/native-export-collisions.json')
+          out.write_text(json.dumps(comparisons,indent=2)+'\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write('### Native exported-symbol overlap (per ABI)\n')
+              for row in comparisons:
+                  summary.write(f"- {row['left']} vs {row['right']} {row['native_path']}: {row['shared_export_count']} overlapping exports\n")
+          print(f'Inspected {len(comparisons)} native-library comparisons across three LibVLC versions')
+          PY
+      - name: Evaluate single-APK native isolation readiness (fail closed)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          root=pathlib.Path('build/reports/libvlc-inventory')
+          collisions=json.loads((root/'inventory.json').read_text())['collisions']
+          elf=json.loads((root/'elf-dependencies.json').read_text())
+          embedded=json.loads((root/'embedded-references.json').read_text())
+          native_exports=json.loads((root/'native-export-collisions.json').read_text())
+          blockers=[]
+          for pair, info in collisions.items():
+              if info['duplicate_classes']:
+                  blockers.append(f"{pair}: {info['duplicate_classes']} duplicate Java classes")
+              if info['duplicate_native_paths']:
+                  blockers.append(f"{pair}: {len(info['duplicate_native_paths'])} colliding native paths")
+          for version, entries in elf.items():
+              for path, info in entries.items():
+                  if path.endswith('/libvlcjni.so') and 'libvlc.so' in info['needed']:
+                      blockers.append(f"{version} {path}: unresolved DT_NEEDED libvlc.so")
+          for version, entries in embedded.items():
+              for path, info in entries.items():
+                  if path.endswith('/libvlcjni.so') and info['jni_class_references']:
+                      blockers.append(f"{version} {path}: embedded unrelocated JNI class references")
+          for item in native_exports:
+              if item['shared_export_count']:
+                  blockers.append(f"{item['left']} vs {item['right']} {item['native_path']}: {item['shared_export_count']} overlapping exported native symbols")
+          ready=not blockers
+          report={'single_apk_isolation_ready':ready,'blockers':blockers}
+          (root/'isolation-readiness.json').write_text(json.dumps(report,indent=2)+'\n')
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'],'a') as out:
+              out.write('### Single-APK isolation readiness\n')
+              out.write(('READY' if ready else 'BLOCKED')+' — '+str(len(blockers))+' unresolved collision indicators.\n')
+              for item in blockers[:30]:
+                  out.write('- '+item+'\n')
+          print(('READY' if ready else 'BLOCKED')+f': {len(blockers)} unresolved collision indicators')
+          # Inventory must pass even when single-APK integration remains blocked.
+          # Readiness is evidence, never permission to publish an APK.
+          PY
+      - name: Publish collision summary to GitHub Actions job summary
+        shell: bash
+        run: |
+          {
+            echo '## LibVLC native dependency inventory'
+            echo 'All three variants compiled; AARs and native dependencies inspected.'
+            echo ''
+            echo '### Collision summary'
+            echo '~~~text'
+            cat build/reports/libvlc-inventory/summary.txt
+            echo '~~~'
+            echo ''
+            echo '### ELF SONAME and NEEDED dependency inventory'
+            echo '~~~text'
+            cat build/reports/libvlc-inventory/elf-summary.txt
+            echo '~~~'
+            echo ''
+            echo '### Embedded JNI class references (heuristic)'
+            echo '~~~text'
+            cat build/reports/libvlc-inventory/embedded-summary.txt
+            echo '~~~'
+            echo ''
+            echo '### JNI exported-symbol inventory'
+            echo '~~~text'
+            cat build/reports/libvlc-inventory/jni-summary.txt
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,82 @@
+name: NexTV consolidated compile and unit tests (no APK)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Check out development source
+        uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ""
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Set up Gradle 8.13
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Compile debug Kotlin first (no APK)
+        run: gradle --no-daemon --stacktrace :app:compileVlc351DebugKotlin
+      - name: Cache Robolectric SDK jars
+        uses: actions/cache@v4
+        with:
+          path: app/build/robolectric-deps
+          key: robolectric-instrumented-9-12_1-15-v1
+      - name: Provision Robolectric SDK jars
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/build/robolectric-deps
+          base="https://repo.maven.apache.org/maven2/org/robolectric/android-all-instrumented"
+          for version in \
+            9-robolectric-4913185-2-i7 \
+            12.1-robolectric-8229987-i7 \
+            15-robolectric-12650502-i7; do
+            jar="android-all-instrumented-${version}.jar"
+            target="app/build/robolectric-deps/${jar}"
+            if [[ -s "${target}" ]]; then
+              echo "Using cached Robolectric SDK: ${version}"
+              continue
+            fi
+            echo "Downloading Robolectric SDK: ${version}"
+            curl --fail --location --retry 2 --retry-delay 2 \
+              --connect-timeout 20 --max-time 180 \
+              --progress-bar "${base}/${version}/${jar}" \
+              --output "${target}.part"
+            test -s "${target}.part"
+            mv "${target}.part" "${target}"
+            echo "Provisioned ${version}: $(du -h "${target}" | cut -f1)"
+          done
+      - name: Run JVM unit tests only (no APK or release)
+        run: gradle --no-daemon --stacktrace :app:testVlc351DebugUnitTest
+      - name: Summarize unit-test results without artifact upload
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          paths=glob.glob("app/build/test-results/testVlc351DebugUnitTest/TEST-*.xml")
+          totals={"tests":0,"failures":0,"errors":0,"skipped":0}
+          for path in paths:
+              root=ET.parse(path).getroot()
+              for key in totals:
+                  totals[key]+=int(root.attrib.get(key,0))
+          print("JVM unit-test summary:", totals)
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"],"a") as output:
+              output.write("## NexTV JVM unit tests\\n\\n")
+              output.write(" | ".join(f"{key}: {value}" for key,value in totals.items())+"\\n")
+          PY

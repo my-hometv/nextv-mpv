@@ -4,23 +4,6 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BackgroundProbeUrlPolicyTest {
-    @Test fun mpvHttpCheckerAcceptsDirectStreamsButNotNativeOnlyProtocols() {
-        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "https://iptv.example/live/channel.m3u8?token=AbC"))
-        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "http://iptv.example/live/channel.ts"))
-        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "rtsp://iptv.example/live"))
-        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "rtmp://iptv.example/live"))
-        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "file:///sdcard/video.ts"))
-        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "https://user:password@iptv.example/live.ts"))
-        assertFalse(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
-            "https://youtube.com/watch?v=abc"))
-    }
-
     @Test fun boundedHttpChecksAcceptPartialContentAndRejectHtml() {
         assertTrue(BackgroundProbeUrlPolicy.isReachableHttpResponse(200,"video/mp2t"))
         assertTrue(BackgroundProbeUrlPolicy.isReachableHttpResponse(206,"application/octet-stream"))
@@ -136,6 +119,26 @@ class BackgroundProbeUrlPolicyTest {
         )) assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
     }
 
+    @Test fun media3DoesNotAttemptRtmpWithoutOptionalExtension() {
+        assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
+            "rtmp://live.example/app/channel"))
+        assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
+            "rtmp://live.example/app/channel"))
+        assertTrue(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
+            "rtsp://camera.example/live"))
+        assertTrue(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
+            "https://iptv.example/live.m3u8"))
+    }
+
+    @Test fun media3InheritsNativeProbeUrlSafetyChecks() {
+        assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
+            "https://youtube.com/watch?v=123"))
+        assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
+            "rtsp://user:pass@camera.example/live"))
+        assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
+            "ftp://iptv.example/stream"))
+    }
+
     @Test fun libVlcCanDiscoverSecureRtspAndRtmpProtocolVariants() {
         for (url in listOf(
             "rtsps://camera.example:322/live",
@@ -143,6 +146,7 @@ class BackgroundProbeUrlPolicyTest {
             "rtmpt://live.example/app/channel"
         )) {
             assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
+            assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(url))
         }
     }
 
@@ -163,13 +167,14 @@ class BackgroundProbeUrlPolicyTest {
             "https://www.youtube-nocookie.com./embed/abc"
         )) {
             assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
+            assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(url))
         }
     }
 
     @Test fun trailingDotOnOrdinaryStreamHostRemainsAllowed() {
         assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
             "https://iptv.example./live.m3u8"))
-        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+        assertTrue(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
             "https://iptv.example./live.m3u8"))
     }
 
@@ -182,12 +187,13 @@ class BackgroundProbeUrlPolicyTest {
             "https://[::1]:65536/live"
         )) {
             assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
+            assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(url))
         }
         assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
             "https://[::1]:8443/live"))
         assertTrue(BackgroundProbeUrlPolicy.isNativeProbeCandidate(
             "http://iptv.example:8080/live.ts"))
-        assertTrue(BackgroundProbeUrlPolicy.isHttpProbeCandidate(
+        assertTrue(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(
             "http://iptv.example:8080/live.ts"))
     }
 
@@ -198,6 +204,7 @@ class BackgroundProbeUrlPolicyTest {
             "rtmp://live.example:/app/stream"
         )) {
             assertFalse(BackgroundProbeUrlPolicy.isNativeProbeCandidate(url))
+            assertFalse(BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(url))
         }
     }
 

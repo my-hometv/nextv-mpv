@@ -1,0 +1,17 @@
+name: NexTV LibVLC source-build gate tests (no APK)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test consolidated release provenance gate
+        run: python3 -m unittest discover -s tools -p 'test_gate_multi_engine_release.py' -v
+      - name: Test ELF isolation verifier parsing
+        run: python3 -m unittest discover -s tools -p 'test_verify_libvlc_isolation.py' -v
+      - name: Test pinned-source build orchestration without downloading or packaging
+        run: python3 -m unittest discover -s tools -p 'test_build_isolated_libvlc.py' -v

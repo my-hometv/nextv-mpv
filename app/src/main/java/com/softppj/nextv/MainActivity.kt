@@ -7,6 +7,31 @@ import android.view.*
 import android.widget.*
 import android.webkit.*
 import android.net.Uri
+import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.Media as VlcMedia
+import org.videolan.libvlc.MediaPlayer as VlcPlayer
+import androidx.media3.common.MediaItem
+import androidx.media3.common.C
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.DecoderCounters
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.common.AudioAttributes
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.ui.PlayerView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.Brightness
+import androidx.media3.effect.Contrast
+import androidx.media3.effect.HslAdjustment
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
@@ -95,7 +120,7 @@ class MainActivity: Activity() {
             scaleType=ImageView.ScaleType.FIT_CENTER
         },LinearLayout.LayoutParams((160*resources.displayMetrics.density).toInt(),(160*resources.displayMetrics.density).toInt()))
         screen.addView(TextView(this).apply{
-            text="NexTV"
+            text="MyView"
             textSize=32f
             gravity=Gravity.CENTER
             setTextColor(android.graphics.Color.WHITE)
@@ -200,12 +225,7 @@ class MainActivity: Activity() {
             }
         }
     }
-    private var startupTimingStartedAt=0L
-    private var startupTuneStartedAt=0L
-    private fun startupElapsedMs()=android.os.SystemClock.elapsedRealtime()-startupTimingStartedAt
     private fun beginLicensedSession(){
-        startupTimingStartedAt=android.os.SystemClock.elapsedRealtime()
-        HomeTvDiagnostics.i("Startup","License session started")
         if(licenseChecking)return
         val token=prefs.getString("license_token",null)
         if(token.isNullOrBlank()){
@@ -221,7 +241,6 @@ class MainActivity: Activity() {
         val cachedAllowed=cachedStatus.allowed
         licenseChecking=true
         val operation=++licenseOperationGeneration
-        HomeTvDiagnostics.i("Startup","Signed license cache "+if(cachedAllowed)"accepted" else "needs online validation")
         if(cachedAllowed){
             licenseReady=true
             startLicensedApp()
@@ -245,9 +264,7 @@ class MainActivity: Activity() {
                 null
             }catch(e:Exception){null}
             val saved=response?.let{cache.saveVerified(it)} ?: false
-            val licenseNetworkMs=startupElapsedMs()
             runOnUiThread{
-                HomeTvDiagnostics.i("Startup","License network verification finished at "+licenseNetworkMs+" ms from startup")
                 if(operation!=licenseOperationGeneration || isFinishing || isDestroyed)return@runOnUiThread
                 licenseChecking=false
                 if(response!=null && saved){
@@ -293,7 +310,6 @@ class MainActivity: Activity() {
             }
             runOnUiThread{
                 if(operation!=licenseOperationGeneration || !licenseReady || isFinishing || isDestroyed)return@runOnUiThread
-                HomeTvDiagnostics.i("Startup","Cached channels loaded at "+startupElapsedMs()+" ms; count="+cached.size)
                 channels=cached
                 checkEpgTune()
                 // Startup uses saved playlist data immediately. Never block opening
@@ -301,11 +317,8 @@ class MainActivity: Activity() {
                 if(channels.isNotEmpty()){
                     openStartupDestination()
                     // Automatic playlist checks are optional and never delay first picture.
-                    if(!safeStartupMode && prefs.getBoolean("auto_playlist_check",true)){
-                        // Optional refresh must not compete with first video decoding.
-                        // Defer until playback is healthy, or until user reaches home.
-                        scheduleStartupPlaylistRefresh(operation)
-                    }
+                    if(!safeStartupMode && prefs.getBoolean("auto_playlist_check",true))
+                        refresh({},activeOnly=true,automatic=true)
                 } else {
                     // A changed playlist URL has a new cache key. Fetch it on first
                     // launch instead of silently opening an empty Home screen.
@@ -316,24 +329,6 @@ class MainActivity: Activity() {
                 }
             }
         }
-    }
-    private fun scheduleStartupPlaylistRefresh(operation:Int){
-        val initial=android.os.SystemClock.elapsedRealtime()
-        val task=object:Runnable{
-            override fun run(){
-                if(operation!=licenseOperationGeneration || !licenseReady || isFinishing || isDestroyed)return
-                val isLiveStarting=active in channels.indices &&
-                    (mpvPlayer?.hasStarted!=true)
-                val elapsed=android.os.SystemClock.elapsedRealtime()-initial
-                if(isLiveStarting && elapsed<30000L){
-                    handler.postDelayed(this,2000L)
-                    return
-                }
-                HomeTvDiagnostics.i("Startup","Optional playlist refresh started after "+elapsed+" ms")
-                refresh({},activeOnly=true,automatic=true)
-            }
-        }
-        handler.postDelayed(task,5000L)
     }
     private var safeStartupChannelOnePending=false
     private fun openStartupDestination(){
@@ -488,11 +483,14 @@ class MainActivity: Activity() {
             }.setNegativeButton("Cancel",null).show()
     }
 
-    private var mpvPlayer:MpvPlaybackView?=null
-    // A missing optional JNI bridge must be detected once, not retried for every channel.
-    // Do not repeatedly retry a stream that already failed this experimental engine.
+    private var player:ExoPlayer?=null
+    private var activeChannelGainProcessor:ChannelGainAudioProcessor?=null
+    private var vlcCore:LibVLC?=null
+    private var vlcPlayer:VlcPlayer?=null
     // The remote native player has no local VlcPlayer instance. Preserve its
     // identity for confirmation, recovery, settings and teardown.
+    private var isolatedActiveEngineId:String?=null
+    private var vlcAttempted=false
     private val engineAttempts=mutableMapOf<String,MutableSet<String>>()
     private val recoveryAttempts=mutableMapOf<String,Int>()
     private val unavailableChannels=mutableSetOf<String>()
@@ -523,6 +521,7 @@ class MainActivity: Activity() {
     private var alternativeSessionKey:String?=null
     private var playbackGeneration=0
     // Uses a process-wide atomic high-water mark, surviving Activity recreation.
+    private val nativeGenerationAllocator = NativePlaybackGenerationAllocator()
     private var startupWatchdog:Runnable?=null
     private var channelIndexOwner:MutableList<Channel>?=null
     private var channelIndexSize=-1
@@ -562,7 +561,10 @@ class MainActivity: Activity() {
                 BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
                     foregroundKey,foreground?.url,channelKey(candidate),url
                 ) &&
-                    BackgroundProbeUrlPolicy.isHttpProbeCandidate(url)
+                    BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(url) &&
+                    (url.startsWith("http://",true) || url.startsWith("https://",true)) &&
+                    BackgroundProbeUrlPolicy.isNativeProbeCandidate(url) &&
+                    !prefs.getBoolean("libvlc_only_"+hash(url),false)
             }.take(12).toList()
         // One eligible alternate is still worth probing.
         if(queuedChannels.isEmpty())return
@@ -606,7 +608,7 @@ class MainActivity: Activity() {
                                     channelKey(channel),channel.url
                                 )){
                                 probeReachable[channel.url]=reachable
-                                httpProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
+                                media3ProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
                             }
                         }
                     }
@@ -625,6 +627,7 @@ class MainActivity: Activity() {
         var firstUsable:Int?=null
         var savedMatch:Int?=null
         var reachableMatch:Int?=null
+        var vlcMatch:Int?=null
         for(candidate in group){
             val url=channels[candidate].url
             // An explicit manual choice takes precedence, but a previously
@@ -634,20 +637,25 @@ class MainActivity: Activity() {
             if(url in failedUrlsThisSession)continue
             if(firstUsable==null)firstUsable=candidate
             if(savedMatch==null && saved!=null && url==saved)savedMatch=candidate
-            // Reachability is provisional. Only fresh positive HTTP checks
-            // may prioritize an alternative; never interpret it as MPV playback.
-            if(reachableMatch==null &&
+            // Only recent, engine-specific probes may influence automatic source choice.
+            // A stale success must not outrank a currently reachable alternative.
+            if(reachableMatch==null && engineEnabled("Media3") &&
                 probeReachable[url]==true &&
-                AlternativeLinkConfidencePolicy.isFresh(httpProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
+                AlternativeLinkConfidencePolicy.isFresh(media3ProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
                 reachableMatch=candidate
+            if(vlcMatch==null && engineEnabled("LibVLC") &&
+                vlcProbeReachable[url]==true &&
+                AlternativeLinkConfidencePolicy.isFresh(vlcProbeObservedAt[url],now,probeConfidenceMaxAgeMs))
+                vlcMatch=candidate
         }
         // If every source failed during this session, preserve the requested
         // channel instead of silently returning the first failed playlist URL.
         // Prefer recent positive evidence over an older saved URL, while
         // preserving the explicit manual choice handled above.
-        return reachableMatch ?:savedMatch ?:firstUsable ?:index
+        return reachableMatch ?:vlcMatch ?:savedMatch ?:firstUsable ?:index
     }
-    // Preserve generation-aware confirmation for MPV playback and URL recovery.
+    // Compatibility adapter for the unchanged V6 LibVLC playback implementation.
+    // NexTV's Media3 path retain their generation-aware confirmation API.
     private fun rememberWorking(c:Channel){
         rememberWorking(c,playbackGeneration)
     }
@@ -659,7 +667,7 @@ class MainActivity: Activity() {
                 c.url,channels.getOrNull(active)?.url,
                 videoScreen!=null,playbackTeardownInProgress
             ))return
-        val confirmedEngine="MPV"
+        val confirmedEngine=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
         if(HomeTvPolicies.mayCommitAlternative(
                 pendingAlternativeGeneration,playbackGeneration,
                 pendingAlternativeKey,channelKey(c),
@@ -681,10 +689,8 @@ class MainActivity: Activity() {
         dismissAlternativePrompt(channelKey(c))
         recoveryAttempts.remove(channelKey(c))
         playedThisSession.add(channelKey(c))
-        // The software escape hatch is for the initial tune only. Once MPV
-        // actually plays, future sessions start from the saved decoder choice.
-        mpvSoftwareFallbackActive.remove(channelKey(c))
-        mpvSoftwareFallbackAttempted.remove(channelKey(c))
+        recordStartup(c,true)
+        providerBusyAttempts.keys.removeAll{it.startsWith(channelKey(c)+"|")}
         recoveryPrompted.remove(channelKey(c))
         failedUrlsThisSession.remove(c.url)
         // A confirmed playing event starts a fresh alternative-fallback cycle.
@@ -721,7 +727,7 @@ class MainActivity: Activity() {
                 .apply()
         }
         // Record the player that actually reached playback, not a pending fallback hint.
-        val engine="MPV"
+        val engine=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
         // Keep the confirmed engine paired with the URL that actually played.
         // A manually pinned URL must not be silently replaced by a tested alternative.
         val confirmedKey=channelKey(c)
@@ -733,6 +739,14 @@ class MainActivity: Activity() {
                 .apply()
         }
         initialTried.remove(channelKey(c))
+        if(engine=="Media3"){
+            probeReachable[c.url]=true
+            prefs.edit().putBoolean("media3_verified_"+hash(c.url),true)
+                .remove("libvlc_only_"+hash(c.url)).apply()
+        }else if(engine=="LibVLC"){
+            // Keep the proven working engine for this URL across channel changes/restarts.
+            prefs.edit().putBoolean("libvlc_only_"+hash(c.url),true).apply()
+        }
         engineAttempts.remove(c.url)
         // Preserve a user's explicit stream choice until they change it.
         // Automatically confirmed alternatives remain usable as fallbacks,
@@ -748,6 +762,7 @@ class MainActivity: Activity() {
     private val unlockedGroupsThisSession=mutableSetOf<String>()
     private var unlockedChannel:String?=null
     private var videoScreen:FrameLayout?=null
+    private var currentPlayerView:PlayerView?=null
     private val handler=Handler(Looper.getMainLooper())
     // Main-thread playback teardown is reentrant when native players dispatch callbacks.
     private var playbackTeardownInProgress=false
@@ -763,6 +778,186 @@ class MainActivity: Activity() {
     private var banner:View?=null
     private var bannerTask:Runnable?=null
     private var clockTask:Runnable?=null
+    // Observed starts are historical, not predicted probability. One event per attempt.
+    private val observedStartAttempts=mutableSetOf<String>()
+    private val providerBusyAttempts=mutableMapOf<String,Int>()
+    private var changedVodDisplayMode=false
+    private var multiViewDialog:AlertDialog?=null
+    private val multiViewPlayers=mutableListOf<ExoPlayer>()
+    private fun releaseMultiView(){
+        multiViewPlayers.toList().forEach{
+            try{it.stop();it.release()}catch(e:Exception){
+                HomeTvDiagnostics.w("MyView","MultiView release",e)
+            }
+        }
+        multiViewPlayers.clear()
+    }
+    private fun chooseMultiView(){
+        if(!prefs.getBoolean("myview_multiview_enabled",true)){
+            Toast.makeText(this,"Enable MultiView in MyView Feature Controls",Toast.LENGTH_LONG).show()
+            return
+        }
+        if(!licenseReady){
+            Toast.makeText(this,"Activate MyView to use MultiView",Toast.LENGTH_LONG).show()
+            return
+        }
+        showSideDialog(AlertDialog.Builder(this).setTitle("MyView MultiView")
+            .setItems(arrayOf("2 channels (recommended)","4 channels (device permitting)")){_,which->
+                openMultiView(if(which==0)2 else 4)
+            }.setNegativeButton("Cancel",null).create())
+    }
+    private fun openMultiView(requested:Int){
+        if(!prefs.getBoolean("myview_multiview_enabled",true))return
+        if(requested !in setOf(2,4))return
+        if(!licenseReady || multiViewDialog!=null || playbackTeardownInProgress)return
+        val options=surfingIndices().filter{it in channels.indices &&
+            !isLocked(channels[it]) && !isManuallyHidden(channels[it])}
+        if(options.isEmpty()){
+            Toast.makeText(this,"No unlocked visible channels for MultiView",Toast.LENGTH_LONG).show()
+            return
+        }
+        val first=if(active in options)active else options.first()
+        // Multiple alternative URLs for one logical channel must not occupy
+        // several decoder slots. Preserve the selected playlist's surfing order.
+        val indices=MultiViewSelectionPolicy.select(options,first,requested){
+            channelKey(channels[it])
+        }
+        stopPlayback()
+        releaseMultiView()
+        val panel=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(tvDp(8),tvDp(8),tvDp(8),tvDp(8))
+            setBackgroundColor(0xFF091421.toInt())
+        }
+        val audioLabels=mutableListOf<TextView>()
+        indices.chunked(2).forEach{group->
+            val row=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+            group.forEach{index->
+                val channel=channels[index]
+                val cell=FrameLayout(this).apply{
+                    isFocusable=true
+                    isClickable=true
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                }
+                val title=TextView(this).apply{
+                    text=channel.name.take(35)
+                    setTextColor(android.graphics.Color.WHITE)
+                    setBackgroundColor(0x99000000.toInt())
+                    setPadding(tvDp(8),tvDp(3),tvDp(8),tvDp(3))
+                    textSize=12f
+                    isFocusable=false
+                }
+                audioLabels.add(title)
+                var cellPlayer:ExoPlayer?=null
+                try{
+                    val factory=DefaultHttpDataSource.Factory()
+                        .setConnectTimeoutMs(7000).setReadTimeoutMs(9000)
+                        .setAllowCrossProtocolRedirects(true)
+                        .setDefaultRequestProperties(channel.headers)
+                    val exo=ExoPlayer.Builder(this)
+                        .setMediaSourceFactory(mediaSourceFactoryForStreams(factory)).build()
+                    multiViewPlayers.add(exo)
+                    cellPlayer=exo
+                    exo.setAudioAttributes(AudioAttributes.DEFAULT,false)
+                    exo.volume=if(multiViewPlayers.size==1)1f else 0f
+                    val view=PlayerView(this).apply{
+                        player=exo
+                        useController=false
+                        resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                    cell.addView(view,FrameLayout.LayoutParams(-1,-1))
+                    exo.addListener(object:Player.Listener{
+                        override fun onPlayerError(error:PlaybackException){
+                            if(exo in multiViewPlayers)title.text=channel.name.take(30)+" • unavailable"
+                        }
+                    })
+                    exo.setMediaItem(mediaItemForStream(channel.url))
+                    exo.prepare()
+                    exo.play()
+                }catch(e:Exception){
+                    cellPlayer?.let { failed ->
+                        multiViewPlayers.remove(failed)
+                        try{failed.release()}catch(_:Exception){}
+                    }
+                    cellPlayer=null
+                    title.text=channel.name.take(30)+" • unavailable"
+                    HomeTvDiagnostics.w("MyView","MultiView source failed",e)
+                }
+                cell.addView(title,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
+                cell.setOnClickListener{
+                    // Bind audio selection to the actual decoder, not the cell
+                    // position: a failed decoder must not shift audio mapping.
+                    val chosen=cellPlayer
+                    if(chosen!=null && chosen in multiViewPlayers){
+                        multiViewPlayers.forEach{exo->exo.volume=if(exo===chosen)1f else 0f}
+                        audioLabels.forEach{label->label.alpha=if(label===title)1f else 0.72f}
+                        Toast.makeText(this,"Audio: "+channel.name,Toast.LENGTH_SHORT).show()
+                    }else Toast.makeText(this,"This screen is unavailable",Toast.LENGTH_SHORT).show()
+                }
+                cell.setOnFocusChangeListener{v,focused->v.alpha=if(focused)1f else 0.94f}
+                row.addView(cell,LinearLayout.LayoutParams(0,tvDp(if(requested==4)170 else 235),1f).apply{
+                    setMargins(tvDp(3),tvDp(3),tvDp(3),tvDp(3))
+                })
+            }
+            panel.addView(row)
+        }
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("MyView MultiView • "+indices.size+" channels")
+            .setView(panel)
+            .setMessage("Select a screen for its audio. Press Back to close. Simultaneous playback depends on your TV decoders.")
+            .setPositiveButton("Close",null).create()
+        multiViewDialog=dialog
+        dialog.setOnDismissListener{
+            multiViewDialog=null
+            releaseMultiView()
+            if(appInForeground && !isFinishing && !isDestroyed)showHome()
+        }
+        dialog.show()
+        panel.post{(panel.getChildAt(0) as? LinearLayout)?.getChildAt(0)?.requestFocus()}
+    }
+    private fun startupRate(c:Channel):String{
+        val key=hash(c.url)
+        return ChannelHealth.label(prefs.getInt("myview_start_ok_"+key,0),
+            prefs.getInt("myview_start_fail_"+key,0))
+    }
+    private fun recordStartup(c:Channel,ok:Boolean){
+        val engine=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
+        val key=playbackGeneration.toString()+"|"+c.url+"|"+engine
+        if(!observedStartAttempts.add(key))return
+        if(observedStartAttempts.size>2000)observedStartAttempts.clear()
+        val pref=(if(ok)"myview_start_ok_" else "myview_start_fail_")+hash(c.url)
+        prefs.edit().putInt(pref,(prefs.getInt(pref,0)+1).coerceAtMost(100000)).apply()
+    }
+    private fun isDirectVod(c:Channel):Boolean{
+        if(c.mediaType !in setOf("movie","series"))return false
+        val path=try{Uri.parse(c.url).path.orEmpty().lowercase(java.util.Locale.ROOT)}
+            catch(_:Exception){return false}
+        return path.endsWith(".mp4") || path.endsWith(".m4v")
+    }
+    private fun matchVodRefreshRate(exo:ExoPlayer,c:Channel){
+        if(!prefs.getBoolean("myview_match_vod_refresh",false) || !isDirectVod(c) ||
+            android.os.Build.VERSION.SDK_INT<23)return
+        val fps=exo.videoFormat?.frameRate ?:return
+        val display=windowManager.defaultDisplay
+        val mode=display.mode
+        val choice=FrameRateMatchPolicy.select(true,true,fps,
+            FrameRateMatchPolicy.Mode(mode.modeId,mode.physicalWidth,mode.physicalHeight,mode.refreshRate),
+            display.supportedModes.map{
+                FrameRateMatchPolicy.Mode(it.modeId,it.physicalWidth,it.physicalHeight,it.refreshRate)
+            }) ?:return
+        if(window.attributes.preferredDisplayModeId==choice.id)return
+        try{
+            window.attributes=window.attributes.apply{preferredDisplayModeId=choice.id}
+            changedVodDisplayMode=true
+        }catch(e:Exception){HomeTvDiagnostics.w("MyView","Refresh match unavailable",e)}
+    }
+    private fun restoreVodRefreshRate(){
+        if(!changedVodDisplayMode)return
+        changedVodDisplayMode=false
+        if(android.os.Build.VERSION.SDK_INT>=23)
+            try{window.attributes=window.attributes.apply{preferredDisplayModeId=0}}
+            catch(e:Exception){HomeTvDiagnostics.w("MyView","Refresh restoration unavailable",e)}
+    }
     private var fallbackAttempted=mutableSetOf<String>()
     // Viewer-specific preferences; license, playlists and parental restrictions remain shared.
     private fun viewerId():String=prefs.getString("active_viewer","default")?.takeIf{it=="default" || it.matches(Regex("[A-Za-z0-9 _-]{1,24}"))} ?: "default"
@@ -1003,24 +1198,24 @@ class MainActivity: Activity() {
         val key=channelKey(channel)
         val confirmed=prefs.getString("working_url_"+key,null)==channel.url &&
             prefs.getString("confirmed_engine_"+key,null)==engine
-        val observedAt=httpProbeObservedAt[channel.url]
+        val observedAt=when(engine){
+            "Media3"->media3ProbeObservedAt[channel.url]
+            "LibVLC"->vlcProbeObservedAt[channel.url]
+            else->null
+        }
         val fresh=AlternativeLinkConfidencePolicy.isFresh(
             observedAt,android.os.SystemClock.elapsedRealtime(),probeConfidenceMaxAgeMs
         )
-        val probe=if(fresh)probeReachable[channel.url] else null
+        val probe=if(!fresh)null else when(engine){
+            "Media3"->probeReachable[channel.url]
+            "LibVLC"->vlcProbeReachable[channel.url]
+            else->null
+        }
         return AlternativeLinkConfidencePolicy.score(confirmed,probe)
     }
-    private fun mpvAlternativeScore(channel:Channel):Int?{
-        if(channel.url in failedUrlsThisSession)return null
-        val key=channelKey(channel)
-        val confirmed=prefs.getString("working_url_"+key,null)==channel.url &&
-            prefs.getString("confirmed_engine_"+key,null)=="MPV"
-        val fresh=AlternativeLinkConfidencePolicy.isFresh(
-            httpProbeObservedAt[channel.url],
-            android.os.SystemClock.elapsedRealtime(),probeConfidenceMaxAgeMs
-        )
-        val probe=if(fresh)probeReachable[channel.url] else null
-        return AlternativeLinkConfidencePolicy.score(confirmed,probe)
+    private fun alternativeEngineConfidence(channel:Channel,engine:String):String{
+        if(!engineEnabled(engine))return "Off"
+        return alternativeEngineScore(channel,engine)?.let{it.toString()+"%"} ?: "Not tested"
     }
     private fun selectAlternative(index:Int){
         val returnToPlaybackDrawer=videoScreen?.findViewWithTag<View>("settings_drawer")!=null
@@ -1035,7 +1230,13 @@ class MainActivity: Activity() {
         val key=channelKey(channels[index])
         // Recommend only from observed evidence. An untested stream must
         // never receive an invented percentage or a "best" badge.
-        val scoredOptions=options.map { i -> mpvAlternativeScore(channels[i]) }
+        val scoredOptions=options.map{i->
+            AlternativeLinkConfidencePolicy.eligibleScore(
+                channels[i].url in failedUrlsThisSession,
+                alternativeEngineScore(channels[i],"Media3"),
+                alternativeEngineScore(channels[i],"LibVLC")
+            )
+        }
         val recommended=AlternativeLinkConfidencePolicy.recommendedIndex(
             scoredOptions,options.indexOf(active)
         )
@@ -1043,7 +1244,8 @@ class MainActivity: Activity() {
             options.mapIndexed{n,i->
                 "Stream "+(n+1)+(if(i==active)"  •  Playing" else "")+
                     (if(n==recommended)"  •  Best checked" else "")+
-                    "\nMPV: "+(scoredOptions[n]?.let { "$it% (estimate)" } ?: "Not tested")
+                    "\nMedia3: "+alternativeEngineConfidence(channels[i],"Media3")+
+                    "   |   LibVLC: "+alternativeEngineConfidence(channels[i],"LibVLC")
             }
         val dialog=AlertDialog.Builder(this).setTitle(channels[index].name+" — Alternative streams")
             .setItems(labels.toTypedArray()){_,choice->
@@ -1182,26 +1384,20 @@ class MainActivity: Activity() {
         if(index !in channels.indices || active!=index || videoScreen!==screen)return
         val c=channels[index]
         val key=channelKey(c)
-        if(MpvPlaybackPolicy.isEstablishedStream(
-                prefs.getString("working_url_"+key,null),
-                prefs.getString("manual_url_"+key,null),
-                key in playedThisSession))return
+        if(prefs.contains("confirmed_engine_"+key) &&
+            !prefs.getString("working_url_"+key,null).isNullOrBlank())return
         if(failurePromptKey==key || prefs.getBoolean("first_failure_prompted_"+key,false))return
         failurePromptKey=key
         // Prompt only once per channel identity, even after an app restart.
         prefs.edit().putBoolean("first_failure_prompted_"+key,true).apply()
         val dialog=AlertDialog.Builder(this)
             .setTitle(c.name+" — no playable source found")
-            .setMessage("No available MPV stream started on this first attempt. What would you like to do?")
+            .setMessage("All URL and player combinations failed on this first attempt. What would you like to do?")
             .setPositiveButton("Retry all"){_,_->
                 failurePromptKey=null
                 recoveryPrompted.remove(key)
                 initialTried.remove(key)
                 recoveryAttempts.remove(channelKey(c))
-                // "Retry all" is an explicit fresh attempt: re-enable the
-                // bounded automatic software decoder fallback for this channel.
-                mpvSoftwareFallbackActive.remove(key)
-                mpvSoftwareFallbackAttempted.remove(key)
                 fallbackEngineOverride=null
                 if(active==index && videoScreen===screen)playIndex(preferredChannel(index))
             }
@@ -1239,73 +1435,347 @@ class MainActivity: Activity() {
         alternativePromptKey=null
         try{dialog?.dismiss()}catch(_:Exception){}
     }
-    // Keep recovery state across a same-channel reconnect, but do not
-    // retain decoder cancellation callbacks: MPV does not launch such probes.
+    private val alternativeProbeStops=mutableMapOf<String,()->Unit>()
+    // A same-channel reconnect must not destroy its independent alternative scan.
     private var preservingRecoveryScan=false
     private var recoveryScanSession=0L
+    private var cancellingAlternativeChecks=false
     private fun cancelAlternativeBackgroundChecks(){
+        // Cancellation callbacks may schedule a fallback engine. Suppress that
+        // handoff during full teardown, but allow it for engine-only disable.
+        val stops=alternativeProbeStops.values.toList()
+        alternativeProbeStops.clear()
         failureSearches.clear()
-    }
-    // MPV-only recovery offers unverified alternatives without claiming they
-    // have been decoded or tested; foreground MPV confirms playback.
-    private fun offerMpvAlternative(index:Int, screen:FrameLayout) {
-        val original=channels.getOrNull(index) ?: return
-        if(active!=index || videoScreen!==screen || !licenseReady ||
-            mpvPlayer?.hasStarted==true) return
-        val generationAtOffer=playbackGeneration
-        val key=channelKey(original)
-        if(key in failureSearches || alternativePromptKey==key) return
-        val candidate=alternateIndices(index).firstOrNull {
-            it!=index && channels.getOrNull(it)?.url!=original.url &&
-                channels.getOrNull(it)?.url !in failedUrlsThisSession
-        } ?: return
-        val target=channels[candidate]
-        if(!failureSearches.add(key)) return
-        val dialog=AlertDialog.Builder(this)
-            .setTitle("Try another stream?")
-            .setMessage(original.name+" has another URL. This URL has not yet been verified by MPV.")
-            .setPositiveButton("Try"){_,_->
-                if(active!=index || videoScreen!==screen ||
-                    playbackGeneration!=generationAtOffer || mpvPlayer?.hasStarted==true ||
-                    channels.getOrNull(index)!==original ||
-                    channels.getOrNull(candidate)!==target || !licenseReady) {
-                    showBanner("Channel list changed; retry recovery",true)
-                    return@setPositiveButton
-                }
-                recoveryPending.remove(key)
-                pendingAlternativeKey=key
-                pendingAlternativeUrl=target.url
-                pendingAlternativeEngine="MPV"
-                pendingAlternativeGeneration=-1
-                fallbackEngineOverride=null
-                recoveryAttempts.remove(key)
-                playIndex(candidate)
-            }
-            .setNegativeButton("Keep current",null)
-            .create()
-        alternativePrompt=dialog
-        alternativePromptKey=key
-        dialog.setOnDismissListener {
-            failureSearches.remove(key)
-            if(alternativePrompt===dialog) {
-                alternativePrompt=null
-                alternativePromptKey=null
-            }
+        cancellingAlternativeChecks=true
+        try{
+            stops.forEach{stop->try{stop()}catch(e:Exception){
+                HomeTvDiagnostics.w("SmartPlay","Alternative probe cancellation failed",e)
+            }}
+        }finally{
+            cancellingAlternativeChecks=false
         }
-        dialog.show()
+    }
+    private fun cancelDisabledEngineProbes(){
+        // Iterate a snapshot because a stop callback unregisters its engine.
+        alternativeProbeStops.filterKeys{!engineEnabled(it)}
+            .values.toList().forEach{stop->
+                try{stop()}catch(e:Exception){
+                    HomeTvDiagnostics.w("SmartPlay","Disabled engine probe cancellation failed",e)
+                }
+            }
     }
     private fun checkFailedChannelAlternatives(index:Int,screen:FrameLayout){
-        // Do not interrupt a previously working channel with a speculative
-        // alternative prompt during a temporary stall or decoder restart.
-        // Initial unconfirmed channels can still offer a manual alternative.
-        val c=channels.getOrNull(index) ?:return
+        if(index !in channels.indices || active!=index || videoScreen!==screen)return
+        if(!engineEnabled("Media3") && !engineEnabled("LibVLC"))return
+        val c=channels[index]
         val key=channelKey(c)
-        if(mpvPlayer?.hasStarted==true || recoveryPending.contains(key) ||
-            MpvPlaybackPolicy.isEstablishedStream(
-                prefs.getString("working_url_"+key,null),
-                prefs.getString("manual_url_"+key,null),
-                key in playedThisSession))return
-        offerMpvAlternative(index,screen)
+        if(!failureSearches.add(key))return
+        // Probe alternative URLs engine-first: all URLs on Media3, then all
+        val candidates=alternateIndices(index).asSequence()
+            .filter{it!=index && channels[it].url!=c.url}
+            .distinctBy{channels[it].url}
+            .filter{candidate->
+                val url=channels[candidate].url.lowercase(java.util.Locale.ROOT)
+                (url.startsWith("http://") || url.startsWith("https://")) &&
+                    !url.contains("youtube.com") && !url.contains("youtu.be")
+            }.take(12).toList()
+        if(candidates.isEmpty()){failureSearches.remove(key);return}
+        val sourceUrl=c.url
+        // Capture candidate identities: a playlist refresh can reorder or
+        // replace channel indices while an asynchronous decoder is probing.
+        val candidateUrls=candidates.associateWith{channels[it].url}
+        val candidateIdentities=candidates.associateWith{channels[it]}
+        // The source and candidates are a single snapshot. A refresh may
+        // reorder indices while retaining the same selected source URL.
+        val sourceIdentity=c
+        val scanSession=recoveryScanSession
+        fun stillCurrent():Boolean=
+            (engineEnabled("Media3") || engineEnabled("LibVLC")) &&
+            recoveryScanSession==scanSession && videoScreen===screen &&
+            active==index && active in channels.indices && channelKey(channels[active])==key &&
+                channels[active]===sourceIdentity &&
+                channels[active].url==sourceUrl && licenseReady && !isFinishing && !isDestroyed
+        fun done(){failureSearches.remove(key)}
+        fun offer(candidate:Int,engine:String):Boolean{
+            if(!stillCurrent() || !engineEnabled(engine) || key !in recoveryPending ||
+                channels.getOrNull(candidate)!==candidateIdentities[candidate] ||
+                channels.getOrNull(candidate)?.url!=candidateUrls[candidate])return false
+            done()
+            dismissAlternativePrompt(key)
+            val dialog=AlertDialog.Builder(this)
+                .setTitle("Alternative stream available")
+                .setMessage(c.name+" — "+engine+". Switch stream?")
+                .setPositiveButton("Switch"){_,_->
+                    if(!stillCurrent() || !engineEnabled(engine) ||
+                        key !in recoveryPending ||
+                        (channels.getOrNull(candidate)!==candidateIdentities[candidate] ||
+                            channels.getOrNull(candidate)?.url!=candidateUrls[candidate])){
+                        showBanner("Alternative stream changed; retry channel recovery",true)
+                        return@setPositiveButton
+                    }
+                    val target=channels[candidate]
+                    recoveryPending.remove(key)
+                    // Do not persist a background-probed candidate as a
+                    // manual preference until its foreground playback confirms.
+                    pendingAlternativeKey=key
+                    pendingAlternativeUrl=target.url
+                    pendingAlternativeEngine=engine
+                    pendingAlternativeGeneration=-1
+                    fallbackEngineOverride=null
+                    recoveryAttempts.remove(key)
+                    playIndex(candidate)
+                }
+                .setNegativeButton("Keep current",null)
+                .create()
+            alternativePrompt=dialog
+            alternativePromptKey=key
+            dialog.setOnDismissListener{
+                if(alternativePrompt===dialog){
+                    alternativePrompt=null
+                    alternativePromptKey=null
+                }
+            }
+            dialog.show()
+            dialog.window?.apply{
+                setGravity(android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL)
+                setDimAmount(0f)
+                addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
+            }
+            // Keep the offer visible until the viewer decides, the original
+            // stream recovers, or the channel session ends.
+            return true
+        }
+
+        val pending=java.util.ArrayDeque<Int>()
+        candidates.forEach{pending.addLast(it)}
+        val activeProbes=mutableMapOf<Int,ExoPlayer>()
+        val watchdogs=mutableMapOf<Int,Runnable>()
+        val completed=mutableSetOf<Int>()
+        var media3Finished=0
+        var resolved=false
+        var vlcPosition=0
+        var vlcStarted=false
+        var searchCancelled=false
+        var stopThisMedia3Probe:(()->Unit)?=null
+
+        fun stopMedia3Probes(){
+            watchdogs.values.forEach{handler.removeCallbacks(it)}
+            watchdogs.clear()
+            activeProbes.values.toList().forEach{probe->
+                try{probe.stop()}catch(_:Exception){}
+                try{probe.release()}catch(_:Exception){}
+            }
+            activeProbes.clear()
+            // A delayed callback from this scan must not unregister the
+            // cancellation handle installed by a newer channel scan.
+            if(alternativeProbeStops["Media3"]===stopThisMedia3Probe)
+                alternativeProbeStops.remove("Media3")
+        }
+        stopThisMedia3Probe={
+            searchCancelled=true
+            resolved=true
+            stopMedia3Probes()
+            pending.clear()
+            // Disabling Media3 must not strand this channel in failureSearches.
+            // Release the old search reservation and let the still-enabled
+            // LibVLC engine restart recovery on the same failed channel.
+            done()
+            if(!cancellingAlternativeChecks && engineEnabled("LibVLC")){
+                handler.post{
+                    if(!cancellingAlternativeChecks && active==index &&
+                        videoScreen===screen && stillCurrent() &&
+                        key !in failureSearches && key in recoveryPending)
+                        checkFailedChannelAlternatives(index,screen)
+                }
+            }
+        }
+
+        alternativeProbeStops["Media3"]=stopThisMedia3Probe!!
+
+        var launchMoreMedia3:(()->Unit)?=null
+        var launchNextVlc:(()->Unit)?=null
+
+        launchNextVlc={
+            // Media3 has finished its entire engine-first pass. Unregister its
+            // stop callback before LibVLC begins, otherwise disabling Media3
+            // later can cancel an unrelated active LibVLC scan.
+            if(!resolved && !searchCancelled && activeProbes.isEmpty())
+                stopMedia3Probes()
+            if(resolved || searchCancelled){
+                Unit
+            }else if(!stillCurrent()){
+                resolved=true
+                done()
+            }else if(!engineEnabled("LibVLC") || vlcPosition>=candidates.size){
+                resolved=true
+                done()
+            }else{
+                vlcStarted=true
+                val candidate=candidates[vlcPosition++]
+                val target=channels.getOrNull(candidate)
+                if(target==null || target!==candidateIdentities[candidate] ||
+                    target.url!=candidateUrls[candidate]){
+                    // Candidate was replaced by a playlist refresh.
+                    handler.post{launchNextVlc?.invoke()}
+                }else{
+                    android.util.Log.i("HomeTV","Alternative probe: LibVLC "+(vlcPosition)+"/"+candidates.size+" for "+c.name)
+                    probeAlternativeVlc(candidate,target,::offer){launchNextVlc?.invoke()}
+                }
+            }
+        }
+
+        fun finishMedia3(candidate:Int,working:Boolean){
+            if(resolved || searchCancelled || !completed.add(candidate))return
+            watchdogs.remove(candidate)?.let{handler.removeCallbacks(it)}
+            activeProbes.remove(candidate)?.let{probe->
+                try{probe.stop()}catch(_:Exception){}
+                try{probe.release()}catch(_:Exception){}
+            }
+            media3Finished++
+            if(working && stillCurrent() && engineEnabled("Media3") &&
+                channels.getOrNull(candidate)===candidateIdentities[candidate] &&
+                channels.getOrNull(candidate)?.url==candidateUrls[candidate]){
+                android.util.Log.i("HomeTV","Alternative probe found Media3 playback for "+channels[candidate].name)
+                stopMedia3Probes()
+                if(offer(candidate,"Media3")){
+                    resolved=true
+                    return
+                }
+                // The candidate was invalidated before its offer could be
+                // shown; allow the remaining engine's candidates to run.
+                launchNextVlc?.invoke()
+                return
+            }
+            if(!stillCurrent()){
+                resolved=true
+                stopMedia3Probes()
+                done()
+                return
+            }
+            launchMoreMedia3?.invoke()
+            if(!vlcStarted && pending.isEmpty() && activeProbes.isEmpty() && media3Finished>=candidates.size){
+                // Only after every candidate has failed Media3 do we try LibVLC.
+                android.util.Log.i("HomeTV","All alternate Media3 probes failed; starting LibVLC checks for "+c.name)
+                launchNextVlc?.invoke()
+            }
+        }
+
+        launchMoreMedia3={
+            if(!resolved && stillCurrent() && engineEnabled("Media3")){
+            // Test URL 1, URL 2, ... on Media3 before switching to LibVLC.
+            // One decoder at a time avoids resource spikes on Android TV.
+            while(engineEnabled("Media3") && activeProbes.size<1 && pending.isNotEmpty()){
+                val candidate=pending.removeFirst()
+                val target=channels.getOrNull(candidate)
+                if(target==null || target!==candidateIdentities[candidate] ||
+                    target.url!=candidateUrls[candidate]){
+                    // Do not probe a different stream under a stale index.
+                    media3Finished++
+                    continue
+                }
+                try{
+                    val factory=DefaultHttpDataSource.Factory()
+                        .setAllowCrossProtocolRedirects(true)
+                        .setConnectTimeoutMs(3500).setReadTimeoutMs(4500)
+                        .setDefaultRequestProperties(target.headers)
+                    val exo=ExoPlayer.Builder(this)
+                        .setMediaSourceFactory(mediaSourceFactoryForStreams(factory)).build()
+                    activeProbes[candidate]=exo
+                    exo.volume=0f
+                    exo.addListener(object:Player.Listener{
+                        override fun onIsPlayingChanged(isPlaying:Boolean){
+                            if(isPlaying)handler.post{finishMedia3(candidate,true)}
+                        }
+                        override fun onPlaybackStateChanged(state:Int){
+                            if(state==Player.STATE_ENDED)handler.post{finishMedia3(candidate,false)}
+                        }
+                        override fun onPlayerError(error:PlaybackException){
+                            handler.post{finishMedia3(candidate,false)}
+                        }
+                    })
+                    val watchdog=Runnable{finishMedia3(candidate,false)}
+                    watchdogs[candidate]=watchdog
+                    handler.postDelayed(watchdog,7000L)
+                    exo.setMediaItem(mediaItemForStream(target.url))
+                    exo.prepare()
+                    exo.play()
+                    android.util.Log.i("HomeTV","Alternative probe: Media3 "+(media3Finished+activeProbes.size)+"/"+candidates.size+" for "+c.name)
+                }catch(e:Exception){
+                    HomeTvDiagnostics.w("HomeTV","Alternative Media3 probe failed for "+target.name,e)
+                    handler.post{finishMedia3(candidate,false)}
+                }
+            }
+            if(!vlcStarted && pending.isEmpty() && activeProbes.isEmpty() && media3Finished>=candidates.size && !resolved){
+                launchNextVlc?.invoke()
+            }
+            }
+        }
+        if(!stillCurrent()){done();return}
+        if(engineEnabled("Media3"))launchMoreMedia3?.invoke()
+        else launchNextVlc?.invoke()
+    }
+    private fun probeAlternativeVlc(
+        candidate:Int,target:Channel,
+        offer:(Int,String)->Boolean,next:()->Unit
+    ){
+        if(!engineEnabled("LibVLC")){next();return}
+        var core:LibVLC?=null
+        var probe:VlcPlayer?=null
+        var finished=false
+        var watchdog:Runnable?=null
+        var stopThisProbe:(()->Unit)?=null
+        fun finish(working:Boolean){
+            if(finished)return
+            finished=true
+            watchdog?.let{handler.removeCallbacks(it)}
+            // A late native callback from a previous probe must never remove
+            // the cancellation handle of a newer LibVLC recovery probe.
+            if(alternativeProbeStops["LibVLC"]===stopThisProbe)
+                alternativeProbeStops.remove("LibVLC")
+            // Stop and release independently: a native stop exception must not
+            // strand the player or its LibVLC core during recovery handoff.
+            try{probe?.stop()}catch(_:Exception){}
+            try{probe?.release()}catch(_:Exception){}
+            try{core?.release()}catch(_:Exception){}
+            probe=null
+            core=null
+            // A positive native callback is not necessarily an actionable
+            // alternative: playlist refresh or engine settings may invalidate
+            // the candidate before the offer is displayed. Continue scanning.
+            val offered=working && engineEnabled("LibVLC") && licenseReady &&
+                !isFinishing && !isDestroyed && offer(candidate,"LibVLC")
+            if(!offered)handler.post{next()}
+        }
+        stopThisProbe={finish(false)}
+        alternativeProbeStops["LibVLC"]=stopThisProbe!!
+        try{
+            if(!engineEnabled("LibVLC")){finish(false);return}
+            val vlc=LibVLC(this,arrayListOf("--no-audio","--no-video","--network-caching=1200"))
+            core=vlc
+            val p=VlcPlayer(vlc)
+            probe=p
+            p.setEventListener{event->
+                when(event.type){
+                    VlcPlayer.Event.Playing->handler.post{finish(true)}
+                    VlcPlayer.Event.EncounteredError,VlcPlayer.Event.EndReached->
+                        handler.post{finish(false)}
+                }
+            }
+            val media=VlcMedia(vlc,Uri.parse(target.url))
+            try{
+                media.addOption(":no-audio")
+                media.addOption(":no-video")
+                HomeTvPolicies.libVlcHttpHeaderOptions(target.headers).forEach{media.addOption(it)}
+                p.media=media
+            }finally{
+                // Media construction and header application can throw; never
+                // leak the native media object during a failed probe.
+                media.release()
+            }
+            watchdog=Runnable{finish(false)}
+            handler.postDelayed(watchdog!!,7000L)
+            p.play()
+        }catch(e:Exception){HomeTvDiagnostics.w("HomeTV","Alternative VLC probe failed",e);finish(false)}
     }
     private var testingAlternativeKey:String?=null
     // Once a channel has played successfully, the URL and engine are pinned.
@@ -1321,11 +1791,9 @@ class MainActivity: Activity() {
         // Keep the retry paused while settings is open, but never leave an
         // abandoned callback polling indefinitely after a remote is left idle.
         var settingsWaits=0
-        val channelAtSchedule=channels.getOrNull(index) ?: return
         val task=object:Runnable{
             override fun run(){
                 if(active!=index || videoScreen!==screen ||
-                    channels.getOrNull(index)!==channelAtSchedule ||
                     playbackGeneration!=generation || playbackTeardownInProgress ||
                     retryTask!==this)return
                 if(screen.findViewWithTag<View>("settings_drawer")!=null){
@@ -1348,8 +1816,9 @@ class MainActivity: Activity() {
     private fun handleEngineFailure(index:Int,screen:FrameLayout):Boolean{
         if(index !in channels.indices || active!=index || videoScreen!==screen ||
             playbackTeardownInProgress)return true
-        // An MPV watchdog and native callback may report the same failure.
-        // Do not schedule duplicate recovery for one playback generation.
+        // Media3 and LibVLC can report the same failure through both a
+        // startup watchdog and a native callback. Do not count or schedule it
+        // again while the first recovery is already pending.
         if(retryTask!=null || networkRecoveryTask!=null)return true
         if(safeStartupChannelOnePending){
             safeStartupChannelOnePending=false
@@ -1368,14 +1837,13 @@ class MainActivity: Activity() {
         }
         val c=channels[index]
         val key=channelKey(c)
-        val current="MPV"
-        // The MPV edition has only one native engine. Older app data may
-        // retain a confirmed URL without an engine pin, and foreground playback
-        // can be established before asynchronous preferences are observed.
-        val established=MpvPlaybackPolicy.isEstablishedStream(
-            prefs.getString("working_url_"+key,null),
-            prefs.getString("manual_url_"+key,null),
-            key in playedThisSession)
+        val current=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
+        val pinnedUrl=prefs.getString("manual_url_"+key,null)
+            ?:prefs.getString("working_url_"+key,null)
+        val pinnedEngine=prefs.getString("manual_engine_"+key,null)
+            ?:prefs.getString("confirmed_engine_"+key,null)
+        val established=ChannelFailurePolicy.hasEstablishedPlayback(
+            pinnedUrl!=null,pinnedEngine!=null && engineEnabled(pinnedEngine))
         if(established){
             // Never let a previous unestablished-channel failure blacklist a
             // channel that has since confirmed playback.
@@ -1386,12 +1854,11 @@ class MainActivity: Activity() {
             // clears the attempted URLs, so a broken playlist cannot loop.
             if(oneShotAlternativeKey==key && tryNextAlternative(index))return true
             recoveryPending.add(key)
-            // A previously confirmed URL is still the preferred source after a
-            // transient interruption. Retry it quietly; do not interrupt the
-            // viewer with an unverified alternative-URL dialog.
-            // Alternative selection remains available manually in channel settings.
+            // Only a confirmed failure initiates a background alternative search.
+            // It must not change the active playback or saved preferences.
+            checkFailedChannelAlternatives(index,screen)
             if(!prefs.getBoolean("auto_reconnect",true))return true
-            val fixedEngine="MPV"
+            val fixedEngine=pinnedEngine?.takeIf(::engineEnabled) ?:current
             val count=((recoveryAttempts[key] ?:0)+1).coerceAtMost(10)
             recoveryAttempts[key]=count
             // Both manually pinned and automatically confirmed playback are
@@ -1810,8 +2277,11 @@ class MainActivity: Activity() {
                     val stream=if(magic0==0x1f && magic1==0x8b)
                         java.util.zip.GZIPInputStream(buffered) else buffered
                     stream.use{data->
+                        // Bound decompressed XMLTV input, including feeds sent as gzip.
+                        // Reject abnormal feeds rather than exhausting Android TV memory.
+                        val bounded=BoundedEpgInput(data,128L*1024*1024)
                         val parser=android.util.Xml.newPullParser()
-                        parser.setInput(data,"UTF-8")
+                        parser.setInput(bounded,"UTF-8")
                         var channel="";var start=0L;var end=0L;var title="";var description=""
                         var event=parser.eventType
                         while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT){
@@ -2673,7 +3143,10 @@ class MainActivity: Activity() {
         val channelId=channelKey(channel)
         val task=Runnable{
             if(generation!=playbackGeneration || channels.getOrNull(active)?.let{channelKey(it)}!=channelId ||
-                !autoBufferEnabled() || mpvPlayer?.isPlaying!=true)return@Runnable
+                !autoBufferEnabled() || !(
+                    (player?.isPlaying==true) ||
+                    (vlcPlayer?.isPlaying==true)
+                ))return@Runnable
             val elapsed=android.os.SystemClock.elapsedRealtime()-autoBufferStableSince
             val next=SmartBufferPolicy.nextOnHealthy(autoBufferLevel,elapsed)
             if(next!=autoBufferLevel){
@@ -2767,123 +3240,209 @@ class MainActivity: Activity() {
             path.endsWith(".ism/manifest") || path.endsWith(".isml/manifest")->"smooth"
             path.endsWith(".mp4") || path.endsWith(".m4v") ||
                 path.endsWith(".mkv") || path.endsWith(".webm") ||
-                path.endsWith(".ts") || path.endsWith(".m2ts") ||
-                path.endsWith(".mts") || path.endsWith(".mp3") ||
+                path.endsWith(".ts") || path.endsWith(".mp3") ||
                 path.endsWith(".aac") || path.endsWith(".flv")->"file"
             path.endsWith(".swf")->"flash"
             else->"http"
         }
     }
+    // Only the LibVLC runtime packaged by this flavor is available.
+    // Never expose an unbundled native player through persisted preferences.
+    // The isolated service can initialize only the current Gradle flavor's
+    // native runtime. All other version IDs remain unavailable until their
+    // independently namespaced native libraries can coexist in one APK.
+    private val isolatedVlcRegistry by lazy {
+        val client = isolatedVlcClient
+        IsolatedVlcRegistry(
+            if (client == null) emptyList() else listOf(
+                RemoteIsolatedVlcRuntime("3.5.1", client),
+                RemoteIsolatedVlcRuntime("3.7.7", client),
+                RemoteIsolatedVlcRuntime("4.0.0-eap29", client)
+            )
+        )
+    }
+    private var isolatedVlcClient: IsolatedVlcServiceClient? = null
+    private val isolatedVlcSessions by lazy { IsolatedVlcSessionController(isolatedVlcRegistry) }
+
     private fun packagedEngines():List<String> =
-        // Only MPV is selectable in this experimental edition.
-        listOf("MPV")
+        // The production APK contains exactly these two real playback engines.
+        // Do not advertise other LibVLC releases or stale isolated engine IDs.
+        listOf("Media3", "LibVLC")
 
-    private fun engineEnabled(name:String):Boolean = name=="MPV"
+    private fun engineEnabled(name:String):Boolean =
+        PlaybackEnginePolicy.isEnabled(
+            name,
+            packagedEngines().filter { prefs.getBoolean("engine_enabled_"+it,true) },
+            packagedEngines()
+        )
 
-    // MPV edition ignores legacy per-channel engine pins.
-    private fun initialEngines(c:Channel):List<String> = listOf("MPV")
-    private fun engineFor(c:Channel):String = "MPV"
-    // MPV-only channel settings. Keep keys scoped to the stream so other channels
-    // and the global first-run defaults remain untouched.
-    // Temporary first-tune decoder fallback, never persisted over user choices.
-    private val mpvSoftwareFallbackAttempted=mutableSetOf<String>()
-    private val mpvSoftwareFallbackActive=mutableSetOf<String>()
-    private fun tryMpvSoftwareStartupFallback(c:Channel,index:Int,screen:FrameLayout,
-                                              generation:Int,started:Boolean):Boolean{
-        val key=channelKey(c)
-        val confirmed=MpvPlaybackPolicy.isEstablishedStream(
-            prefs.getString("working_url_"+key,null),
-            prefs.getString("manual_url_"+key,null),
-            key in playedThisSession)
-        if(!MpvPlaybackPolicy.shouldTrySoftwareAfterStartupFailure(
-                selectedMpvDecoder(c),confirmed,
-                key in mpvSoftwareFallbackAttempted,started))return false
-        if(active!=index || videoScreen!==screen || playbackGeneration!=generation ||
-            channels.getOrNull(index)!==c)return false
-        mpvSoftwareFallbackAttempted.add(key)
-        mpvSoftwareFallbackActive.add(key)
-        HomeTvDiagnostics.w("MPV","Automatic hardware startup failed; trying software once")
-        val task=Runnable{
-            if(active==index && videoScreen===screen && playbackGeneration==generation &&
-                channels.getOrNull(index)===c)playIndex(index)
+    private fun enabledEngines():List<String> =
+        packagedEngines().filter(::engineEnabled)
+
+    // Only advertise engines actually packaged into this APK. Multiple LibVLC
+    // versions cannot share the same org.videolan classes and libvlc.so.
+    private fun playbackEngineLabel(engine:String):String = when(engine){
+        "Media3"->"Media3 1.11.1"
+        "LibVLC"->"LibVLC "+BuildConfig.LIBVLC_VERSION
+        else->engine
+    }
+
+    private fun configureEnabledEngines(){
+        val names=packagedEngines()
+        val checked=names.map(::engineEnabled).toBooleanArray()
+        if(checked.none{it} && checked.isNotEmpty())checked[0]=true
+        AlertDialog.Builder(this).setTitle("Enabled playback engines")
+            .setMultiChoiceItems(names.map(::playbackEngineLabel).toTypedArray(),checked){dialog,index,enabled->
+                if(!enabled && checked.count{it}==1){
+                    (dialog as AlertDialog).listView.setItemChecked(index,true)
+                    showBanner("At least one playback engine must remain enabled",true)
+                }else{
+                    checked[index]=enabled
+                }
+            }.setPositiveButton("Save"){_,_->
+                if(checked.none{it}){
+                    showBanner("At least one engine must remain enabled",true)
+                    return@setPositiveButton
+                }
+                // An unchanged selection must not interrupt playback, invalidate
+                // recovery attempts or restart background decoder probes.
+                val previousEnabled=names.filter(::engineEnabled).toSet()
+                val selectedEnabled=names.filterIndexed{index,_->checked[index]}.toSet()
+                if(selectedEnabled==previousEnabled){
+                    settings()
+                    return@setPositiveButton
+                }
+                val editor=prefs.edit()
+                names.forEachIndexed{index,name->editor.putBoolean("engine_enabled_"+name,checked[index])}
+                editor.apply()
+                cancelDisabledEngineProbes()
+                // Restart on BOTH disable and re-enable. The old conditional
+                // only refreshed when an engine was disabled, so re-enabling
+                // Media3 or LibVLC left its background queue permanently absent.
+                // startBackgroundChannelChecks invalidates old generations and
+                // releases their decoders before rebuilding engine-first queues.
+                startBackgroundChannelChecks()
+                fallbackEngineOverride=null
+                engineAttempts.clear()
+                HomeTvDiagnostics.i("Playback","Enabled engines changed from "+
+                    previousEnabled.joinToString()+" to "+selectedEnabled.joinToString())
+                val activeEngine=when{
+                    isolatedActiveEngineId!=null->isolatedActiveEngineId
+                    vlcPlayer!=null->"LibVLC"
+                    player!=null->"Media3"
+                    else->null
+                }
+                if(activeEngine!=null && !engineEnabled(activeEngine)){
+                    val channel=active
+                    val selectedChannel=channels.getOrNull(channel)
+                    val playlistSnapshot=channels
+                    // Release immediately: do not leave a disabled native engine
+                    // running while waiting for the next UI dispatch.
+                    stopPlayback()
+                    val switchGeneration=playbackGeneration
+                    if(selectedChannel!=null){
+                        handler.post{
+                            // A remote selection, playlist replacement or new
+                            // playback session must invalidate this delayed
+                            // engine-switch restart.
+                            if(!isFinishing && !isDestroyed && licenseReady &&
+                                playbackGeneration==switchGeneration &&
+                                active==channel && channels === playlistSnapshot &&
+                                channels.getOrNull(channel) === selectedChannel)
+                                playIndex(channel)
+                        }
+                    }
+                }
+                showBanner("Disabled engines stop now; current playback switches if needed")
+                settings()
+            }.setNegativeButton("Cancel",null).show()
+    }
+    // Media3 is the normal engine; LibVLC remains first for RTMP/VLC-only protocols.
+    private fun initialEngines(c:Channel):List<String> = when(streamKind(c.url)){
+        "rtmp","vlc"->listOf("LibVLC","Media3")
+        else->listOf("Media3","LibVLC")
+    }.filter(::engineEnabled)
+    private fun engineFor(c:Channel):String{
+        // An explicitly accepted, still-unconfirmed alternative must use the
+        // engine that was successfully probed, even if an older manual pin exists.
+        if(pendingAlternativeGeneration==playbackGeneration &&
+            pendingAlternativeKey==channelKey(c) && pendingAlternativeUrl==c.url)
+            pendingAlternativeEngine?.let{if(engineEnabled(it))return it}
+        // Explicit channel choice must win over any stale automatic fallback.
+        prefs.getString("manual_engine_"+channelKey(c),null)?.let{
+            if(engineEnabled(it))return it
         }
-        handler.post(task)
-        return true
-    }
-    private fun mpvDecoderKey(c:Channel)="mpv_decoder_"+hash(channelKey(c))
-    private fun mpvOutputKey(c:Channel)="mpv_output_"+hash(channelKey(c))
-    private fun selectedMpvDecoder(c:Channel):String {
-        val mode=prefs.getString(mpvDecoderKey(c),"Automatic") ?: "Automatic"
-        val selected=MpvPlaybackPolicy.normalizedDecoder(mode)
-        return if(selected=="Automatic" && channelKey(c) in mpvSoftwareFallbackActive)
-            "Software" else selected
-    }
-    private fun selectedMpvOutput(c:Channel):String {
-        val mode=prefs.getString(mpvOutputKey(c),"Auto") ?: "Auto"
-        return MpvPlaybackPolicy.normalizedOutput(mode)
-    }
-    private fun chooseMpvDecoderForCurrentChannel(){
-        if(active in channels.indices)chooseMpvDecoder(active)
-        else showBanner("Select a channel before changing its decoder")
-    }
-    private fun chooseMpvDecoder(index:Int){
-        val c=channels.getOrNull(index) ?:return
-        val options=arrayOf("Automatic","Hardware copy","Software")
-        // Display the user's saved choice, not a transient software retry.
-        val savedDecoder=prefs.getString(mpvDecoderKey(c),"Automatic") ?: "Automatic"
-        val selected=options.indexOf(savedDecoder).coerceAtLeast(0)
-        showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — MPV decoder")
-            .setSingleChoiceItems(options,selected){dialog,choice->
-                mpvSoftwareFallbackActive.remove(channelKey(c))
-                mpvSoftwareFallbackAttempted.remove(channelKey(c))
-                prefs.edit().putString(mpvDecoderKey(c),options[choice]).apply()
-                dialog.dismiss()
-                if(active==index && mpvPlayer!=null)playIndex(index)
-                else showBanner("Decoder saved for "+c.name)
-            }.setNegativeButton("Cancel",null).create())
-    }
-    private fun chooseMpvOutputForCurrentChannel(){
-        val index=active
-        val c=channels.getOrNull(index)
-        if(c==null){showBanner("Select a channel before changing HDR/SDR output");return}
-        val options=arrayOf("Auto","Force HDR10","Force SDR")
-        val selected=options.indexOf(selectedMpvOutput(c)).coerceAtLeast(0)
-        showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — MPV HDR/SDR output")
-            .setSingleChoiceItems(options,selected){dialog,choice->
-                prefs.edit().putString(mpvOutputKey(c),options[choice]).apply()
-                dialog.dismiss()
-                if(active==index && mpvPlayer!=null)playIndex(index)
-                else showBanner("Output mode saved for "+c.name)
-            }.setNegativeButton("Cancel",null).create())
-    }
-    private fun showMpvPlaybackDiagnostics(){
-        val report=mpvPlayer?.diagnosticSnapshot() ?: "No active MPV playback. Start a channel first."
-        showSideDialog(AlertDialog.Builder(this).setTitle("MPV playback diagnostics")
-            .setMessage(report).setPositiveButton("OK",null).create())
-    }
-    private fun resetMpvPictureForCurrentChannel(){
-        val index=active
-        val c=channels.getOrNull(index)
-        if(c==null){showBanner("Select a channel first");return}
-        // Cancel any queued picture-preview restart before resetting the source.
-        // Otherwise a delayed preview can overwrite the neutral state.
-        picturePreviewRestartTask?.let{handler.removeCallbacks(it)}
-        picturePreviewRestartTask=null
-        if(previewPictureChannelKey==channelKey(c)){
-            previewPictureChannelKey=null
-            previewPictureMode=null
+        // Recovery override takes priority over previously confirmed engines,
+        // but never overrides an explicit manual selection.
+        fallbackEngineOverride?.let{if(engineEnabled(it))return it}
+        if(prefs.getString("working_url_"+channelKey(c),null)==c.url){
+            prefs.getString("confirmed_engine_"+channelKey(c),null)?.let{
+                if(engineEnabled(it))return it
+            }
         }
-        prefs.edit().putString(picturePresetKey(c),"Standard")
-            .remove(pictureCustomKey(c,"brightness"))
-            .remove(pictureCustomKey(c,"contrast"))
-            .remove(pictureCustomKey(c,"saturation")).apply()
-        mpvPlayer?.setPicture(1f,1f,1f)
-        showBanner("MPV picture adjustments reset to Standard")
+        val universal=prefs.getString("engine","Auto") ?: "Auto"
+        if(prefs.getBoolean("libvlc_only_"+hash(c.url),false) && engineEnabled("LibVLC"))return "LibVLC"
+        if(engineEnabled(universal))return universal
+        return PlaybackEnginePolicy.firstEnabled(initialEngines(c))
     }
-
-    // MPV edition: channel player selection controls decoder mode, not obsolete engines.
-    private fun chooseChannelEngine(i:Int) {
-        chooseMpvDecoder(i)
+    private fun chooseChannelEngine(i:Int){
+        if(i !in channels.indices)return
+        val returnToPlaybackDrawer=videoScreen?.findViewWithTag<View>("settings_drawer")!=null
+        val c=channels[i]
+        val universal=(prefs.getString("engine","Media3") ?: "Media3")
+            .takeIf(::engineEnabled) ?: "Auto"
+        val available=enabledEngines()
+        val choices=(listOf("Auto (Universal: "+playbackEngineLabel(universal)+")")+
+            available.map(::playbackEngineLabel)).toTypedArray()
+        val selected=(available.indexOf(prefs.getString("manual_engine_"+channelKey(c),null))+1)
+            .coerceAtLeast(0)
+        var pending=selected
+        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — Player")
+            .setSingleChoiceItems(choices,selected){_,which->pending=which}
+            .setPositiveButton("OK"){_,_->
+                prefs.edit().apply{
+                    if(pending==0)remove("manual_engine_"+channelKey(c))
+                    else putString("manual_engine_"+channelKey(c),available[pending-1])
+                }.apply()
+                engineAttempts.clear();fallbackEngineOverride=null;unavailableChannels.remove(channelKey(c))
+                if(active==i){
+                    if(returnToPlaybackDrawer)pendingPlaybackDrawerChannelKey=channelKey(c)
+                    playIndex(i)
+                }
+            }.setNeutralButton("Restore defaults"){_,_->
+                // Reset only this logical channel's playback choices. Do not
+                // change global engine settings, favorites, locks or visibility.
+                val key=channelKey(c)
+                prefs.edit()
+                    .remove("manual_engine_"+key)
+                    .remove("manual_url_"+key)
+                    .remove("working_url_"+key)
+                    .remove("confirmed_engine_"+key)
+                    .remove("auto_alternative_"+key)
+                    .apply()
+                engineAttempts.clear()
+                fallbackEngineOverride=null
+                unavailableChannels.remove(key)
+                alternativeAttempted.clear()
+                alternativeSessionKey=null
+                if(oneShotAlternativeKey==key)oneShotAlternativeKey=null
+                if(active==i){
+                    if(returnToPlaybackDrawer)pendingPlaybackDrawerChannelKey=key
+                    playIndex(i)
+                }else{
+                    Toast.makeText(this,"Default playback restored for "+c.name,Toast.LENGTH_SHORT).show()
+                }
+            }.setNegativeButton("Cancel",null).create()
+        dialog.setOnShowListener{
+            val list=dialog.listView ?:return@setOnShowListener
+            list.choiceMode=android.widget.ListView.CHOICE_MODE_SINGLE
+            list.setItemChecked(selected,true);list.setSelection(selected)
+            list.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
+                override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){pending=position;list.setItemChecked(position,true)}
+                override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
+            }
+        }
+        showSideDialog(dialog)
     }
     private fun channelOptions(i:Int){
         if(i !in channels.indices)return
@@ -2896,7 +3455,7 @@ class MainActivity: Activity() {
             "Preferred audio language",
             "Subtitle settings",
             "Sleep timer",
-            "MPV decoder ("+selectedMpvDecoder(c)+")",
+            "Playback engine",
             "Select stream source",
             if(favoriteIds.contains(id(c)))"Remove favorite" else "Add favorite",
             "Parental lock",
@@ -2905,8 +3464,8 @@ class MainActivity: Activity() {
             "Settings",
             "Exit",
             "Manage Favorites Groups",
-            "MPV output mode (HDR / SDR)",
-            "MPV playback diagnostics"
+            "LibVLC video decoder ("+selectedVlcDecoder(c)+")",
+            "Observed starts: "+startupRate(c)
         )
         val dialog=AlertDialog.Builder(this)
             .setTitle(numberFor(i).toString()+". "+c.name+" Settings")
@@ -2920,7 +3479,7 @@ class MainActivity: Activity() {
                     4->choosePreferredAudioLanguage()
                     5->subtitleTracks(i)
                     6->sleepTimer()
-                    7->chooseMpvDecoder(i)
+                    7->chooseChannelEngine(i)
                     8->selectAlternative(i)
                     9->{favorite(c);if(active<0)allChannels()}
                     10->toggleLock(id(c),false)
@@ -2929,8 +3488,11 @@ class MainActivity: Activity() {
                     13->liveSettings()
                     14->confirmExit()
                     15->addChannelToFavoriteGroups(c)
-                    16->chooseMpvOutputForCurrentChannel()
-                    17->showMpvPlaybackDiagnostics()
+                    16->chooseVlcDecoder(i)
+                    17->showSideDialog(AlertDialog.Builder(this)
+                        .setTitle(c.name+" — observed startup history")
+                        .setMessage(startupRate(c)+"\nThis is historical playback-start data, not a guarantee.")
+                        .setPositiveButton("OK",null).create())
                 }
             }
             .setNegativeButton("Back",null).create()
@@ -2981,6 +3543,8 @@ class MainActivity: Activity() {
     override fun onPause(){
         val wasPlaying=active in channels.indices && !isFinishing
         appInForeground=false
+        multiViewDialog?.dismiss()
+        releaseMultiView()
         // Release optional background decoders immediately on app suspension.
         // Hidden-channel HTTP worker checks are independent and may continue.
         startBackgroundChannelChecks()
@@ -2994,7 +3558,7 @@ class MainActivity: Activity() {
                 prefs.getBoolean("auto_hidden_channel_check",true) &&
                 prefs.getBoolean("background_hidden_channel_check",true) &&
                 !hiddenChannelCheckRunning)checkHiddenChannelsNow(showResults=false)
-            // stopPlayback saves VOD progress and releases native playback and WebView.
+            // stopPlayback saves VOD progress and releases Media3, LibVLC and WebView.
             stopPlayback()
         }
         super.onPause()
@@ -3026,6 +3590,8 @@ class MainActivity: Activity() {
         root=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(14,12,14,12) }
         root.setBackgroundColor(0xFF101E31.toInt())
         setContentView(android.widget.ScrollView(this).apply{isFillViewport=true;addView(root)})
+        // Service currently fails closed; binding must not block licensing or playback.
+        isolatedVlcClient = IsolatedVlcServiceClient(this).also { it.bind() }
         beginLicensedSession()
         registerLicenseNetworkCallback()
     }
@@ -3055,7 +3621,7 @@ class MainActivity: Activity() {
         homeScreenVisible=false
         val destination:(()->Unit)?=when{
             title.startsWith("My Home TV  •")->({showHome()})
-            title=="NexTV Settings"->({settings()})
+            title=="MyView Settings"->({settings()})
             else->null
         }
         if(!navigatingBack && destination!=null && currentMenu!=null &&
@@ -3171,19 +3737,17 @@ class MainActivity: Activity() {
         root.addView(button("←  Home"){showHome()})
     }
     private fun mediaPlaybackControls(){
-        val c=channels.getOrNull(active) ?:return
+        val c=channels.getOrNull(active)?:return
         if(c.mediaType !in setOf("movie","series","music"))return
-        val mpv=mpvPlayer
-        if(mpv==null){
+        val exo=player
+        val vlc=vlcPlayer
+        if(exo==null && vlc==null){
             Toast.makeText(this,"This web player controls seeking on its own",Toast.LENGTH_SHORT).show()
             return
         }
-        val duration=mpv.durationMs
-        val position=mpv.positionMs
-        if(duration<=0L){
-            Toast.makeText(this,"Seeking unavailable for this stream",Toast.LENGTH_SHORT).show()
-            return
-        }
+        val duration=if(exo!=null)exo.duration else vlc?.length?:0L
+        val position=if(exo!=null)exo.currentPosition else vlc?.time?:0L
+        if(duration<=0L){Toast.makeText(this,"Seeking unavailable for this stream",Toast.LENGTH_SHORT).show();return}
         val bar=android.widget.SeekBar(this).apply{
             max=(duration/1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             progress=(position/1000L).coerceAtMost(max.toLong()).toInt()
@@ -3200,19 +3764,29 @@ class MainActivity: Activity() {
         AlertDialog.Builder(this).setTitle("▶  "+c.name)
             .setView(layout)
             .setPositiveButton("▶  Play here"){_,_->
-                if(mpvPlayer===mpv)mpv.seekTo(bar.progress.toLong()*1000L)
+                val target=bar.progress.toLong()*1000L
+                if(exo!=null)exo.seekTo(target) else vlc?.time=target
             }
-            .setNeutralButton(if(mpv.isPlaying)"Pause" else "Play"){_,_->
-                if(mpvPlayer===mpv)mpv.togglePause()
+            .setNeutralButton(if(exo?.isPlaying==true || vlc?.isPlaying==true) "Pause" else "Play"){_,_->
+                if(exo!=null){if(exo.isPlaying)exo.pause() else exo.play()}
+                else if(vlc!=null){if(vlc.isPlaying)vlc.pause() else vlc.play()}
             }
             .setNegativeButton("Close",null).show()
     }
     private fun mediaKey(c:Channel)=viewerKey("myhometv_progress_"+c.url.hashCode().toString())
     private fun mediaResumeSeconds(c:Channel):Long=prefs.getLong(mediaKey(c),0L)
     private fun saveCurrentMediaProgress(){
-        val c=channels.getOrNull(active) ?:return
+        val c=channels.getOrNull(active)?:return
         if(c.mediaType !in setOf("movie","series","music"))return
-        val seconds=(mpvPlayer?.positionMs ?:0L).coerceAtLeast(0L)/1000L
+        val seconds=when{
+            player!=null->try{(player!!.currentPosition/1000L).coerceAtLeast(0L)}catch(e:Exception){
+                HomeTvDiagnostics.w("Playback","Unable to save Media3 position during switch",e);0L
+            }
+            vlcPlayer!=null->try{(vlcPlayer!!.time/1000L).coerceAtLeast(0L)}catch(e:Exception){
+                HomeTvDiagnostics.w("Playback","Unable to save LibVLC position during switch",e);0L
+            }
+            else->0L
+        }
         if(seconds>0L)prefs.edit().putLong(mediaKey(c),seconds).apply()
     }
     private fun continueMedia(){
@@ -3641,7 +4215,7 @@ class MainActivity: Activity() {
         val uri=data?.data ?:return
         thread{
             try{
-                val body=contentResolver.openInputStream(uri)?.bufferedReader()?.use{it.readText()}
+                val body=contentResolver.openInputStream(uri)?.use{readPlaylistText(it)}
                     ?:throw IllegalArgumentException("Cannot read selected file")
                 if(parseM3u(body,"Imported playlist").isEmpty())throw IllegalArgumentException("No valid M3U channels found")
                 val file=java.io.File(filesDir,"import_"+System.currentTimeMillis()+".m3u")
@@ -3975,7 +4549,9 @@ class MainActivity: Activity() {
                     // evict old reachability results, not every periodic scan.
                     val validUrls=nextChannels.asSequence().map{it.url}.toHashSet()
                     probeReachable.keys.retainAll(validUrls)
-                    httpProbeObservedAt.keys.retainAll(validUrls)
+                    media3ProbeObservedAt.keys.retainAll(validUrls)
+                    vlcProbeObservedAt.keys.retainAll(validUrls)
+                    vlcProbeReachable.keys.retainAll(validUrls)
                     if(forceRebuild)Toast.makeText(this,"Rebuilt "+updated+"/"+sources.size+" playlists • "+actualChannelCount()+" channels",Toast.LENGTH_LONG).show()
                 }
                 // Preserve whichever channel is playing when the refresh finishes,
@@ -4004,17 +4580,35 @@ class MainActivity: Activity() {
             }
         }
     }
-    // Bounded MPV-edition HTTP reachability checks. Never allocate a decoder.
+    // Bounded background stream checks: optional players, never the on-screen player.
     @Volatile private var backgroundProbeGeneration=0
-    private val backgroundProbeWorker=java.util.concurrent.Executors.newSingleThreadExecutor { task ->
-        Thread(task,"nextv-mpv-url-check").apply{isDaemon=true}
-    }
     private var backgroundProbePlaylist:MutableList<Channel>?=null
     private val probeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
     private var periodicProbeTask:Runnable?=null
+    private var probeQueue=java.util.ArrayDeque<Channel>()
     private var backgroundProbeOffset=0
-    private val httpProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
+    private var probePositionByUrl:Map<String,Int> = emptyMap()
+    private val probePlayers=mutableSetOf<ExoPlayer>()
+    private val probeWatchdogs=mutableMapOf<ExoPlayer,Runnable>()
+    private var probeInFlight=0
+    // A successful or failed decoder probe is recent evidence only. Old
+    // results must not remain displayed as current confidence indefinitely.
+    private val media3ProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
+    private val vlcProbeObservedAt=java.util.concurrent.ConcurrentHashMap<String,Long>()
     private val probeConfidenceMaxAgeMs=30*60*1000L
+    private val vlcProbeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
+    private val vlcProbeQueue=java.util.ArrayDeque<Channel>()
+    // Per-generation deduplication: a URL is attempted at most once per engine.
+    private val media3ProbeAttempted=HashSet<String>()
+    private val vlcProbeAttempted=HashSet<String>()
+    private var vlcProbeCore:LibVLC?=null
+    private var vlcProbePlayer:VlcPlayer?=null
+    private var vlcProbeWatchdog:Runnable?=null
+    // An active native probe may be cancelled by a scan-generation reset.
+    // Track its identity so a stale catch/callback cannot release a successor.
+    private var vlcProbeOwnerGeneration=-1
+    // Every enabled-engine configuration must eventually advance the rotating
+    // background scan window, including installations without LibVLC.
     private fun scheduleNextBackgroundProbeWindow(generation:Int){
         if(generation!=backgroundProbeGeneration || !appInForeground ||
             !licenseReady || safeStartupMode ||
@@ -4028,36 +4622,179 @@ class MainActivity: Activity() {
         }
         handler.postDelayed(periodicProbeTask!!,15*60*1000L)
     }
-
-    // Background availability is a lightweight HTTP check, not a second video engine.
-    // An HTTP success is only reachability evidence: it NEVER confirms playback.
-    private fun probeMpvUrlReachability(url:String,headers:Map<String,String>):Boolean? {
-        // Non-HTTP streams (RTSP/RTMP etc.) require MPV-native validation.
-        // Unknown is NOT a failure and must not demote a confirmed working URL.
-        if(!BackgroundProbeUrlPolicy.isHttpProbeCandidate(url))return null
-        var connection:java.net.HttpURLConnection?=null
-        return try{
-            connection=(java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply{
-                instanceFollowRedirects=true
-                connectTimeout=3500
-                readTimeout=3500
-                requestMethod="GET"
-                setRequestProperty("Range","bytes=0-1023")
-                headers.forEach{(name,value)->
-                    if(!name.equals("Range",true) && !name.equals("Host",true))
-                        setRequestProperty(name,value)
+    private fun stopVlcProbe(){
+        vlcProbeWatchdog?.let{handler.removeCallbacks(it)}
+        vlcProbeWatchdog=null
+        // A native stop failure must never skip release: leaked LibVLC
+        // players can hold decoders and starve foreground playback.
+        vlcProbePlayer?.let{probe->
+            try{probe.stop()}catch(_:Exception){}
+            try{probe.release()}catch(_:Exception){}
+        }
+        vlcProbePlayer=null
+        vlcProbeCore?.let{try{it.release()}catch(_:Exception){}}
+        vlcProbeCore=null
+        vlcProbeOwnerGeneration=-1
+    }
+    private fun launchNextVlcProbe(generation:Int){
+        // Queued entries belong to the playlist at scan creation, not the
+        // playlist that happens to be active when a decoder finishes.
+        if(generation==backgroundProbeGeneration && channels !== backgroundProbePlaylist){
+            if(appInForeground && licenseReady && !safeStartupMode &&
+                prefs.getBoolean("background_url_checks",false))
+                startBackgroundChannelChecks()
+            return
+        }
+        if(generation!=backgroundProbeGeneration || !appInForeground ||
+            !licenseReady || safeStartupMode ||
+            !prefs.getBoolean("background_url_checks",false) || vlcProbePlayer!=null)return
+        // Media3-only configurations still need the next rotating window.
+        // Previously this early return stopped background checks permanently.
+        if(!engineEnabled("LibVLC")){
+            if(probeInFlight==0 && probeQueue.isEmpty())
+                scheduleNextBackgroundProbeWindow(generation)
+            return
+        }
+        // Never start LibVLC until enabled Media3 probes have completed.
+        if(probeInFlight>0 || (engineEnabled("Media3") && probeQueue.isNotEmpty()))return
+        // Both engine queues can be empty after URL filtering. Complete the
+        // window without allocating a native player or scheduling network
+        // retries for work that no longer exists.
+        if(vlcProbeQueue.isEmpty()){
+            scheduleNextBackgroundProbeWindow(generation)
+            return
+        }
+        // Never keep a completed scan alive through an obsolete delayed retry.
+        periodicProbeTask?.let{handler.removeCallbacks(it)}
+        periodicProbeTask=null
+        // Native probing is optional. Pause the scan when connectivity is lost
+        // rather than exhausting the entire URL window with false negatives.
+        if(!hasNetworkConnection()){
+            periodicProbeTask?.let{handler.removeCallbacks(it)}
+            periodicProbeTask=Runnable{
+                if(generation==backgroundProbeGeneration &&
+                    prefs.getBoolean("background_url_checks",false))launchNextVlcProbe(generation)
+            }
+            handler.postDelayed(periodicProbeTask!!,15000L)
+            return
+        }
+        // Foreground playback wins decoder resources during startup/rebuffering,
+        // including WebView and the gap before a native player is allocated.
+        if(active>=0 && (vlcPlayer!=null ||
+                (player==null && web==null) ||
+                (player!=null && player?.isPlaying!=true))){
+            periodicProbeTask?.let{handler.removeCallbacks(it)}
+            periodicProbeTask=Runnable{if(generation==backgroundProbeGeneration)
+                launchNextVlcProbe(generation)}
+            handler.postDelayed(periodicProbeTask!!,3000L)
+            return
+        }
+        var channel:Channel?=null
+        var inspectedVlcCandidates=0
+        while(vlcProbeQueue.isNotEmpty() && inspectedVlcCandidates<32){
+            inspectedVlcCandidates++
+            val candidate=vlcProbeQueue.removeFirst()
+            // The foreground selection can change after this scan was queued.
+            // Recheck against the current channel before allocating LibVLC.
+            val foreground=channels.getOrNull(active)
+            if(!BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
+                foreground?.let{channelKey(it)},foreground?.url,
+                channelKey(candidate),candidate.url
+            ))continue
+            if(!BackgroundProbeUrlPolicy.isNativeProbeCandidate(candidate.url))continue
+            if(vlcProbeAttempted.add(BackgroundProbeUrlPolicy.probeIdentity(candidate.url))){
+                channel=candidate
+                break
+            }
+        }
+        if(channel==null && vlcProbeQueue.isNotEmpty()){
+            // Yield instead of synchronously filtering the entire playlist.
+            handler.post{if(generation==backgroundProbeGeneration)launchNextVlcProbe(generation)}
+            return
+        }
+        if(channel==null){
+            // Both engines finished their ordered pass; rotate the window
+            // after the normal interval, including when LibVLC is disabled.
+            scheduleNextBackgroundProbeWindow(generation)
+            return
+        }
+        val probePlaylist=backgroundProbePlaylist
+        // Claim this generation before constructing native objects. LibVLC's
+        // constructor itself can throw; without ownership the catch handler
+        // silently abandoned the entire remaining scan window.
+        vlcProbeOwnerGeneration=generation
+        try{
+            val core=LibVLC(this,arrayListOf("--no-audio","--no-video","--network-caching=1200","--http-reconnect"))
+            vlcProbeCore=core
+            val probe=VlcPlayer(core)
+            vlcProbePlayer=probe
+            var completed=false
+            fun finish(working:Boolean){
+                if(completed || generation!=backgroundProbeGeneration || vlcProbePlayer!==probe)return
+                completed=true
+                val currentForeground=channels.getOrNull(active)
+                val stillBackground=BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
+                    currentForeground?.let{channelKey(it)},currentForeground?.url,
+                    channelKey(channel),channel.url
+                )
+                if(generation==backgroundProbeGeneration && stillBackground &&
+                    channels === probePlaylist && licenseReady &&
+                    !safeStartupMode && engineEnabled("LibVLC") &&
+                    prefs.getBoolean("background_url_checks",false)){
+                    vlcProbeReachable[channel.url]=working
+                    vlcProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
+                    if(working)unavailableChannels.remove(channelKey(channel))
+                }
+                handler.post{
+                    if(vlcProbePlayer===probe){
+                        stopVlcProbe()
+                        launchNextVlcProbe(generation)
+                    }
                 }
             }
-            val response=connection.responseCode
-            val contentType=connection.contentType
-            if(!BackgroundProbeUrlPolicy.isLikelyMediaResponse(response,contentType))
-                return false
-            // Never download a full live stream. HTTP 200 alone is not
-            // playback confirmation, and a successful check stays provisional.
-            connection.inputStream.use{input->input.read(ByteArray(1024))}
-            true
-        }catch(_:Exception){null}
-        finally{connection?.disconnect()}
+            probe.setEventListener{event->
+                val result=when(event.type){
+                    VlcPlayer.Event.Playing->true
+                    VlcPlayer.Event.EncounteredError,VlcPlayer.Event.EndReached->false
+                    else->null
+                }
+                if(result!=null)handler.post{
+                    if(vlcProbePlayer===probe && generation==backgroundProbeGeneration)
+                        finish(result)
+                }
+            }
+            val media=VlcMedia(core,Uri.parse(channel.url))
+            try{
+                media.addOption(":no-audio")
+                media.addOption(":no-video")
+                HomeTvPolicies.libVlcHttpHeaderOptions(channel.headers).forEach{media.addOption(it)}
+                probe.media=media
+            }finally{
+                media.release()
+            }
+            vlcProbeWatchdog=Runnable{finish(false)}
+            handler.postDelayed(vlcProbeWatchdog!!,6500L)
+            probe.play()
+        }catch(e:Exception){
+            HomeTvDiagnostics.w("HomeTV","Background LibVLC probe failed for "+channel.name,e)
+            if(generation!=backgroundProbeGeneration ||
+                vlcProbeOwnerGeneration!=generation){
+                // Never tear down a native probe owned by a newer scan.
+                return
+            }
+            val currentForeground=channels.getOrNull(active)
+            if(BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
+                currentForeground?.let{channelKey(it)},currentForeground?.url,
+                channelKey(channel),channel.url
+            ) && channels === probePlaylist && engineEnabled("LibVLC") &&
+                prefs.getBoolean("background_url_checks",false) &&
+                licenseReady && !safeStartupMode){
+                vlcProbeReachable[channel.url]=false
+                vlcProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
+            }
+            stopVlcProbe()
+            handler.post{launchNextVlcProbe(generation)}
+        }
     }
 
     private fun startBackgroundChannelChecks(){
@@ -4066,57 +4803,277 @@ class MainActivity: Activity() {
         val generation=backgroundProbeGeneration
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         periodicProbeTask=null
+        // Background probes are nonessential. Avoid tearing down decoders
+        // while a foreground channel is playing; old HTTP checks are ignored
+        // by the generation guard.
+        probeQueue.clear()
+        probePositionByUrl=emptyMap()
+        // Cancel probes from the previous generation before resetting counters.
+        probeWatchdogs.values.forEach{handler.removeCallbacks(it)}
+        probeWatchdogs.clear()
+        probePlayers.toList().forEach{probe->
+            try{probe.stop()}catch(_:Exception){}
+            try{probe.release()}catch(_:Exception){}
+        }
+        probePlayers.clear()
+        probeInFlight=0
+        stopVlcProbe()
+        vlcProbeQueue.clear()
+        media3ProbeAttempted.clear()
+        vlcProbeAttempted.clear()
+        // An OFF toggle must not build and sort a huge probe queue.
         if(!appInForeground || !licenseReady || safeStartupMode ||
-            !prefs.getBoolean("background_url_checks",false))return
-        val playlist=channels
-        if(playlist.isEmpty()){
+            !prefs.getBoolean("background_url_checks",false) ||
+            (!engineEnabled("Media3") && !engineEnabled("LibVLC")))return
+        // An empty playlist must not spin or allocate decoders. It can be
+        // populated later by refresh/import, which starts a fresh scan.
+        if(channels.isEmpty()){
             scheduleNextBackgroundProbeWindow(generation)
             return
         }
-        // Rotate a bounded window; skip the currently playing URL and duplicates.
-        val total=playlist.size
-        val offset=backgroundProbeOffset.mod(total)
-        val selected=ArrayList<Channel>(64)
-        val seen=HashSet<String>()
-        val foreground=playlist.getOrNull(active)
-        var visited=0
-        while(visited<minOf(total,512) && selected.size<64){
-            val candidate=playlist[(offset+visited)%total]
-            visited++
+        // Probe results are pruned only when the playlist is replaced.
+        // Building a set of every URL on each 15-minute scan turns a bounded
+        // 250-channel background pass into an O(playlist size) UI operation.
+        // Probe closest channels first in the last remote-control direction.
+        // Never interrupt the on-screen channel or probe it a second time.
+        // Only the bounded probe window needs URL positions. Scanning every
+        // channel on the UI thread made each background refresh O(playlist size).
+        val firstPositionByUrl=HashMap<String,Int>(256)
+        // Scan a rotating window, not always the first 250 streams. Even a
+        // very large playlist is eventually covered without a giant queue.
+        val playlistSnapshot=channels
+        val snapshot=ArrayList<Channel>(250)
+        val seenUrls=HashSet<String>()
+        val foregroundChannel=playlistSnapshot.getOrNull(active)
+        val foregroundKey=foregroundChannel?.let{channelKey(it)}
+        val foregroundUrl=foregroundChannel?.url
+        val total=playlistSnapshot.size
+        val start=if(total>0)backgroundProbeOffset.mod(total) else 0
+        var scanned=0
+        // Bound work per UI dispatch even when many entries share one URL.
+        // The rotating offset resumes scanning on the next cycle.
+        val scanBudget=minOf(total,1000)
+        while(scanned<scanBudget && snapshot.size<250){
+            val position=(start.toLong()+scanned.toLong()).rem(total.toLong()).toInt()
+            val candidate=playlistSnapshot[position]
+            scanned++
             if(BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
-                    foreground?.let{channelKey(it)},foreground?.url,
-                    channelKey(candidate),candidate.url
-                ) && seen.add(BackgroundProbeUrlPolicy.probeIdentity(candidate.url)))
-                selected.add(candidate)
+                foregroundKey,foregroundUrl,channelKey(candidate),candidate.url
+            ) && seenUrls.add(BackgroundProbeUrlPolicy.probeIdentity(candidate.url))){
+                firstPositionByUrl[candidate.url]=position
+                snapshot.add(candidate)
+            }
         }
-        backgroundProbeOffset=(offset+visited)%total
-        if(selected.isEmpty()){
+        if(total>0)backgroundProbeOffset=(start.toLong()+scanned.toLong()).rem(total.toLong()).toInt()
+        probePositionByUrl=firstPositionByUrl
+        val anchor=active.coerceAtLeast(0)
+        val count=playlistSnapshot.size.coerceAtLeast(1)
+        val ordered=snapshot.sortedWith(compareBy<Channel>{candidate->
+            val position=firstPositionByUrl[candidate.url] ?:0
+            if(surfingDirection<0)(anchor-position+count)%count
+            else (position-anchor+count)%count
+        }.thenBy{it.name})
+        ordered.forEach{probeQueue.addLast(it)}
+        // Engine-first: complete the Media3 URL window, then inspect the
+        // same ordered URLs with LibVLC.
+        if(engineEnabled("LibVLC"))ordered.forEach{vlcProbeQueue.addLast(it)}
+        if(ordered.isEmpty()){
+            // Empty playlists and fully excluded windows still need to
+            // recover automatically when the next scan window is due.
             scheduleNextBackgroundProbeWindow(generation)
+        }else if(prefs.getBoolean("background_url_checks",false)){
+            launchNextProbe(generation)
+        }
+    }
+    // Bounded decoder-backed probes. Keep them subordinate to foreground playback.
+    private fun launchNextProbe(generation:Int){
+        // Queued entries belong to the playlist at scan creation, not the
+        // playlist that happens to be active when a decoder finishes.
+        if(generation==backgroundProbeGeneration && channels !== backgroundProbePlaylist){
+            if(appInForeground && licenseReady && !safeStartupMode &&
+                prefs.getBoolean("background_url_checks",false))
+                startBackgroundChannelChecks()
             return
         }
-        // One short-lived worker; no additional decoder, no UI-thread network calls.
-        backgroundProbeWorker.execute {
-            for(candidate in selected){
-                if(Thread.currentThread().isInterrupted ||
-                    generation!=backgroundProbeGeneration || !appInForeground ||
-                    !licenseReady || safeStartupMode ||
-                    !prefs.getBoolean("background_url_checks",false))
-                    break
-                val reachable=probeMpvUrlReachability(candidate.url,candidate.headers)
-                handler.post{
-                    if(generation==backgroundProbeGeneration && channels===playlist &&
-                        prefs.getBoolean("background_url_checks",false)){
-                        if(reachable!=null){
-                            probeReachable[candidate.url]=reachable
-                            httpProbeObservedAt[candidate.url]=android.os.SystemClock.elapsedRealtime()
-                        }
+        if(generation!=backgroundProbeGeneration || !appInForeground ||
+            !licenseReady || safeStartupMode ||
+            !prefs.getBoolean("background_url_checks",false))return
+        // Engine disable is a control-plane change, not a decoder-capacity
+        // decision. Handle it before network/buffering gates: otherwise an
+        // exhausted Media3 queue can strand the enabled LibVLC fallback.
+        if(!engineEnabled("Media3")){
+            probeQueue.clear()
+            // Native decoder callbacks can be delayed indefinitely after an
+            // engine is disabled. Reclaim the background-only Media3 players
+            // now, rather than blocking the enabled LibVLC phase forever.
+            // Never release the foreground player from this collection.
+            probeWatchdogs.values.forEach { handler.removeCallbacks(it) }
+            probeWatchdogs.clear()
+            probePlayers.toList().forEach { probe ->
+                try { probe.stop() } catch (_: Exception) {}
+                try { probe.release() } catch (_: Exception) {}
+            }
+            probePlayers.clear()
+            probeInFlight = 0
+            // With both engines disabled, close this scan window rather
+            // than abandoning the rotating scan indefinitely.
+            if(engineEnabled("LibVLC")) launchNextVlcProbe(generation)
+            else scheduleNextBackgroundProbeWindow(generation)
+            return
+        }
+        // An empty Media3 queue needs no network or decoder capacity.
+        // In particular, foreground buffering must not block the handoff
+        // after the last Media3 result has already been collected.
+        if(probeQueue.isEmpty()){
+            if(probeInFlight==0)launchNextVlcProbe(generation)
+            return
+        }
+        if(!hasNetworkConnection()){
+            periodicProbeTask?.let{handler.removeCallbacks(it)}
+            periodicProbeTask=Runnable{
+                if(generation==backgroundProbeGeneration &&
+                    prefs.getBoolean("background_url_checks",false))launchNextProbe(generation)
+            }
+            handler.postDelayed(periodicProbeTask!!,15000L)
+            return
+        }
+        // A foreground decoder always has priority: avoid two simultaneous
+        // background players competing for hardware codecs at startup.
+        val foregroundBuffering=active>=0 &&
+            (player?.playbackState==Player.STATE_BUFFERING ||
+             player?.playbackState==Player.STATE_IDLE)
+        // A WebView channel is not a native decoder, so its background
+        // checks may continue. Native startup and buffering take priority.
+        val foregroundStarting=active>=0 &&
+            ((player==null && web==null && vlcPlayer==null) ||
+             (player!=null && player?.isPlaying!=true))
+        val limit=VideoQualityPolicy.backgroundProbeLimit(
+            active>=0,foregroundBuffering,vlcPlayer!=null,foregroundStarting)
+        if(limit==0){
+            // Defer optional decoder work until foreground startup/rebuffering
+            // settles; retain the same generation and remaining probe queue.
+            periodicProbeTask?.let{handler.removeCallbacks(it)}
+            periodicProbeTask=Runnable{
+                if(generation==backgroundProbeGeneration)launchNextProbe(generation)
+            }
+            handler.postDelayed(periodicProbeTask!!,3000L)
+            return
+        }
+        // The scan queue was already ordered at generation creation.
+        // Re-sorting the entire queue before every probe caused repeated
+        // O(n²) work on the Activity thread for large IPTV playlists.
+        // Cap synchronous URL filtering/decoder creation per UI dispatch.
+        // Large playlists can contain hundreds of malformed or unsupported
+        // entries; draining them all in one loop freezes remote navigation.
+        var inspectedThisDispatch=0
+        while(probeInFlight<limit && probeQueue.isNotEmpty() &&
+            inspectedThisDispatch<32 && engineEnabled("Media3")){
+            inspectedThisDispatch++
+            val channel=probeQueue.removeFirst()
+            // A channel switch after queue construction must not allow a
+            // background decoder to probe the newly selected foreground group.
+            val foreground=channels.getOrNull(active)
+            if(!BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
+                foreground?.let{channelKey(it)},foreground?.url,
+                channelKey(channel),channel.url
+            ))continue
+            if(!BackgroundProbeUrlPolicy.isMedia3ProbeCandidate(channel.url))continue
+            if(!media3ProbeAttempted.add(BackgroundProbeUrlPolicy.probeIdentity(channel.url)))continue
+            val probePlaylist=backgroundProbePlaylist
+            probeInFlight++
+            var createdProbe:ExoPlayer?=null
+            try{
+                val factory=DefaultHttpDataSource.Factory()
+                    .setAllowCrossProtocolRedirects(true)
+                    .setConnectTimeoutMs(3500).setReadTimeoutMs(4500)
+                    .setDefaultRequestProperties(channel.headers)
+                val probe=ExoPlayer.Builder(this)
+                    .setMediaSourceFactory(mediaSourceFactoryForStreams(factory)).build()
+                createdProbe=probe
+                probePlayers.add(probe)
+                probe.volume=0f
+                var completed=false
+                var watchdog:Runnable?=null
+                fun finish(media3Works:Boolean){
+                    if(completed || generation!=backgroundProbeGeneration || probe !in probePlayers)return
+                    completed=true
+                    watchdog?.let{handler.removeCallbacks(it)}
+                    probeWatchdogs.remove(probe)
+                    probePlayers.remove(probe)
+                    try{probe.stop()}catch(_:Exception){}
+                    try{probe.release()}catch(_:Exception){}
+                    if(generation!=backgroundProbeGeneration)return
+                    probeInFlight=(probeInFlight-1).coerceAtLeast(0)
+                    val currentForeground=channels.getOrNull(active)
+                    val stillBackground=BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
+                        currentForeground?.let{channelKey(it)},currentForeground?.url,
+                        channelKey(channel),channel.url
+                    )
+                    val resultEligible=stillBackground &&
+                        channels === probePlaylist && licenseReady &&
+                        !safeStartupMode && engineEnabled("Media3") &&
+                        prefs.getBoolean("background_url_checks",false)
+                    if(resultEligible){
+                        probeReachable[channel.url]=media3Works
+                        media3ProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
                     }
+                    if(media3Works && resultEligible){
+                        // Each engine's reachability is independent. A Media3
+                        // success must not erase a proven LibVLC result.
+                        unavailableChannels.remove(channelKey(channel))
+                    }
+                    // launchNextProbe handles the Media3-to-LibVLC handoff
+                    // once the last in-flight Media3 probe finishes.
+                    launchNextProbe(generation)
+                }
+                probe.addListener(object:Player.Listener{
+                    override fun onIsPlayingChanged(isPlaying:Boolean){
+                        if(isPlaying)handler.post{finish(true)}
+                    }
+                    override fun onPlaybackStateChanged(state:Int){
+                        if(state==Player.STATE_ENDED)handler.post{finish(false)}
+                    }
+                    override fun onPlayerError(error:PlaybackException){
+                        handler.post{finish(false)}
+                    }
+                })
+                watchdog=Runnable{finish(false)}
+                probeWatchdogs[probe]=watchdog!!
+                handler.postDelayed(watchdog!!,7000L)
+                probe.setMediaItem(mediaItemForStream(channel.url))
+                probe.prepare()
+                probe.play()
+            }catch(e:Exception){
+                HomeTvDiagnostics.w("HomeTV","Background Media3 probe failed for "+channel.name,e)
+                createdProbe?.let{failed->
+                    probeWatchdogs.remove(failed)?.let{handler.removeCallbacks(it)}
+                    probePlayers.remove(failed)
+                    try{failed.stop()}catch(_:Exception){}
+                    try{failed.release()}catch(_:Exception){}
+                }
+                if(generation==backgroundProbeGeneration){
+                    probeInFlight=(probeInFlight-1).coerceAtLeast(0)
+                    val currentForeground=channels.getOrNull(active)
+                    if(BackgroundProbeUrlPolicy.shouldProbeOtherChannel(
+                        currentForeground?.let{channelKey(it)},currentForeground?.url,
+                        channelKey(channel),channel.url
+                    ) && channels === probePlaylist && engineEnabled("Media3") &&
+                        prefs.getBoolean("background_url_checks",false) &&
+                        licenseReady && !safeStartupMode){
+                        probeReachable[channel.url]=false
+                        media3ProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
+                    }
+                    // LibVLC already has its own ordered engine-first queue.
+                    // Continue the Media3 phase even when a probe fails to start.
+                    handler.post{launchNextProbe(generation)}
                 }
             }
-            handler.post{
-                if(generation==backgroundProbeGeneration && channels===playlist)
-                    scheduleNextBackgroundProbeWindow(generation)
-            }
+        }
+        if(probeQueue.isNotEmpty() && probeInFlight<limit && engineEnabled("Media3")){
+            // Yield to input, video rendering and player callbacks.
+            handler.post{if(generation==backgroundProbeGeneration)launchNextProbe(generation)}
+        }else if(probeInFlight==0 && probeQueue.isEmpty()){
+            launchNextVlcProbe(generation)
         }
     }
     // Discover links from a bounded Web TV directory, without touching normal IPTV entries.
@@ -4580,9 +5537,35 @@ class MainActivity: Activity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
     }
+    // Explicitly classify .mpd URLs, including .isml/.mpd and query strings.
+    // HLS and ordinary streams keep their existing Media3 handling.
+    // Apply the same MPEG-TS compatibility configuration to foreground playback,
+    // channel previews and both Media3 probe paths. Some IPTV TS streams omit
+    // H.264 AUDs or IDR keyframes and otherwise remain stuck buffering.
+    private fun mediaSourceFactoryForStreams(
+        dataSourceFactory:androidx.media3.datasource.DataSource.Factory
+    ):DefaultMediaSourceFactory {
+        val extractors=DefaultExtractorsFactory().setTsExtractorFlags(
+            DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
+                DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES
+        )
+        return DefaultMediaSourceFactory(dataSourceFactory,extractors)
+    }
+    private fun mediaItemForStream(url:String):MediaItem {
+        val path=try{Uri.parse(url).path.orEmpty().lowercase(java.util.Locale.ROOT)}
+            catch(_:Exception){url.substringBefore('?').lowercase(java.util.Locale.ROOT)}
+        val mime=when(streamKind(url)){
+            "dash"->androidx.media3.common.MimeTypes.APPLICATION_MPD
+            "hls"->androidx.media3.common.MimeTypes.APPLICATION_M3U8
+            "smooth"->androidx.media3.common.MimeTypes.APPLICATION_SS
+            else->null
+        }
+        return if(mime!=null)MediaItem.Builder().setUri(url).setMimeType(mime).build()
+        else MediaItem.fromUri(url)
+    }
     private fun confirmExit(){
-        val dialog=AlertDialog.Builder(this).setTitle("Exit NexTV?")
-            .setMessage("Stop playback and close NexTV?")
+        val dialog=AlertDialog.Builder(this).setTitle("Exit MyView?")
+            .setMessage("Stop playback and close MyView?")
             .setPositiveButton("Exit"){_,_->
                 // Exit the task instead of returning to the Home menu.
                 stopPlayback()
@@ -4611,6 +5594,138 @@ class MainActivity: Activity() {
     }
     private fun audioTrackPreferenceKey(c:Channel)="audio_track_"+channelKey(c)
     private fun audioTrackSignatureKey(c:Channel)="audio_track_signature_"+channelKey(c)
+    private fun vlcAudioTrackPreferenceKey(c:Channel)="audio_track_vlc_"+channelKey(c)
+
+    private fun audioFormatSignature(format:androidx.media3.common.Format):String =
+        listOf(format.id.orEmpty(),normalizeAudioLanguage(format.language).orEmpty(),
+            format.label.orEmpty(),format.sampleMimeType.orEmpty(),
+            format.channelCount.toString(),format.roleFlags.toString()).joinToString("|")
+
+    private fun applyAudioTrackPreference(c:Channel,exo:ExoPlayer){
+        val savedLanguage=prefs.getString(audioTrackPreferenceKey(c),null)
+        val savedSignature=prefs.getString(audioTrackSignatureKey(c),null)
+        val wanted=normalizeAudioLanguage(savedLanguage)
+            ?: if(savedLanguage==null && !prefs.getBoolean("audio_use_stream_default",false))
+                normalizeAudioLanguage(preferredAudioLanguage()) else null
+        if(wanted==null && savedSignature.isNullOrBlank())return
+        val available=exo.currentTracks.groups.asSequence()
+            .filter{it.type==C.TRACK_TYPE_AUDIO}
+            .flatMap{group->(0 until group.length).asSequence()
+                .filter{index->group.isTrackSupported(index)}
+                .map{index->Triple(group,index,group.getTrackFormat(index))}}
+            .toList()
+        val matching=if(!savedSignature.isNullOrBlank())
+            available.firstOrNull{(_,_,format)->audioFormatSignature(format)==savedSignature}
+                ?: available.firstOrNull{(_,_,format)->normalizeAudioLanguage(format.language)==wanted}
+        else available.firstOrNull{(_,_,format)->normalizeAudioLanguage(format.language)==wanted}
+        if(matching!=null){
+            val (group,index,_)=matching
+            if(!group.isTrackSelected(index)){
+                exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup,listOf(index)))
+                    .build()
+            }
+        }else if(savedLanguage==null && wanted!=null){
+            exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                .setPreferredAudioLanguage(wanted)
+                .build()
+        }
+    }
+
+    private fun vlcTrackLanguage(name:String):String?{
+        val value=name.lowercase(java.util.Locale.ROOT)
+        return when{
+            value.contains("malayalam") || Regex("\\bmal\\b").containsMatchIn(value)->"ml"
+            value.contains("english") || Regex("\\beng?\\b").containsMatchIn(value)->"en"
+            value.contains("hindi") || Regex("\\bhin\\b").containsMatchIn(value)->"hi"
+            value.contains("tamil") || Regex("\\btam\\b").containsMatchIn(value)->"ta"
+            value.contains("arabic") || Regex("\\bara\\b").containsMatchIn(value)->"ar"
+            else->null
+        }
+    }
+
+    private data class VlcAudioChoice(val id:Int,val name:String)
+
+    // LibVLC 3.x exposes getAudioTracks/getAudioTrack/setAudioTrack.
+    // LibVLC 4 EAP changes this API; reflection avoids linking unavailable
+    // methods while keeping the established 3.x behavior intact.
+    private fun vlcAudioChoices(vlc:VlcPlayer):List<VlcAudioChoice> = try{
+        val method=vlc.javaClass.methods.firstOrNull{
+            it.name=="getAudioTracks" && it.parameterCount==0
+        } ?: return emptyList()
+        val tracks=method.invoke(vlc) as? Array<*> ?: return emptyList()
+        tracks.mapNotNull{track->
+            if(track==null)return@mapNotNull null
+            val id=track.javaClass.getField("id").getInt(track)
+            val name=track.javaClass.getField("name").get(track)?.toString().orEmpty()
+            if(id>=0)VlcAudioChoice(id,name) else null
+        }
+    }catch(e:ReflectiveOperationException){
+        HomeTvDiagnostics.w("Playback","LibVLC audio track enumeration unavailable",e)
+        emptyList()
+    }
+
+    private fun vlcSelectedAudioTrack(vlc:VlcPlayer):Int? = try{
+        val method=vlc.javaClass.methods.firstOrNull{
+            it.name=="getAudioTrack" && it.parameterCount==0
+        } ?: return null
+        (method.invoke(vlc) as? Number)?.toInt()
+    }catch(_:ReflectiveOperationException){null}
+
+    private fun vlcSelectAudioTrack(vlc:VlcPlayer,id:Int):Boolean = try{
+        val method=vlc.javaClass.methods.firstOrNull{
+            it.name=="setAudioTrack" && it.parameterCount==1
+        } ?: return false
+        method.invoke(vlc,id) as? Boolean ?: false
+    }catch(e:ReflectiveOperationException){
+        HomeTvDiagnostics.w("Playback","LibVLC audio track selection unavailable",e)
+        false
+    }
+
+    private fun applyVlcAudioTrackPreference(c:Channel,vlc:VlcPlayer){
+        val tracks=vlcAudioChoices(vlc)
+        if(tracks.isEmpty())return
+        val savedName=prefs.getString(vlcAudioTrackPreferenceKey(c),null)
+        val wanted=if(savedName.isNullOrBlank()){
+            if(prefs.getBoolean("audio_use_stream_default",false))null
+            else normalizeAudioLanguage(preferredAudioLanguage())
+        }else null
+        val match=if(!savedName.isNullOrBlank())
+            tracks.firstOrNull{it.name==savedName}
+        else tracks.firstOrNull{track->wanted!=null && vlcTrackLanguage(track.name)==wanted}
+        if(match!=null && vlcSelectedAudioTrack(vlc)!=match.id){
+            vlcSelectAudioTrack(vlc,match.id)
+        }
+    }
+
+    private fun vlcAudioTracks(vlc:VlcPlayer){
+        val tracks=vlcAudioChoices(vlc)
+        if(tracks.isEmpty()){
+            AlertDialog.Builder(this).setTitle("Audio tracks")
+                .setMessage("LibVLC has not reported any selectable audio tracks yet. Wait for playback to start and try again.")
+                .setPositiveButton("OK",null).show()
+            return
+        }
+        val names=tracks.map{track->
+            val name=track.name.takeIf{it.isNotBlank()} ?: "Audio track "+track.id
+            name+(if(track.id==vlcSelectedAudioTrack(vlc))" ✓" else "")
+        }.toTypedArray()
+        AlertDialog.Builder(this).setTitle("Select audio track")
+            .setItems(names){_,position->
+                val selected=tracks[position]
+                if(vlcSelectAudioTrack(vlc,selected.id)){
+                    channels.getOrNull(active)?.let{prefs.edit()
+                        .putString(vlcAudioTrackPreferenceKey(it),selected.name).apply()}
+                    showBanner("Audio track: "+names[position])
+                }else showBanner("Could not change the LibVLC audio track",true)
+            }
+            .setNeutralButton("Use stream default next time"){_,_->
+                channels.getOrNull(active)?.let{prefs.edit().remove(vlcAudioTrackPreferenceKey(it)).apply()}
+                showBanner("Audio preference cleared for this channel")
+            }
+            .setNegativeButton("Cancel",null).show()
+    }
+
     private fun choosePreferredAudioLanguage(){
         val choices=arrayOf("Malayalam (ml)","English (en)","Hindi (hi)","Tamil (ta)","Arabic (ar)","Use stream default")
         val codes=arrayOf("ml","en","hi","ta","ar","")
@@ -4632,9 +5747,17 @@ class MainActivity: Activity() {
                 if(index in channels.indices){
                     val channel=channels[index]
                     prefs.edit().remove(audioTrackPreferenceKey(channel))
-                        .remove(audioTrackSignatureKey(channel)).apply()
-                    if(code.isBlank())mpvPlayer?.chooseDefaultAudioTrack()
-                    else mpvPlayer?.choosePreferredAudioLanguage(code)
+                        .remove(audioTrackSignatureKey(channel))
+                        .remove(vlcAudioTrackPreferenceKey(channel)).apply()
+                    player?.let{exo->
+                        exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                            .setPreferredAudioLanguage(if(code.isBlank())null else code)
+                            .build()
+                    }
+                    vlcPlayer?.let{vlc->
+                        if(code.isNotBlank())applyVlcAudioTrackPreference(channel,vlc)
+                    }
                 }
                 showBanner(if(code.isBlank())"Audio: stream default" else "Preferred audio: "+choices[which])
             }.setNegativeButton("Cancel",null).create()
@@ -4650,100 +5773,142 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
 
-    private fun restoreMpvTrackPreferences(c:Channel,view:MpvPlaybackView){
-        // Only the foreground session may restore preferences. Track IDs are
-        // stream-local; saved labels are matched against the current track list.
-        val signature=prefs.getString(audioTrackSignatureKey(c),null)
-        val language=if(prefs.getBoolean("audio_use_stream_default",false))null
-            else normalizeAudioLanguage(preferredAudioLanguage())
-        val audio=view.tracks("audio")
-        val selected=audio.firstOrNull{signature!=null && it.label==signature}
-        if(selected!=null)view.chooseAudioTrack(selected.id)
-        else if(language!=null)view.choosePreferredAudioLanguage(language)
-        else view.chooseDefaultAudioTrack()
-
-        when(val subtitle=subtitlePreference(c)){
-            "off"->view.chooseSubtitleTrack(null)
-            "auto"->view.chooseDefaultSubtitleTrack()
-            else->{
-                val track=view.tracks("sub").firstOrNull{it.label==subtitle}
-                if(track!=null)view.chooseSubtitleTrack(track.id)
-                else view.chooseDefaultSubtitleTrack()
+    private fun audioTracks(){
+        val vlc=vlcPlayer
+        if(vlc!=null){vlcAudioTracks(vlc);return}
+        val exo=player
+        if(exo==null){Toast.makeText(this,"Audio track selection is available for IPTV streams",Toast.LENGTH_LONG).show();return}
+        val entries=mutableListOf<Triple<Tracks.Group,Int,androidx.media3.common.Format>>()
+        val names=mutableListOf<String>()
+        for(group in exo.currentTracks.groups){
+            if(group.type!=C.TRACK_TYPE_AUDIO)continue
+            for(i in 0 until group.length){
+                val fmt=group.getTrackFormat(i)
+                val language=normalizeAudioLanguage(fmt.language) ?: fmt.language ?: "Unknown language"
+                val codec=fmt.sampleMimeType ?: "Unknown codec"
+                val supported=group.isTrackSupported(i)
+                names.add(language+" · "+codec+(if(group.isTrackSelected(i))" ✓" else "")+(if(!supported)" (unsupported)" else ""))
+                if(supported)entries.add(Triple(group,i,fmt))
             }
         }
-    }
-
-    private fun audioTracks(){
-        val mpv=mpvPlayer
-        if(mpv==null){
-            showBanner("Audio tracks are available after MPV playback starts")
+        val supportedNames=entries.map{entry->
+            val group=entry.first;val index=entry.second
+            val fmt=entry.third
+            val language=normalizeAudioLanguage(fmt.language) ?: fmt.language ?: "Unknown language"
+            language+" · "+(fmt.sampleMimeType ?: "Unknown codec")+
+                (if(group.isTrackSelected(index))" ✓" else "")
+        }
+        if(entries.isEmpty()){
+            showSideDialog(AlertDialog.Builder(this).setTitle("Audio tracks")
+                .setMessage(if(names.isEmpty())"No audio track was detected for this channel. Try another stream URL."
+                    else "Audio tracks were detected, but this device cannot currently decode them.")
+                .setPositiveButton("OK",null).create())
             return
         }
-        val tracks=mpv.tracks("audio")
-        if(tracks.isEmpty()){
-            showBanner("No selectable audio tracks found")
-            return
-        }
-        val labels=tracks.map{it.label+(if(it.selected)" ✓" else "")}.toTypedArray()
-        val picked=tracks.indexOfFirst{it.selected}.coerceAtLeast(0)
-        showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Audio tracks")
-            .setSingleChoiceItems(labels,picked){dialog,index->
-                val selected=tracks[index]
-                mpv.chooseAudioTrack(selected.id)
-                channels.getOrNull(active)?.let{channel->
-                    prefs.edit().putString(audioTrackSignatureKey(channel),selected.label)
-                        .remove(audioTrackPreferenceKey(channel)).apply()
-                }
-                dialog.dismiss()
-                showBanner("Audio: "+selected.label)
-            }.setNeutralButton("Automatic"){dialog,_->
-                channels.getOrNull(active)?.let{channel->
-                    prefs.edit().remove(audioTrackSignatureKey(channel))
-                        .remove(audioTrackPreferenceKey(channel)).apply()
-                }
-                mpv.chooseDefaultAudioTrack()
-                dialog.dismiss()
-                showBanner("Audio: stream default")
-            }.setNegativeButton("Cancel",null).create())
+        val dialog=AlertDialog.Builder(this).setTitle("Select audio track").setItems(supportedNames.toTypedArray()){_,position->
+            val (group,index,format)=entries[position]
+            exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup,listOf(index)))
+                .build()
+            channels.getOrNull(active)?.let{channel->
+                val language=normalizeAudioLanguage(format.language)
+                val edit=prefs.edit().putString(audioTrackSignatureKey(channel),audioFormatSignature(format))
+                if(language!=null)edit.putString(audioTrackPreferenceKey(channel),language)
+                else edit.remove(audioTrackPreferenceKey(channel))
+                edit.remove(vlcAudioTrackPreferenceKey(channel)).apply()
+            }
+            showBanner("Audio track: "+supportedNames[position])
+        }.setNeutralButton("Automatic"){_,_->
+            channels.getOrNull(active)?.let{channel->prefs.edit()
+                .remove(audioTrackPreferenceKey(channel)).remove(audioTrackSignatureKey(channel)).apply()}
+            exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+                .setPreferredAudioLanguage(if(prefs.getBoolean("audio_use_stream_default",false)) null else preferredAudioLanguage())
+                .build()
+        }.setNegativeButton("Cancel",null).create()
+        showSideDialog(dialog)
     }
 
+    // Media3 subtitle choices are saved per logical channel. This does not alter
+    // the selected playback engine or the stream URL.
     private fun subtitlePreference(c:Channel):String =
         prefs.getString("subtitle_"+hash(channelKey(c)),"auto") ?: "auto"
 
+    private fun applySubtitlePreference(c:Channel){
+        val exo=player ?:return
+        val pref=subtitlePreference(c)
+        val builder=exo.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT,pref=="off")
+        if(pref!="off" && pref!="auto"){
+            builder.setPreferredTextLanguage(pref)
+                .setSelectUndeterminedTextLanguage(false)
+        }else{
+            builder.setPreferredTextLanguage(null)
+                .setSelectUndeterminedTextLanguage(false)
+        }
+        exo.trackSelectionParameters=builder.build()
+    }
+
     private fun subtitleTracks(channelIndex:Int=active){
         val c=channels.getOrNull(channelIndex) ?:return
-        val mpv=mpvPlayer
-        if(mpv==null || active !in channels.indices || !sameChannel(c,channels[active])){
+        if(active !in channels.indices || !sameChannel(c,channels[active])){
             showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" — Subtitles")
-                .setMessage("Subtitle tracks can be selected after this channel starts playing through MPV.")
+                .setMessage("Subtitle tracks can be selected after this channel starts playing.")
                 .setPositiveButton("Watch channel"){_,_->playIndex(preferredChannel(channelIndex))}
                 .setNegativeButton("Cancel",null).create())
             return
         }
-        val tracks=mpv.tracks("sub")
-        val labels=(listOf("Off","Automatic")+tracks.map{it.label+(if(it.selected)" ✓" else "")}).toTypedArray()
-        val saved=subtitlePreference(c)
-        val selected=when{
-            saved=="off"->0
-            saved=="auto"->1
-            else->tracks.indexOfFirst{it.label==saved}.let{if(it<0)1 else it+2}
+        val exo=player
+        if(exo==null){
+            showSideDialog(AlertDialog.Builder(this).setTitle("Subtitles")
+                .setMessage("Subtitle selection is available for streams playing through Media3. This channel is using another playback engine.")
+                .setPositiveButton("OK",null).create())
+            return
         }
-        showSideDialog(AlertDialog.Builder(this).setTitle("MPV — Subtitle tracks")
-            .setSingleChoiceItems(labels,selected){dialog,choice->
-                val value=when(choice){
-                    0->"off"
-                    1->"auto"
-                    else->tracks[choice-2].label
+        val choices=mutableListOf("Off","Automatic")
+        val entries=mutableListOf<Pair<androidx.media3.common.TrackGroup,Int>>()
+        val languages=mutableListOf<String>()
+        for(group in exo.currentTracks.groups){
+            if(group.type!=C.TRACK_TYPE_TEXT)continue
+            for(i in 0 until group.length){
+                if(!group.isTrackSupported(i))continue
+                val format=group.getTrackFormat(i)
+                val language=format.language ?: "und"
+                val label=if(language=="und")"Undetermined" else
+                    try{java.util.Locale.forLanguageTag(language).displayLanguage.ifBlank{language}}
+                    catch(_:Exception){language}
+                choices.add(label+" · "+(format.label ?: format.sampleMimeType ?: "Subtitles")+
+                    (if(group.isTrackSelected(i))" ✓" else ""))
+                entries.add(group.mediaTrackGroup to i)
+                languages.add(language)
+            }
+        }
+        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — Subtitles")
+            .setItems(choices.toTypedArray()){_,choice->
+                val editor=prefs.edit()
+                if(choice==0){
+                    editor.putString("subtitle_"+hash(channelKey(c)),"off").apply()
+                    applySubtitlePreference(c)
+                    showBanner("Subtitles off")
+                }else if(choice==1){
+                    editor.putString("subtitle_"+hash(channelKey(c)),"auto").apply()
+                    applySubtitlePreference(c)
+                    showBanner("Subtitles automatic")
+                }else{
+                    val position=choice-2
+                    val (group,track)=entries[position]
+                    val language=languages[position]
+                    editor.putString("subtitle_"+hash(channelKey(c)),
+                        if(language=="und")"auto" else language).apply()
+                    applySubtitlePreference(c)
+                    exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT,false)
+                        .setOverrideForType(TrackSelectionOverride(group,listOf(track))).build()
+                    showBanner("Subtitles: "+choices[choice])
                 }
-                prefs.edit().putString("subtitle_"+hash(channelKey(c)),value).apply()
-                when(choice){
-                    0->mpv.chooseSubtitleTrack(null)
-                    1->mpv.chooseDefaultSubtitleTrack()
-                    else->mpv.chooseSubtitleTrack(tracks[choice-2].id)
-                }
-                dialog.dismiss()
-                showBanner("Subtitles: "+labels[choice])
-            }.setNegativeButton("Cancel",null).create())
+            }.setNegativeButton("Cancel",null).create()
+        showSideDialog(dialog)
     }
 
     private var sleepTimerTask:Runnable?=null
@@ -4809,6 +5974,30 @@ class MainActivity: Activity() {
             )
         }
         return picturePresets[selectedPicturePreset(c)] ?: picturePresets.getValue("Standard")
+    }
+    @UnstableApi
+    private fun media3PictureEffects(c:Channel):List<androidx.media3.common.Effect>{
+        val preset=selectedPictureValues(c)
+        val brightness=((preset.brightness-1f)*0.5f).coerceIn(-1f,1f)
+        val contrast=((preset.contrast-1f)*0.5f).coerceIn(-1f,1f)
+        val saturation=((preset.saturation-1f)*100f).coerceIn(-100f,100f)
+        return buildList {
+            if(brightness!=0f)add(Brightness(brightness))
+            if(contrast!=0f)add(Contrast(contrast))
+            if(saturation!=0f)add(HslAdjustment.Builder().adjustSaturation(saturation).build())
+        }
+    }
+    @UnstableApi
+    private fun applyMedia3PicturePreset(exo:ExoPlayer,c:Channel){
+        // Standard means native Media3 rendering. Preset changes restart the
+        // channel so this is decided before prepare(), not on a live TV decoder.
+        if(selectedPicturePreset(c)=="Standard")return
+        try{
+            exo.setVideoEffects(media3PictureEffects(c))
+        }catch(e:Exception){
+            // Keep the decoder's native surface path on adjustment failure.
+            HomeTvDiagnostics.w("HomeTV","Media3 picture adjustment unavailable; native video rendering retained",e)
+        }
     }
     private var picturePreviewRestartTask:Runnable?=null
     private fun restartCurrentChannelForPicturePreset(index:Int,c:Channel){
@@ -4880,16 +6069,59 @@ class MainActivity: Activity() {
     // Audio presets are per channel. Unsupported native EQ implementations retain
     // the original audio rather than claiming to apply a filter.
     private val audioPresetNames=arrayOf("Standard","Cinema","Music","Dialogue","Bass Boost","Night Mode")
+    private var platformEqualizer:android.media.audiofx.Equalizer?=null
     private var previewAudioChannelKey:String?=null
     private var previewAudioMode:String?=null
     private fun audioPresetKey(c:Channel)="audio_preset_"+hash(channelKey(c))
     private fun selectedAudioPreset(c:Channel)=prefs.getString(audioPresetKey(c),"Standard")
         ?.takeIf{it in audioPresetNames} ?: "Standard"
+    private fun audioBands(name:String):IntArray=when(name){
+        "Cinema"->intArrayOf(250,120,0,160,120)
+        "Music"->intArrayOf(180,80,0,100,160)
+        "Dialogue"->intArrayOf(-160,-80,160,280,120)
+        "Bass Boost"->intArrayOf(350,240,0,-50,-80)
+        "Night Mode"->intArrayOf(-150,-80,100,140,-100)
+        else->intArrayOf(0,0,0,0,0)
+    }
+    private fun releaseAudioEqualizer(){
+        val old=platformEqualizer
+        platformEqualizer=null
+        try{old?.enabled=false;old?.release()}catch(e:Exception){
+            HomeTvDiagnostics.w("Audio","Equalizer release failed",e)
+        }
+    }
     private fun applyAudioPreset(){
-        val c=channels.getOrNull(active) ?:return
-        val preset=if(previewAudioChannelKey==channelKey(c))
-            previewAudioMode ?: selectedAudioPreset(c) else selectedAudioPreset(c)
-        mpvPlayer?.setAudioPreset(preset)
+        releaseAudioEqualizer()
+        val c=channels.getOrNull(active)?:return
+        val preset=if(previewAudioChannelKey==channelKey(c)) previewAudioMode ?: selectedAudioPreset(c) else selectedAudioPreset(c)
+        if(preset=="Standard")return
+        val session=player?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET
+        if(session==C.AUDIO_SESSION_ID_UNSET){
+            HomeTvDiagnostics.i("Audio","Platform EQ not available for current engine: "+preset)
+            return
+        }
+        try{
+            val eq=android.media.audiofx.Equalizer(0,session)
+            val bands=audioBands(preset)
+            val range=eq.bandLevelRange
+            for(i in 0 until eq.numberOfBands.toInt()){
+                val centerHz=eq.getCenterFreq(i.toShort())/1000
+                val slot=when{
+                    centerHz<180->0
+                    centerHz<650->1
+                    centerHz<1800->2
+                    centerHz<5500->3
+                    else->4
+                }
+                val millibels=(bands[slot]*3).coerceIn(range[0].toInt(),range[1].toInt())
+                eq.setBandLevel(i.toShort(),millibels.toShort())
+            }
+            eq.enabled=true
+            platformEqualizer=eq
+        }catch(e:Exception){
+            HomeTvDiagnostics.w("Audio","Device equalizer unavailable",e)
+            releaseAudioEqualizer()
+        }
     }
     private fun configureChannelAudioPreset(index:Int){
         val c=channels.getOrNull(index)?:return
@@ -4902,7 +6134,7 @@ class MainActivity: Activity() {
             if(active!=index)return
             previewAudioChannelKey=channelKey(c)
             previewAudioMode=audioPresetNames[position]
-            // MPV applies the preset to the active audio filter chain.
+            // Media3 can adjust the active audio session without restarting playback.
             applyAudioPreset()
         }
         val dialog=AlertDialog.Builder(this)
@@ -4949,7 +6181,7 @@ class MainActivity: Activity() {
             pending=position
             if(active!=activeIndex || position==modes.size)return
         // Do not recreate an active
-            // MPV decoder merely because remote focus moved.
+            // Media3/LibVLC decoder merely because a remote focus moved.
             val values=picturePresets[modes[position]] ?: return
         }
         val dialog=AlertDialog.Builder(this)
@@ -4999,14 +6231,13 @@ class MainActivity: Activity() {
             "Audio tracks",
             "Subtitles",
             "Sleep timer",
-            "MPV decoder ("+selectedMpvDecoder(c)+")",
+            "Playback Engine ("+(prefs.getString("manual_engine_"+channelKey(c),null) ?: prefs.getString("engine","Media3"))+")",
             "Channel list",
             "Channel volume ("+prefs.getInt("channel_volume_"+hash(c.url),100)+"%)",
             "Buffering ("+(prefs.getString("buffer_channel_"+channelKey(c),null) ?: "Universal")+")",
             "Color Presets ("+selectedPicturePreset(c)+")",
             "Audio Presets ("+selectedAudioPreset(c)+")",
-            "Manage Favorites Groups",
-            "MPV HDR/SDR output ("+selectedMpvOutput(c)+")"
+            "Manage Favorites Groups"
         )
         val dialog=AlertDialog.Builder(this).setTitle(numberFor(active).toString()+". "+c.name+" Settings")
             .setItems(opts){_,choice->
@@ -5193,7 +6424,7 @@ class MainActivity: Activity() {
     }
     private fun requestYoutubeStartupAudio(viewer:WebView,channelIndex:Int,screen:FrameLayout){
         // YouTube inserts its video asynchronously. Retry only while audio is
-        // unavailable; do not restart native playback.
+        // unavailable; do not restart playback or affect Media3/LibVLC streams.
         val generation=playbackGeneration
         val delays=longArrayOf(600L,1400L,2700L,4500L,7000L,11000L,15000L)
         youtubeUnmuteTask?.let{handler.removeCallbacks(it)}
@@ -5375,7 +6606,7 @@ class MainActivity: Activity() {
     private var previewTask:Runnable?=null
     private var previewInfoPanel:View?=null
     private var previewVideoTask:Runnable?=null
-    private var previewPlayer:MpvPlaybackView?=null
+    private var previewPlayer:ExoPlayer?=null
     private var previewPanel:FrameLayout?=null
     private var previewGeneration=0
     private fun closeVideoPreview(){
@@ -5384,9 +6615,8 @@ class MainActivity: Activity() {
         previewVideoTask=null
         val oldPreview=previewPlayer
         previewPlayer=null
-        oldPreview?.listener=null
         try{oldPreview?.release()}catch(e:Throwable){
-            HomeTvDiagnostics.w("Playback","MPV preview release failed",e)
+            HomeTvDiagnostics.w("Playback","Preview release failed during channel switch",e)
         }
         previewPanel?.let{panel->(panel.parent as? android.view.ViewGroup)?.removeView(panel)}
         previewPanel=null
@@ -5397,8 +6627,10 @@ class MainActivity: Activity() {
         val screen=videoScreen ?:return
         if(index !in channels.indices)return
         val resolvedIndex=preferredChannel(index)
-        val c=channels.getOrNull(resolvedIndex) ?:return
-        // Do not allocate a second MPV session for the foreground source.
+        if(resolvedIndex !in channels.indices)return
+        val c=channels[resolvedIndex]
+        // The on-screen player already displays this stream; a duplicate
+        // preview wastes a decoder and competes for network bandwidth.
         if(active in channels.indices && channels[active].url==c.url)return
         if(!BackgroundProbeUrlPolicy.isNativeProbeCandidate(c.url))return
         val width=(resources.displayMetrics.widthPixels*0.28f).toInt().coerceAtLeast(220)
@@ -5424,40 +6656,53 @@ class MainActivity: Activity() {
         val task=object:Runnable{
             private var deferrals=0
             override fun run(){
-                if(generation!=previewGeneration ||
-                    requestedPlaybackGeneration!=playbackGeneration ||
-                    previewIndex!=index || videoScreen!==screen)return
-                if(active in channels.indices && channels[active].url==c.url)return
-                // The foreground decoder takes priority. Never start a preview
-                // during channel startup or when WebView owns the screen.
-                if(web!=null)return
-                if(mpvPlayer?.hasStarted!=true){
-                    if(deferrals++<5)handler.postDelayed(this,600L)
-                    return
+            if(generation!=previewGeneration || requestedPlaybackGeneration!=playbackGeneration ||
+                previewIndex!=index || videoScreen!==screen)return
+            // A preview is optional. Wait briefly for foreground startup, but
+            // never let a stale request create a decoder after channel switching.
+            if(active in channels.indices && channels[active].url==c.url)return
+            if(vlcPlayer!=null || web!=null)return
+            if(player==null || player?.isPlaying!=true){
+                if(deferrals++<5)handler.postDelayed(this,600L)
+                return
+            }
+            try{
+                val factory=DefaultHttpDataSource.Factory()
+                    .setConnectTimeoutMs(4500).setReadTimeoutMs(6000)
+                    .setAllowCrossProtocolRedirects(true)
+                    .setDefaultRequestProperties(c.headers)
+                val previewBuffer=DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(500,2500,250,500).build()
+                val exo=ExoPlayer.Builder(this@MainActivity, DefaultRenderersFactory(this@MainActivity)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON))
+                    .setMediaSourceFactory(mediaSourceFactoryForStreams(factory))
+                    .setLoadControl(previewBuffer)
+                    .build()
+                previewPlayer=exo
+                exo.volume=0f
+                exo.setAudioAttributes(AudioAttributes.DEFAULT,false)
+                val view=PlayerView(this@MainActivity).apply{
+                    player=exo
+                    useController=false
+                    resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
-                try{
-                    val view=MpvPlaybackView(this@MainActivity)
-                    previewPlayer=view
-                    view.listener=object:MpvPlaybackView.Listener{
-                        override fun onFirstPlayback(){
-                            if(previewPlayer!==view || generation!=previewGeneration)return
-                            // Preview is intentionally silent; main audio remains active.
-                            view.setVolume(0)
-                        }
-                        override fun onError(message:String){
-                            if(previewPlayer===view && generation==previewGeneration)
-                                closeVideoPreview()
-                        }
+                panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
+                exo.setMediaItem(mediaItemForStream(c.url))
+                exo.prepare()
+                if(c.mediaType in setOf("movie","series","music")){
+                    val resume=mediaResumeSeconds(c)
+                    if(resume>0)exo.seekTo(resume*1000L)
+                }
+                exo.play()
+                exo.addListener(object:Player.Listener{
+                    override fun onPlayerError(error:PlaybackException){
+                        if(previewPlayer===exo)closeVideoPreview()
                     }
-                    panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
-                    view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c),silentPreview=true)
-                    view.setVolume(0)
-                    view.setPictureScale("Fit")
-                    view.play(c.url,c.headers,isLive=c.mediaType=="live")
-                }catch(e:Throwable){
-                    HomeTvDiagnostics.w("MPV","Preview unavailable",e)
-                    closeVideoPreview()
-                }
+                })
+            }catch(e:Exception){
+                HomeTvDiagnostics.w("HomeTV","Preview unavailable",e)
+                closeVideoPreview()
+            }
             }
         }
         previewVideoTask=task
@@ -5521,7 +6766,8 @@ class MainActivity: Activity() {
                 prefs.getBoolean("show_channel_epg",true)
             val programmes=if(showEpg)programmeList(channel) else emptyList()
             val playing=if(index==active)when{
-                mpvPlayer?.hasStarted==true->"MPV"
+                player!=null->"Media3"
+                vlcPlayer!=null->"LibVLC"
                 else->"Starting"
             } else engineFor(channel)
             val current=programmes.firstOrNull{it.start<=now && it.end>now}
@@ -5590,6 +6836,18 @@ class MainActivity: Activity() {
         3,3,0L,java.util.concurrent.TimeUnit.MILLISECONDS,
         java.util.concurrent.ArrayBlockingQueue<Runnable>(96))
     private val logoLoading=mutableSetOf<String>()
+    private var localLogoOwner:MutableList<Channel>?=null
+    private var localLogoIndex:Map<String,String> = emptyMap()
+    private fun matchedLocalLogo(channel:Channel):String{
+        if(!prefs.getBoolean("myview_smart_logo_matching",true))return ""
+        if(localLogoOwner!==channels){
+            localLogoIndex=SmartLogoPolicy.build(channels.map{
+                SmartLogoPolicy.Entry(it.name,it.epgId,it.logo)
+            })
+            localLogoOwner=channels
+        }
+        return SmartLogoPolicy.resolve(channel.name,channel.epgId,localLogoIndex).orEmpty()
+    }
     private val logoWaiting=mutableMapOf<String,MutableList<ImageView>>()
     private fun logoView(channel:Channel,size:Int=52,reuse:ImageView?=null):ImageView{
         val pixels=(size*resources.displayMetrics.density).toInt()
@@ -5600,7 +6858,9 @@ class MainActivity: Activity() {
         view.tag=null
         view.setImageResource(android.R.drawable.ic_menu_gallery)
         view.imageTintList=android.content.res.ColorStateList.valueOf(0xFFB6C9DD.toInt())
-        val url=channel.logo.trim()
+        val direct=channel.logo.trim()
+        val url=if(direct.startsWith("http://") || direct.startsWith("https://"))
+            direct else matchedLocalLogo(channel)
         if(!url.startsWith("http://") && !url.startsWith("https://"))return view
         view.tag=url
         val cached=logoCache.get(url)
@@ -5712,7 +6972,7 @@ class MainActivity: Activity() {
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
-            text=(selectedPlaylistSource() ?: "ALL PLAYLISTS")+"  •  LEFT for Groups"
+            text=(selectedPlaylistSource() ?: "ALL PLAYLISTS")+"  •  LEFT for Groups / Home"
             textSize=19f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(16,16,8,12)
@@ -5782,7 +7042,6 @@ class MainActivity: Activity() {
         }
         focusRemoteList(list,if(playingPosition>=0)playingPosition else 0)
     }
-    // Three LEFT presses from live video: channels, groups, then actions.
     private fun showLeftNavigation(){
         val screen=videoScreen ?:return
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
@@ -5801,8 +7060,7 @@ class MainActivity: Activity() {
         })
         val list=ListView(this)
         list.adapter=android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,
-            if(groups.isEmpty())listOf("No channel groups — LEFT for menu")
-            else groups.mapIndexed{index,group->"%02d   ▸  %s".format(java.util.Locale.ROOT,index+1,group)})
+            groups.mapIndexed{index,group->"%02d   ▸  %s".format(java.util.Locale.ROOT,index+1,group)})
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         screen.addView(drawer,FrameLayout.LayoutParams(
             (resources.displayMetrics.widthPixels*0.43f).toInt().coerceAtLeast(260),-1,Gravity.START))
@@ -5907,21 +7165,7 @@ class MainActivity: Activity() {
                     if(selected==null)remove("selected_playlist_source")
                     else putString("selected_playlist_source",selected)
                 }.apply()
-                if(selected==null){
-                    showOverlayList()
-                }else{
-                    // Restore the last channel belonging to this playlist; a newly
-                    // added playlist starts with its first eligible live channel.
-                    val savedUrl=prefs.getString("last_url_"+selected,null)
-                    val eligible=channels.indices.filter { i ->
-                        val channel=channels[i]
-                        channel.source==selected && channel.mediaType=="live" &&
-                            !isLocked(channel) && channel.group !in lockedGroupNames()
-                    }
-                    val target=eligible.firstOrNull { channels[it].url==savedUrl }
-                        ?:eligible.firstOrNull()
-                    if(target!=null)playIndex(target) else showOverlayList()
-                }
+                showOverlayList()
             }
             if(selected!=null)openLockedPlaylist(selected,open) else open()
         }
@@ -6023,7 +7267,9 @@ class MainActivity: Activity() {
     private fun applyChannelVolume(){
         val c=channels.getOrNull(active) ?:return
         val gain=channelVolumeGain(c)
-        mpvPlayer?.setVolume((gain*100).toInt())
+        activeChannelGainProcessor?.gain=gain
+        player?.volume=1f
+        try{vlcPlayer?.volume=(gain*100).toInt().coerceIn(0,200)}catch(_:Exception){}
         val webGain=gain.coerceAtMost(1f)
         web?.evaluateJavascript("try{var v=document.querySelector('video');if(v)v.volume="+webGain+";}catch(e){}",null)
     }
@@ -6051,7 +7297,9 @@ class MainActivity: Activity() {
                 label.text="Channel volume: "+value+"%"
                 if(fromUser && active==index){
                     val gain=value.coerceIn(0,200)/100f
-                    mpvPlayer?.setVolume(value.coerceIn(0,200))
+                    activeChannelGainProcessor?.gain=gain
+                    player?.volume=1f
+                    try{vlcPlayer?.volume=value.coerceIn(0,200)}catch(_:Exception){}
                     web?.evaluateJavascript("try{var v=document.querySelector('video');if(v)v.volume="+gain.coerceAtMost(1f)+";}catch(e){}",null)
                 }
             }
@@ -6151,13 +7399,12 @@ class MainActivity: Activity() {
         val options=arrayOf(
             "Default screen fit: "+(prefs.getString("screen_mode","Fit") ?: "Fit"),
             "Channel screen fit: "+screenMode(),
-            "Stream quality","Buffering profile","Audio track","Preferred audio language","Subtitle settings","Sleep timer","MPV decoder",
+            "Stream quality","Buffering profile","Audio track","Preferred audio language","Subtitle settings","Sleep timer","Playback engine",
             "Clock display","Select stream source","Home","Live TV settings","Channel volume",
             "Color Presets ("+(channels.getOrNull(active)?.let{selectedPicturePreset(it)} ?: "Standard")+")",
             "Audio Presets ("+(channels.getOrNull(active)?.let{selectedAudioPreset(it)} ?: "Standard")+")",
             "View diagnostic logs",
-            "Save diagnostic report",
-            "MPV HDR/SDR output ("+(channels.getOrNull(active)?.let{selectedMpvOutput(it)} ?: "Auto")+")"
+            "Save diagnostic report"
         )
         val drawer=LinearLayout(this).apply{
             tag="settings_drawer"
@@ -6203,7 +7450,6 @@ class MainActivity: Activity() {
                 15->if(active>=0)configureChannelAudioPreset(active)
                 16->showDiagnosticLogs()
                 17->exportDiagnosticReport()
-                18->chooseMpvOutputForCurrentChannel()
             }
         }
         list.setOnKeyListener{_,code,event->
@@ -6232,15 +7478,22 @@ class MainActivity: Activity() {
     private var previewQualityMode:String?=null
     private var previewQualityIndex:Int?=null
     private fun applyQuality(){
+        val exo=player ?:return
         val mode=if(previewQualityIndex==active)previewQualityMode ?: qualityMode() else qualityMode()
+        applyQualityMode(exo,mode)
+    }
+    private fun applyQualityMode(exo:androidx.media3.common.Player,mode:String){
         val maxHeight=when(mode){
             "Data Saver (360p)"->360
             "Standard (480p)"->480
             "HD (720p)"->720
             "Full HD (1080p)"->1080
-            else->null
+            else->Int.MAX_VALUE
         }
-        mpvPlayer?.selectVideoQuality(maxHeight)
+        val builder=exo.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE,maxHeight)
+            .setForceHighestSupportedBitrate(VideoQualityPolicy.forceHighestBitrate(mode))
+        exo.trackSelectionParameters=builder.build()
     }
     private fun isYoutubeChannel(index:Int):Boolean{
         val host=try{channels.getOrNull(index)?.url?.let{Uri.parse(it).host?.lowercase(java.util.Locale.ROOT)}}catch(_:Exception){null}
@@ -6251,12 +7504,24 @@ class MainActivity: Activity() {
         val url=channels.getOrNull(index)?.url ?:return "Best available"
         return prefs.getString("youtube_quality_"+hash(url),"Best available") ?: "Best available"
     }
+    private fun applyYoutubeNativeQuality(exo:ExoPlayer,index:Int){
+        val preference=youtubeQualityPreference(index)
+        val maxHeight=when(preference){
+            "720p"->720
+            "1080p"->1080
+            else->Int.MAX_VALUE
+        }
+        exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+            .setMaxVideoSize(Int.MAX_VALUE,maxHeight)
+            .setForceHighestSupportedBitrate(VideoQualityPolicy.forceHighestBitrate(preference))
+            .build()
+    }
     private fun requestYoutubeEnhancedQuality(viewer:WebView,index:Int,screen:FrameLayout){
         val preference=youtubeQualityPreference(index)
         if(!VideoQualityPolicy.shouldRequestYoutubeWebQuality(preference))return
         // Restore V7's HD quality selection. Apply once, not three times.
         // Only reduce quality after repeated real buffering; never change the
-        // saved user preference or native playback settings.
+        // saved user preference or any Media3 / LibVLC playback settings.
         val wanted=if(preference=="720p") "hd720" else "hd1080"
         val qualityGeneration=playbackGeneration
         handler.postDelayed({
@@ -6374,7 +7639,7 @@ class MainActivity: Activity() {
             .setSingleChoiceItems(options,selected){_,choice->
                 pending=choice
                 previewQualityMode=if(key!=null && choice==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[choice]
-                if(index==null || index==active)applyQuality()
+                if(index==null || index==active)player?.let{applyQualityMode(it,previewQualityMode!!)}
             }
             .setPositiveButton("OK"){_,_->
                 val editor=prefs.edit()
@@ -6397,7 +7662,7 @@ class MainActivity: Activity() {
                 override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){
                     pending=position;list.setItemChecked(position,true)
                     previewQualityMode=if(key!=null && position==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[position]
-                    if(index==null || index==active)applyQuality()
+                    if(index==null || index==active)player?.let{applyQualityMode(it,previewQualityMode!!)}
                 }
                 override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
             }
@@ -6421,9 +7686,97 @@ class MainActivity: Activity() {
         }
         return prefs.getString("screen_mode","Fit") ?: "Fit"
     }
+    private fun resizeMode():Int=when(screenMode()){
+        "Stretch"->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+        "Fill / Crop","Zoom 110%","Zoom 125%","Zoom 150%"->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        else->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+    private fun prepareVideoView(view:PlayerView){
+        val mode=screenMode()
+        view.resizeMode=resizeMode()
+        view.setBackgroundColor(android.graphics.Color.BLACK)
+        val ratio=when(mode){
+            "16:9"->16f/9f
+            "4:3"->4f/3f
+            "21:9"->21f/9f
+            "1:1"->1f
+            else->0f
+        }
+        if(ratio>0f){
+            view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)?.setAspectRatio(ratio)
+        }
+    }
     private fun applyVideoSize(){
-        // All native video routes use the MPV surface, including per-channel aspect overrides.
-        mpvPlayer?.setPictureScale(screenMode())
+        val mode=screenMode()
+        val forcedRatio=when(mode){
+            "16:9"->16f/9f
+            "4:3"->4f/3f
+            "21:9"->21f/9f
+            "1:1"->1f
+            else->0f
+        }
+        currentPlayerView?.let{view->
+            view.resizeMode=resizeMode()
+            val frame=view.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+            val format=player?.videoFormat
+            val natural=if(format!=null && format.height>0)
+                format.width.toFloat()*format.pixelWidthHeightRatio/format.height else 0f
+            // Preserve a user-selected ratio even when Media3 updates its video dimensions.
+            if(forcedRatio>0f){
+                frame?.setAspectRatio(forcedRatio)
+            }else if(natural>0f){
+                frame?.setAspectRatio(natural)
+            }
+            // The content frame handles fit, crop and stretch; avoid double-scaling.
+            view.videoSurfaceView?.let{surface->
+                val zoom=when(mode){
+                    "Zoom 110%"->1.10f
+                    "Zoom 125%"->1.25f
+                    "Zoom 150%"->1.50f
+                    else->1f
+                }
+                surface.scaleX=zoom
+                surface.scaleY=zoom
+            }
+        }
+        vlcPlayer?.let{vlc->
+            try{
+                val displayRatio=resources.displayMetrics.let{if(it.heightPixels>0)it.widthPixels.toFloat()/it.heightPixels else 16f/9f}
+                val videoRatio=vlcVideoRatio(vlc)
+                val cropRatio=if(videoRatio>0f)videoRatio else displayRatio
+                vlc.setScale(0f)
+                vlc.setAspectRatio(when(mode){
+                    "16:9"->"16:9"
+                    "4:3"->"4:3"
+                    "21:9"->"21:9"
+                    "1:1"->"1:1"
+                    "Stretch"->resources.displayMetrics.let{"${it.widthPixels}:${it.heightPixels}"}
+                    else->null
+                })
+                val scale=when(mode){
+                    "Original"->1f
+                    "Zoom 110%"->1.10f
+                    "Zoom 125%"->1.25f
+                    "Zoom 150%"->1.50f
+                    "Fill / Crop"->if(cropRatio>0f && displayRatio>0f)maxOf(displayRatio/cropRatio,cropRatio/displayRatio) else 1f
+                    else->0f
+                }
+                if(scale>0f)vlc.setScale(scale)
+            }catch(e:Exception){HomeTvDiagnostics.w("HomeTV","Video size adjustment",e)}
+        }
+    }
+    // LibVLC 4 EAP removed currentVideoTrack. Resolve optional video metadata
+    // reflectively so 3.x remains compatible without hard-linking to 4.x APIs.
+    private fun vlcVideoRatio(vlc:VlcPlayer):Float{
+        return try{
+            val method=vlc.javaClass.methods.firstOrNull{
+                it.name=="getCurrentVideoTrack" && it.parameterCount==0
+            } ?: return 0f
+            val track=method.invoke(vlc) ?: return 0f
+            val width=track.javaClass.getField("width").getInt(track)
+            val height=track.javaClass.getField("height").getInt(track)
+            if(height>0)width.toFloat()/height else 0f
+        }catch(_:ReflectiveOperationException){0f}
     }
     private fun selectScreenMode(channelIndex:Int?=null){
         val returnToSettings=settingsScreenVisible
@@ -6812,8 +8165,6 @@ class MainActivity: Activity() {
         if(!licenseReady)return
         if(index !in channels.indices)return
         val c=channels[index]
-        startupTuneStartedAt=android.os.SystemClock.elapsedRealtime()
-        HomeTvDiagnostics.i("Startup","Channel tune requested at "+startupElapsedMs()+" ms")
         if(pendingPlaybackDrawerChannelKey!=null && pendingPlaybackDrawerChannelKey!=channelKey(c))
             pendingPlaybackDrawerChannelKey=null
         if(youtubeNativeAttemptedUrl!=null && youtubeNativeAttemptedUrl!=c.url){
@@ -6880,14 +8231,8 @@ class MainActivity: Activity() {
             previousChannelIdentity=id(channels[active])
         }
         val sessionKey=channelKey(c)
-        // A manual channel change starts a fresh decoder session. Keep the
-        // temporary software fallback only for retries of this same channel.
-        if(active in channels.indices && channelKey(channels[active])!=sessionKey){
-            mpvSoftwareFallbackActive.clear()
-            mpvSoftwareFallbackAttempted.clear()
-        }
         if(alternativeSessionKey!=sessionKey){alternativeAttempted.clear();alternativeSessionKey=sessionKey;engineAttempts.clear();fallbackEngineOverride=null;recoveryPrompted.clear()}
-        if(engineChannelUrl!=c.url)engineChannelUrl=c.url
+        if(engineChannelUrl!=c.url){vlcAttempted=false;engineChannelUrl=c.url}
         if(retryUrl!=c.url)retryCount=0
         retryUrl=c.url
         val sameRecoveryRetry=preservingRecoveryScan &&
@@ -6979,7 +8324,7 @@ class MainActivity: Activity() {
                     youtubeResolveTimeout=null
                     if(stream!=null){
                         youtubeNativeStreamUrl=stream.url
-                        HomeTvDiagnostics.i("HomeTV","Public YouTube HLS manifest found; starting native MPV playback")
+                        HomeTvDiagnostics.i("HomeTV","Public YouTube HLS manifest found; starting native Media3 playback")
                     }else{
                         HomeTvDiagnostics.i("HomeTV","No eligible public YouTube HLS manifest; using WebView fallback")
                     }
@@ -6991,7 +8336,7 @@ class MainActivity: Activity() {
         }
         if((youtubeUri!=null && youtubeNativeStreamUrl==null) || webPage){
             // Use the original YouTube watch page inside WebView.
-            // Regular IPTV streams continue through the MPV player.
+            // Keep regular IPTV streams on their existing Media3/LibVLC path.
             val viewer=WebView(this)
             web=viewer
             viewer.setBackgroundColor(android.graphics.Color.BLACK)
@@ -7136,12 +8481,309 @@ class MainActivity: Activity() {
                     viewer.loadUrl(youtubeUri.buildUpon().appendQueryParameter("t",seconds.toString()+"s").appendQueryParameter("autoplay","1").build().toString())
                 }
             }
-        }else if(engineFor(c)=="MPV"){
-            // The MPV edition routes native playback directly to libmpv.
-            // No experimental native fallback or probe is permitted on this path.
-            startMpv(c,index,screen)
+        }else if(engineFor(c).startsWith("LibVLC-") && youtubeNativeStreamUrl==null){
+            startIsolatedVlc(c,index,screen,engineFor(c))
+        }else if(engineFor(c)=="LibVLC" && youtubeNativeStreamUrl==null){
+            startVlc(c,index,screen)
+        }else{
+            val factory=DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(if(c.mediaType=="live")10000 else 6500)
+                .setReadTimeoutMs(if(c.mediaType=="live")20000 else 8500)
+                .setUserAgent(c.headers.entries.firstOrNull{it.key.equals("User-Agent",true)}?.value ?: "VLC/3.0.20 LibVLC/3.0.20")
+                .setDefaultRequestProperties(c.headers.filterKeys{!it.equals("User-Agent",true)})
+            val buffer=bufferValues()
+            val loadControl=DefaultLoadControl.Builder()
+                .setBufferDurationsMs(buffer[0],buffer[1],buffer[2],buffer[3]).build()
+            val gainProcessor=ChannelGainAudioProcessor(channelVolumeGain(c))
+            activeChannelGainProcessor=gainProcessor
+            val renderersFactory=HomeTvRenderersFactory(this,gainProcessor)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                .setEnableDecoderFallback(true)
+            val exo=ExoPlayer.Builder(this,renderersFactory)
+                .setMediaSourceFactory(mediaSourceFactoryForStreams(factory)).setLoadControl(loadControl).build()
+            exo.setAudioAttributes(AudioAttributes.DEFAULT,true)
+            exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
+                .setPreferredAudioLanguage(if(prefs.getBoolean("audio_use_stream_default",false)) null else preferredAudioLanguage())
+                .build()
+            exo.volume=1f
+            player=exo
+            exo.addListener(object:Player.Listener{
+                override fun onAudioSessionIdChanged(audioSessionId:Int){
+                    if(player===exo && active==index && videoScreen===screen)
+                        try{applyAudioPreset()}catch(e:Exception){
+                            HomeTvDiagnostics.w("Media3","Audio preset unavailable during startup",e)
+                        }
+                }
+            })
+            applyQuality()
+            if(youtubeNativeStreamUrl!=null)applyYoutubeNativeQuality(exo,index)
+            applySubtitlePreference(c)
+            val view=PlayerView(this).apply{
+                player=exo
+                useController=false
+                resizeMode=resizeMode()
+                setBackgroundColor(android.graphics.Color.BLACK)
+            }
+            currentPlayerView=view
+            prepareVideoView(view)
+            screen.addView(view,FrameLayout.LayoutParams(-1,-1))
+            applyVideoSize()
+            val startupTimeout=Runnable{
+                if(active==index && videoScreen===screen && player===exo &&
+                    !exo.isPlaying){
+                    if(youtubeNativeStreamUrl!=null && fallbackYouTubeNativeToWeb(index,screen))return@Runnable
+                    HomeTvDiagnostics.w("HomeTV","Stream did not start playing before startup timeout: "+c.name+
+                        " state="+exo.playbackState+" error="+exo.playerError?.errorCodeName)
+                    handleEngineFailure(index,screen)
+                }
+            }
+            startupWatchdog=startupTimeout
+            // Live IPTV sources can legitimately need more than eight seconds
+            // to negotiate a transport stream and deliver the first video frame.
+            // Do not abandon a viable engine during normal startup buffering.
+            val startupLimit=HomeTvPolicies.startupTimeoutMs(c.mediaType,streamKind(c.url))
+            handler.postDelayed(startupTimeout,startupLimit)
+            var wasReady=false
+            var bufferingRecoveryTask:Runnable?=null
+            // Detect video output stalls independently of the audio clock.
+            // Some Android TV decoders keep audio moving while the picture freezes.
+            var media3PlayStartedAt=0L
+            var lastRenderedVideoFrames=-1
+            var lastVideoFrameProgressAt=0L
+            var videoFreezeHandled=false
+            var pictureEffectRecoveryAttempted=false
+            val playbackClockGuard=PlaybackClockGuard()
+            var clockRecoveredOnce=false
+            fun recoverNativeMedia3Video(now:Long):Boolean{
+                if(pictureEffectRecoveryAttempted || selectedPicturePreset(c)=="Standard")return false
+                pictureEffectRecoveryAttempted=true
+                return try{
+                    val position=exo.currentPosition
+                    // GL picture effects can expose decoder/surface bugs on some TV chipsets.
+                    // Retry the exact same URL on Media3's native video surface first.
+                    exo.setVideoEffects(emptyList())
+                    exo.seekTo(position)
+                    exo.play()
+                    lastRenderedVideoFrames=-1
+                    lastVideoFrameProgressAt=now
+                    HomeTvDiagnostics.w("HomeTV","Media3 picture-effect pipeline stalled; retrying native rendering for "+c.name)
+                    true
+                }catch(e:Exception){
+                    HomeTvDiagnostics.w("HomeTV","Native Media3 rendering recovery failed for "+c.name,e)
+                    false
+                }
+            }
+            val videoFrameWatchdog=object:Runnable{
+                override fun run(){
+                    if(player!==exo || active!=index || videoScreen!==screen || playbackTeardownInProgress)return
+                    try{
+                    val now=android.os.SystemClock.elapsedRealtime()
+                    if(!prefs.getBoolean("myview_vod_clock_recovery",false) ||
+                        !isDirectVod(c) || !exo.isPlaying ||
+                        exo.playbackState!=Player.STATE_READY){
+                        playbackClockGuard.reset()
+                    }else if(!clockRecoveredOnce && playbackClockGuard.sample(
+                            now,exo.currentPosition,exo.isPlaying,exo.playbackParameters.speed)){
+                        // Direct VOD only. A single same-source recovery; no channel skip.
+                        clockRecoveredOnce=true
+                        val pos=exo.currentPosition
+                        HomeTvDiagnostics.w("MyView","Sustained fast VOD clock; recovering same source")
+                        exo.pause()
+                        exo.seekTo(pos)
+                        exo.prepare()
+                        exo.play()
+                        handler.postDelayed(this,5000L)
+                        return
+                    }
+                    if(!exo.isPlaying || exo.videoFormat==null){
+                        // Paused or buffering playback is not a frozen video decoder.
+                        // Reset the observation window so a later resume gets a full
+                        // grace period instead of inheriting stale frame timestamps.
+                        media3PlayStartedAt=0L
+                        lastVideoFrameProgressAt=0L
+                        lastRenderedVideoFrames=-1
+                    }else{
+                        if(media3PlayStartedAt==0L)media3PlayStartedAt=now
+                        val counters:DecoderCounters?=exo.videoDecoderCounters
+                        if(counters!=null){
+                            counters.ensureUpdated()
+                            val rendered=counters.renderedOutputBufferCount
+                            // Counters can reset when MediaCodec is recreated; any
+                            // change is progress, not only an increase.
+                            if(lastRenderedVideoFrames<0){
+                                // A zero-frame decoder counter is not proof of
+                                // output. Establish the baseline without hiding
+                                // a genuine startup black screen.
+                                lastRenderedVideoFrames=rendered
+                                if(rendered>0)lastVideoFrameProgressAt=now
+                            }else if(rendered!=lastRenderedVideoFrames){
+                                lastRenderedVideoFrames=rendered
+                                if(rendered>0)lastVideoFrameProgressAt=now
+                            }
+                        }
+                        val noVideoFrameYet=lastVideoFrameProgressAt==0L &&
+                            now-media3PlayStartedAt>=20000L
+                        val videoFramesStopped=lastVideoFrameProgressAt>0L &&
+                            now-lastVideoFrameProgressAt>=20000L
+                        if((noVideoFrameYet || videoFramesStopped) && !videoFreezeHandled){
+                            HomeTvDiagnostics.e("HomeTV","Media3 video frame output stalled while playback continued: "+c.name+
+                                " renderedFrames="+(counters?.renderedOutputBufferCount ?: -1)+
+                                " positionMs="+exo.currentPosition)
+                            if(recoverNativeMedia3Video(now)){
+                                handler.postDelayed(this,5000L)
+                                return
+                            }
+                            videoFreezeHandled=true
+                            handleEngineFailure(index,screen)
+                            return
+                        }
+                    }
+                    handler.postDelayed(this,5000L)
+                    }catch(e:Exception){
+                        HomeTvDiagnostics.w("Media3","Video watchdog unavailable during decoder transition",e)
+                        if(player===exo && active==index && videoScreen===screen && !playbackTeardownInProgress)
+                            handler.postDelayed(this,5000L)
+                    }
+                }
+            }
+            handler.postDelayed(videoFrameWatchdog,5000L)
+            exo.addAnalyticsListener(object:AnalyticsListener{
+                override fun onRenderedFirstFrame(
+                    eventTime:AnalyticsListener.EventTime,
+                    output:Any,
+                    renderTimeMs:Long
+                ){
+                    if(player===exo && active==index && videoScreen===screen){
+                        val now=android.os.SystemClock.elapsedRealtime()
+                        lastVideoFrameProgressAt=now
+                        exo.videoDecoderCounters?.let{counters->
+                            counters.ensureUpdated()
+                            lastRenderedVideoFrames=counters.renderedOutputBufferCount
+                        }
+                        // Do not mark a Media3 source as working merely because its
+                        // audio starts; require an actual rendered video frame.
+                        rememberWorking(c,volumePlaybackGeneration)
+                    }
+                }
+            })
+            exo.addListener(object:Player.Listener{
+                override fun onTracksChanged(tracks:androidx.media3.common.Tracks){
+                    if(player===exo && active==index && videoScreen===screen)
+                        try{applyAudioTrackPreference(c,exo)}catch(e:Exception){
+                            HomeTvDiagnostics.w("Media3","Track preference unavailable during transition",e)
+                        }
+                }
+                override fun onIsPlayingChanged(isPlaying:Boolean){
+                    if(isPlaying && player===exo && active==index && videoScreen===screen){
+                        startupWatchdog?.let{handler.removeCallbacks(it)}
+                        startupWatchdog=null
+                        if(isDirectVod(c) && prefs.getBoolean("myview_match_vod_refresh",false)){
+                            handler.postDelayed({
+                                if(player===exo && active==index && videoScreen===screen && exo.isPlaying)
+                                    matchVodRefreshRate(exo,c)
+                            },1200L)
+                        }
+                        // Audio-only entries can be confirmed after track selection
+                        // settles. Video streams are confirmed by onRenderedFirstFrame.
+                        if(exo.videoFormat==null){
+                            handler.postDelayed({
+                                if(player===exo && active==index && exo.isPlaying && exo.videoFormat==null)
+                                    rememberWorking(c,volumePlaybackGeneration)
+                            },2500L)
+                        }
+                    }
+                }
+                override fun onPlaybackStateChanged(state:Int){
+                    if(player!==exo || active!=index || videoScreen!==screen)return
+                    HomeTvDiagnostics.i("Media3","state="+state+" isPlaying="+exo.isPlaying+
+                        " channel="+c.name+" positionMs="+exo.currentPosition+
+                        " bufferedMs="+(exo.bufferedPosition-exo.currentPosition).coerceAtLeast(0L))
+                    if(state==Player.STATE_BUFFERING){
+                        autoBufferStableSince=0L
+                        if(wasReady)autoBufferStalled()
+                        if(wasReady){
+                            bufferingRecoveryTask?.let{handler.removeCallbacks(it)}
+                            val recovery=Runnable{
+                                if(active==index && videoScreen===screen && player===exo &&
+                                    exo.playbackState==Player.STATE_BUFFERING){
+                                    if(youtubeNativeStreamUrl!=null && fallbackYouTubeNativeToWeb(index,screen))return@Runnable
+                                    handleEngineFailure(index,screen)
+                                }
+                            }
+                            bufferingRecoveryTask=recovery
+                            handler.postDelayed(recovery,20000L)
+                        }
+                    }else{
+                        bufferingRecoveryTask?.let{handler.removeCallbacks(it)}
+                        bufferingRecoveryTask=null
+                    }
+                    if(state==Player.STATE_READY){
+                        wasReady=true
+                        autoBufferHealthy()
+                        retryCount=0
+                        handler.postDelayed({
+                            if(player===exo && active==index && exo.isPlaying && exo.playbackState==Player.STATE_READY)
+                                recoveryAttempts.remove(channelKey(c))
+                        },60000L)
+                        // STATE_READY means prepared, not necessarily playing.
+                        // Keep the startup watchdog active until isPlaying becomes true.
+                        applyVideoSize()
+                        scheduleQualityUpgrade()
+                        retryTask?.let{handler.removeCallbacks(it)}
+                        retryTask=null
+                    }
+                }
+                override fun onPlayerError(error:PlaybackException){
+                    if(player!==exo || active!=index || videoScreen!==screen)return
+                    val httpStatus=generateSequence(error.cause){it.cause}
+                        .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+                        .firstOrNull()?.responseCode
+                    val kind=ProviderFailurePolicy.classify(
+                        httpStatus,
+                        error.errorCode==PlaybackException.ERROR_CODE_DRM_CONTENT_ERROR ||
+                            error.errorCode==PlaybackException.ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED,
+                        error.errorCode==PlaybackException.ERROR_CODE_DECODING_FAILED,
+                        generateSequence(error.cause){it.cause}.any{it is java.io.IOException}
+                    )
+                    HomeTvDiagnostics.e("HomeTV", "Playback error for "+c.name+" HTTP="+httpStatus+
+                        " classification="+kind, error)
+                    if(kind==ProviderFailurePolicy.Kind.PROVIDER_BUSY){
+                        showBanner(ProviderFailurePolicy.description(kind))
+                        if(prefs.getBoolean("auto_reconnect",true)){
+                            val engine=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
+                            val key=channelKey(c)+"|"+c.url+"|"+engine
+                            val attempt=providerBusyAttempts[key] ?:0
+                            val delay=ProviderFailurePolicy.retryDelayMs(kind,attempt)
+                            if(delay!=null && engineEnabled(engine)){
+                                providerBusyAttempts[key]=attempt+1
+                                val generation=playbackGeneration
+                                scheduleSettingsSafeRetry(index,screen,generation,delay){
+                                    if(prefs.getBoolean("auto_reconnect",true) && engineEnabled(engine)){
+                                        // Keep exactly this URL and engine; do not skip on capacity refusal.
+                                        fallbackEngineOverride=engine
+                                        playIndex(index)
+                                    }
+                                }
+                                return
+                            }
+                        }
+                    }
+                    recordStartup(c,false)
+                    if(youtubeNativeStreamUrl!=null && fallbackYouTubeNativeToWeb(index,screen))return
+                    handleEngineFailure(index,screen)
+                }
+            })
+            try{
+                applyMedia3PicturePreset(exo,c)
+                exo.setMediaItem(mediaItemForStream(youtubeNativeStreamUrl ?: c.url))
+                exo.prepare()
+                exo.play()
+            }catch(e:Exception){
+                if(youtubeNativeStreamUrl!=null && fallbackYouTubeNativeToWeb(index,screen))return
+                showBanner("Cannot play ${c.name}: ${e.message}",true);handleEngineFailure(index,screen)
+            }
         }
-
         updateClock()
         screen.requestFocus()
         showChannelInfo(index)
@@ -7186,93 +8828,311 @@ class MainActivity: Activity() {
             handler.postDelayed(task,2000L*retryCount)
         }else showBanner("Stream stopped. Try another source or channel.",true)
     }
-    private fun startMpv(c:Channel,index:Int,screen:FrameLayout){
-        // MPV Edition has one native video engine for all native video routes.
-        // Preserve signed licensing and parental-lock checks done by playIndex.
-        val generation=playbackGeneration
-        try{
-            val view=MpvPlaybackView(this)
-            mpvPlayer=view
-            val watchdog=Runnable{
-                if(mpvPlayer===view && active==index && videoScreen===screen &&
-                    channels.getOrNull(index)===c &&
-                    generation==playbackGeneration && !view.hasStarted){
-                    HomeTvDiagnostics.w("MPV","First playback did not begin within 15 seconds")
-                    if(!tryMpvSoftwareStartupFallback(c,index,screen,generation,view.hasStarted))
-                        handleEngineFailure(index,screen)
-                }
+    /**
+     * Surface lifecycle entry for the explicitly selected, packaged isolated
+     * LibVLC version. A service accepting a start is not proof of decoded video.
+     * Keep the existing direct LibVLC path as a separate, stable fallback.
+     */
+    private fun startIsolatedVlc(c:Channel,index:Int,screen:FrameLayout,engineId:String){
+        if (!isolatedVlcRegistry.verifiedIds().contains(engineId)) {
+            // Preserve the requested version for recovery bookkeeping. A
+            // missing native adapter must never be misreported as Media3.
+            isolatedActiveEngineId=engineId
+            showBanner("Native engine unavailable: "+engineId,true)
+            handleEngineFailure(index,screen)
+            return
+        }
+        val activityGeneration = playbackGeneration
+        val generation = nativeGenerationAllocator.next()
+        isolatedActiveEngineId=engineId
+        val surfaceView = SurfaceView(this)
+        screen.addView(surfaceView,0,FrameLayout.LayoutParams(-1,-1))
+        surfaceView.holder.addCallback(object:SurfaceHolder.Callback {
+            private var attached = false
+            private var confirmed = false
+            private var watchdog: NativePlaybackWatchdog? = null
+            private val surfaceRecovery = NativeSurfaceRecoveryGate()
+            private var poll: Runnable? = null
+            private fun cancelPoll() {
+                poll?.let { handler.removeCallbacks(it) }
+                poll = null
             }
-            screen.addView(view,0,FrameLayout.LayoutParams(-1,-1))
-            view.listener=object:MpvPlaybackView.Listener{
-                override fun onFirstPlayback(){
-                    handler.removeCallbacks(watchdog)
-                    if(mpvPlayer!==view || active!=index || videoScreen!==screen ||
-                        channels.getOrNull(index)!==c ||
-                        generation!=playbackGeneration)return
-                    HomeTvDiagnostics.i("Startup","MPV first playback after "+
-                        (android.os.SystemClock.elapsedRealtime()-startupTuneStartedAt)+" ms")
-                    restoreMpvTrackPreferences(c,view)
-                    applyAudioPreset()
-                    applyQuality()
-                    // Preserve VOD resume progress; retain that
-                    // behavior now that MPV is the sole native media engine.
-                    if(c.mediaType in setOf("movie","series","music")){
-                        val resume=mediaResumeSeconds(c)
-                        val duration=view.durationMs
-                        if(resume>0L && (duration<=0L || resume*1000L<duration-5000L)){
-                            view.seekTo(resume*1000L)
+            private fun watchPlayback() {
+                val check = object:Runnable {
+                    override fun run() {
+                        if (!attached || active!=index || videoScreen!==screen ||
+                            playbackGeneration!=activityGeneration) return
+                        val state = isolatedVlcClient?.playbackState(generation) ?: 0
+                        val progress = isolatedVlcClient?.playbackProgressCount(generation) ?: -1L
+                        val monitor = watchdog ?: return
+                        val status = monitor.check(
+                            state, progress, android.os.SystemClock.elapsedRealtime()
+                        )
+                        if (status == NativePlaybackWatchdog.Result.PLAYING &&
+                            monitor.hasObservedProgress && !confirmed) {
+                            confirmed = true
+                            rememberWorking(c)
+                            autoBufferHealthy()
+                        }
+                        val failure = when (status) {
+                            NativePlaybackWatchdog.Result.FAILED -> "Native playback failed"
+                            NativePlaybackWatchdog.Result.ENDED -> "Native playback ended"
+                            NativePlaybackWatchdog.Result.STARTUP_TIMEOUT -> "Native startup timed out"
+                            NativePlaybackWatchdog.Result.FIRST_PROGRESS_TIMEOUT -> "Native stream made no progress"
+                            NativePlaybackWatchdog.Result.STALLED -> "Native playback stalled"
+                            else -> null
+                        }
+                        if (failure != null) {
+                            if (!surfaceRecovery.requestRecovery()) return
+                            attached = false
+                            cancelPoll()
+                            isolatedVlcSessions.stop(generation)
+                            showBanner(failure + ". Trying recovery.", true)
+                            handleEngineFailure(index,screen)
+                            return
+                        }
+                        handler.postDelayed(this,500L)
+                    }
+                }
+                poll = check
+                handler.postDelayed(check,500L)
+            }
+            override fun surfaceCreated(holder:SurfaceHolder) {
+                if (!surfaceRecovery.canStart() || attached || active!=index || videoScreen!==screen ||
+                    playbackGeneration!=activityGeneration || !holder.surface.isValid) return
+                attached = isolatedVlcSessions.startWithSurface(
+                    engineId,c.url,generation,holder.surface
+                )
+                if (attached) {
+                    watchdog = NativePlaybackWatchdog(android.os.SystemClock.elapsedRealtime())
+                    watchPlayback()
+                } else {
+                    // Keep the requested native engine identity until recovery
+                    // has selected its next engine, even when Binder start fails.
+                    handler.post {
+                        if (active==index && videoScreen===screen &&
+                            playbackGeneration==activityGeneration) {
+                            if (!surfaceRecovery.requestRecovery()) return@post
+                            showBanner("Native playback could not start",true)
+                            handleEngineFailure(index,screen)
                         }
                     }
-                    rememberWorking(c,generation)
-                    autoBufferHealthy()
-                    updateClock()
                 }
-                override fun onError(message:String){
-                    handler.removeCallbacks(watchdog)
-                    if(mpvPlayer!==view || active!=index || videoScreen!==screen ||
-                        channels.getOrNull(index)!==c ||
-                        generation!=playbackGeneration)return
-                    HomeTvDiagnostics.w("MPV",message)
-                    if(!tryMpvSoftwareStartupFallback(c,index,screen,generation,view.hasStarted))
+            }
+            override fun surfaceChanged(holder:SurfaceHolder,format:Int,width:Int,height:Int) = Unit
+            override fun surfaceDestroyed(holder:SurfaceHolder) {
+                cancelPoll()
+                watchdog = null
+                val wasAttached = attached
+                attached = false
+                if (wasAttached) isolatedVlcSessions.stop(generation)
+                val shouldRecover = surfaceRecovery.onSurfaceDestroyed(wasAttached)
+                // A destroyed Surface cannot be reused by the same native
+                // generation. Trigger one fresh recovery session, unless the
+                // Activity is switching channels or being torn down.
+                if (shouldRecover) {
+                    handler.post {
+                        if (active==index && videoScreen===screen &&
+                            playbackGeneration==activityGeneration) {
+                            showBanner("Native video surface lost. Trying recovery.", true)
+                            handleEngineFailure(index,screen)
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    // Decoder selection changes only this channel's LibVLC playback path.
+    // Automatic preserves the known-working decoder and picture pipeline.
+    private val vlcDecoderModes=arrayOf("Automatic","Hardware (direct rendering)","Hardware (decoding only)","Software decoding")
+    private fun vlcDecoderKey(c:Channel)="vlc_decoder_"+hash(c.url)
+    private fun selectedVlcDecoder(c:Channel)=prefs.getString(vlcDecoderKey(c),"Automatic")
+        ?.takeIf{it in vlcDecoderModes} ?: "Automatic"
+    private fun chooseVlcDecoder(index:Int){
+        val c=channels.getOrNull(index)?:return
+        val current=selectedVlcDecoder(c)
+        val dialog=AlertDialog.Builder(this).setTitle(c.name+" — LibVLC video decoder")
+            .setSingleChoiceItems(vlcDecoderModes,vlcDecoderModes.indexOf(current)){d,which->
+                val chosen=vlcDecoderModes[which]
+                d.dismiss()
+                if(chosen==current)return@setSingleChoiceItems
+                prefs.edit().putString(vlcDecoderKey(c),chosen).apply()
+                if(active==index && vlcPlayer!=null)playIndex(index)
+                else showBanner("LibVLC decoder: "+chosen)
+            }.setNegativeButton("Cancel",null).create()
+        showSideDialog(dialog)
+    }
+    private fun startVlc(c:Channel,index:Int,screen:FrameLayout){
+        try{
+            val cache=bufferValues()[0].coerceAtLeast(300)
+            val options=arrayListOf("--network-caching="+cache,"--live-caching="+cache,"--http-reconnect","--no-video-title-show")
+            val core=LibVLC(this,options)
+            val vlc=VlcPlayer(core)
+            vlcCore=core
+            vlcPlayer=vlc
+            val surface=SurfaceView(this)
+            screen.addView(surface,0,FrameLayout.LayoutParams(-1,-1))
+            vlc.vlcVout.setVideoView(surface)
+            vlc.vlcVout.attachViews()
+            surface.post{
+                if(vlcPlayer===vlc){
+                    val w=screen.width.takeIf{it>0} ?: resources.displayMetrics.widthPixels
+                    val h=screen.height.takeIf{it>0} ?: resources.displayMetrics.heightPixels
+                    vlc.vlcVout.setWindowSize(w,h)
+                    applyVideoSize()
+                }
+            }
+            var started=false
+            var failed=false
+            var lastHealthy=android.os.SystemClock.elapsedRealtime()
+            var lastTimeMs=-1L
+            var lastPosition=-1f
+            var confirmedProgress=false
+            val stallCheck=object:Runnable{
+                override fun run(){
+                    if(vlcPlayer!==vlc || active!=index || videoScreen!==screen)return
+                    if(started && !failed && prefs.getBoolean("auto_reconnect",true) &&
+                        android.os.SystemClock.elapsedRealtime()-lastHealthy>30000L){
+                        failed=true
+                        autoBufferStalled()
+                        android.util.Log.w("HomeTV","LibVLC stalled for "+c.name)
                         handleEngineFailure(index,screen)
+                        return
+                    }
+                    handler.postDelayed(this,5000)
                 }
             }
-            view.initialize(selectedMpvDecoder(c),selectedMpvOutput(c))
-            // Preserve original source colors by default.
-            val picture=selectedPictureValues(c)
-            view.setPicture(picture.brightness,picture.contrast,picture.saturation)
-            view.setPictureScale(screenMode())
-            view.setVolume(prefs.getInt(channelVolumeKey(c),100))
-            view.play(youtubeNativeStreamUrl ?: c.url,c.headers,isLive = c.mediaType=="live")
-            startupWatchdog?.let{handler.removeCallbacks(it)}
-            startupWatchdog=watchdog
+            handler.postDelayed(stallCheck,5000)
+            val watchdog=Runnable{
+                if(!confirmedProgress && !failed && active==index && vlcPlayer===vlc){
+                    failed=true
+                    android.util.Log.w("HomeTV","LibVLC startup timeout for "+c.name)
+                    showBanner(c.name+" did not start. Trying another stream.",true)
+                    handleEngineFailure(index,screen)
+                }
+            }
+            vlc.setEventListener{event->
+                // LibVLC callbacks may arrive on native threads; process them
+                // on the Activity main handler and ignore obsolete players.
+                val eventType=event.type
+                handler.post{
+                    // Once recovery has been initiated, queued native events from
+                    // the failed session must not confirm it as healthy again.
+                    if(vlcPlayer!==vlc || active!=index || videoScreen!==screen ||
+                        failed || playbackTeardownInProgress)return@post
+                    when(eventType){
+                    VlcPlayer.Event.Playing->{
+                        started=true
+                        handler.postDelayed({
+                            if(vlcPlayer===vlc && active==index && !failed &&
+                                android.os.SystemClock.elapsedRealtime()-lastHealthy<12000L)
+                                recoveryAttempts.remove(channelKey(c))
+                        },60000L)
+                        // Playing means the decoder started, not that video advanced.
+                        // Keep the startup watchdog until real timeline progress.
+                        lastHealthy=android.os.SystemClock.elapsedRealtime()
+                    }
+                    VlcPlayer.Event.TimeChanged, VlcPlayer.Event.PositionChanged->{
+                        // Duplicate or stationary events must not conceal a frozen decoder.
+                        val timeMs=vlc.time
+                        val position=vlc.position
+                        val advanced=(timeMs>=0L && timeMs>lastTimeMs) ||
+                            (position.isFinite() && position>lastPosition+0.0001f)
+                        if(timeMs>=0L && timeMs>lastTimeMs)lastTimeMs=timeMs
+                        if(position.isFinite() && position>lastPosition)lastPosition=position
+                        if(advanced){
+                            lastHealthy=android.os.SystemClock.elapsedRealtime()
+                            if(!confirmedProgress){
+                                confirmedProgress=true
+                                started=true
+                                handler.removeCallbacks(watchdog)
+                                rememberWorking(c)
+                                autoBufferHealthy()
+                            }
+                        }
+                    }
+                    VlcPlayer.Event.Buffering->{
+                        // A buffering callback is not proof of progress.
+                        // Leave lastHealthy unchanged so a persistent freeze
+                        // triggers same-engine recovery after the stall timeout.
+                    }
+                    VlcPlayer.Event.Stopped, VlcPlayer.Event.EndReached->handler.post{
+                        if(active==index && vlcPlayer===vlc && !failed){
+                            failed=true
+                            handleEngineFailure(index,screen)
+                        }
+                    }
+                    VlcPlayer.Event.EncounteredError->handler.post{
+                        if(active==index && vlcPlayer===vlc && !failed){
+                            failed=true
+                            handler.removeCallbacks(watchdog)
+                            handleEngineFailure(index,screen)
+                        }
+                    }
+                    }
+                }
+            }
+            // Live HLS/DASH startup can take longer than six seconds.
             handler.postDelayed(watchdog,15000L)
-        }catch(e:LinkageError){
-            mpvPlayer?.let { failed ->
-                if (active==index && generation==playbackGeneration) {
-                    mpvPlayer=null
-                    try { failed.release() } catch (_:Exception) {}
-                    screen.removeView(failed)
+            val media=VlcMedia(core,Uri.parse(c.url))
+            try{
+                c.headers["User-Agent"]?.let{media.addOption(":http-user-agent="+it)}
+                c.headers["Referer"]?.let{media.addOption(":http-referrer="+it)}
+                // No forced decoder for Automatic: preserve the stable LibVLC behavior.
+                when(selectedVlcDecoder(c)){
+                    "Hardware (direct rendering)"->media.setHWDecoderEnabled(true,true)
+                    "Hardware (decoding only)"->{
+                        media.setHWDecoderEnabled(true,true)
+                        media.addOption(":no-mediacodec-dr")
+                        media.addOption(":no-omxil-dr")
+                    }
+                    "Software decoding"->media.setHWDecoderEnabled(false,false)
                 }
+                // Image correction is opt-in and never changes Standard playback.
+                // Hardware direct rendering may bypass VLC's software adjust filter.
+                if(selectedPicturePreset(c)!="Standard"){
+                    val picture=selectedPictureValues(c)
+                    media.addOption(":video-filter=adjust")
+                    media.addOption(":brightness="+picture.brightness.coerceIn(0.5f,1.5f).toString())
+                    media.addOption(":contrast="+picture.contrast.coerceIn(0.5f,1.5f).toString())
+                    media.addOption(":saturation="+picture.saturation.coerceIn(0.5f,1.5f).toString())
+                }
+                media.addOption(":network-caching="+cache)
+                // LibVLC adaptive HLS/DASH quality: do not cap Auto/Best
+                // Available at a low resolution. Fixed presets provide an upper
+                // resolution preference when the stream exposes variants.
+                val quality=qualityMode(index)
+                val height=when(quality){
+                    "Data Saver (360p)"->360
+                    "Standard (480p)"->480
+                    "HD (720p)"->720
+                    "Full HD (1080p)"->1080
+                    else->0
+                }
+                if(height>0){
+                    media.addOption(":adaptive-maxheight="+height)
+                    media.addOption(":adaptive-logic=highest")
+                }else if(quality=="Best Available"){
+                    media.addOption(":adaptive-logic=highest")
+                }
+                vlc.media=media
+            }finally{
+                // Native media must be released even when an option or
+                // media assignment throws during startup.
+                media.release()
             }
-            HomeTvDiagnostics.w("MPV","Native MPV library failed to load",e)
-            if(active==index && generation==playbackGeneration){
-                showBanner("MPV native library unavailable",true)
-                handleEngineFailure(index,screen)
-            }
+            vlc.play()
+            handler.postDelayed({if(vlcPlayer===vlc)applyVideoSize()},1000)
         }catch(e:Exception){
-            mpvPlayer?.let { failed ->
-                if (active==index && generation==playbackGeneration) {
-                    mpvPlayer=null
-                    try { failed.release() } catch (_:Exception) {}
-                    screen.removeView(failed)
-                }
-            }
-            HomeTvDiagnostics.w("MPV","Native MPV startup failed",e)
-            if(active==index && generation==playbackGeneration)
-                handleEngineFailure(index,screen)
+            android.util.Log.e("HomeTV","LibVLC startup failed",e)
+            showBanner("LibVLC error: "+(e.message?:"unknown"),true)
+            handleEngineFailure(index,screen)
         }
     }
+    // The surfing sequence is already filtered and ordered in the background
+    // cache. Use its prebuilt channel-key lookup so remote navigation is O(1),
+    // even with 10k–20k channel playlists.
     private fun nextSurfingIndex(current:Int,delta:Int,available:List<Int>):Int{
         if(available.isEmpty())return -1
         val key=channels.getOrNull(current)?.let{channelKey(it)}
@@ -7308,7 +9168,7 @@ class MainActivity: Activity() {
         val next=preferredChannel(nextSurfingIndex(active,delta,available))
         if(!HomeTvPolicies.shouldRetuneSurfingChannel(
                 active,next,videoScreen!=null &&
-                    (mpvPlayer!=null || web!=null)))return
+                    (player!=null || vlcPlayer!=null || web!=null)))return
         playIndex(next)
     }
     private fun resumeLast(){
@@ -7350,7 +9210,7 @@ class MainActivity: Activity() {
     private fun liveSettings(){
         if(active<0){settings();return}
         val items=arrayOf(
-            "Playback engine: MPV",
+            "Playback engine: "+(prefs.getString("engine","Media3")?:"Media3"),
             "Buffering profile: "+bufferProfile(),
             "Default stream quality: "+(prefs.getString("quality_global","Auto")?:"Auto"),
             "Default screen fit: "+(prefs.getString("screen_mode","Fit")?:"Fit"),
@@ -7361,11 +9221,20 @@ class MainActivity: Activity() {
             "Home (stop playback)",
             "View diagnostic logs",
             "Save diagnostic report",
+            "MultiView — 2 or 4 channels",
         )
-        val liveDialog=AlertDialog.Builder(this).setTitle("NexTV Settings — Live TV")
+        val liveDialog=AlertDialog.Builder(this).setTitle("MyView Settings — Live TV")
             .setItems(items){_,choice->
                 when(choice){
-                    0->showBanner("MPV is the only playback engine in this edition")
+                    0->{
+                        val choices=(listOf("Auto")+enabledEngines()).toTypedArray()
+                        AlertDialog.Builder(this).setTitle("Default playback engine")
+                            .setSingleChoiceItems(choices,choices.indexOf(prefs.getString("engine","Media3")).coerceAtLeast(0)){dialog,i->
+                                prefs.edit().putString("engine",choices[i]).apply()
+                                dialog.dismiss()
+                                showBanner("Playback engine saved for next channel")
+                            }.setNegativeButton("Cancel",null).show()
+                    }
                     1->chooseBufferProfile()
                     2->selectQuality(null)
                     3->selectScreenMode(null)
@@ -7385,6 +9254,7 @@ class MainActivity: Activity() {
                     8->showHome()
                     9->showDiagnosticLogs()
                     10->exportDiagnosticReport()
+                    11->chooseMultiView()
                 }
             }.setNegativeButton("Close",null).create()
         showSideDialog(liveDialog)
@@ -7429,10 +9299,10 @@ class MainActivity: Activity() {
                     val dir=candidates.first()
                     if(!dir.exists() && !dir.mkdirs())throw IllegalStateException("Cannot create USB app folder")
                     val stamp=java.text.SimpleDateFormat("yyyyMMdd-HHmmss",java.util.Locale.ROOT).format(java.util.Date())
-                    val target=java.io.File(dir,"NexTV-diagnostics-"+stamp+".txt")
+                    val target=java.io.File(dir,"MyView-diagnostics-"+stamp+".txt")
                     target.outputStream().bufferedWriter(Charsets.UTF_8).use{it.write(report)}
                     AlertDialog.Builder(this).setTitle("Report saved")
-                        .setMessage("Saved in the NexTV app folder on removable USB storage:\\n"+target.absolutePath)
+                        .setMessage("Saved in the MyView app folder on removable USB storage:\\n"+target.absolutePath)
                         .setPositiveButton("OK",null).show()
                 }catch(e:Exception){
                     Toast.makeText(this,"USB save failed: "+e.message,Toast.LENGTH_LONG).show()
@@ -7458,7 +9328,7 @@ class MainActivity: Activity() {
         AlertDialog.Builder(this).setTitle("Save settings backup")
             .setMessage("The backup includes playlist URLs, which may contain provider credentials. Licence activation and the parental PIN are excluded. Save the file only to a location you trust.")
             .setPositiveButton("Choose location"){_,_->
-                launchTextExport("NexTV-settings-backup.json","application/json",payload,exportBackupRequest)
+                launchTextExport("MyView-settings-backup.json","application/json",payload,exportBackupRequest)
             }.setNegativeButton("Cancel",null).show()
     }
     private fun mergePlaylistBackup(incoming:String):String{
@@ -7583,12 +9453,25 @@ class MainActivity: Activity() {
             return
         }
         val stamp=java.text.SimpleDateFormat("yyyyMMdd-HHmm",java.util.Locale.ROOT).format(java.util.Date())
-        launchTextExport("NexTV-diagnostics-"+stamp+".txt","text/plain",report,exportDiagnosticsRequest)
+        launchTextExport("MyView-diagnostics-"+stamp+".txt","text/plain",report,exportDiagnosticsRequest)
     }
+    @UnstableApi
     private fun showPlaybackDiagnostics(){
         if(!prefs.getBoolean("nextv_stream_health_enabled",true))return
         val current=channels.getOrNull(active)
+        val video=player?.videoFormat
+        val color=video?.colorInfo
+        val videoDescription=video?.let{
+            "${it.width}x${it.height} • ${it.frameRate} fps • ${it.sampleMimeType ?: "unknown codec"}"
+        } ?: "No Media3 video format reported"
         val lines=listOf(
+            "Media3 video: "+videoDescription,
+            "Observed starts: "+(current?.let{startupRate(it)} ?: "No active channel"),
+            "Direct VOD refresh match: "+if(prefs.getBoolean("myview_match_vod_refresh",false))"ON" else "OFF",
+            "Direct VOD clock recovery: "+if(prefs.getBoolean("myview_vod_clock_recovery",false))"ON" else "OFF",
+            "Media3 color: transfer="+(color?.colorTransfer?.toString() ?: "?")+
+                ", range="+(color?.colorRange?.toString() ?: "?")+
+                ", space="+(color?.colorSpace?.toString() ?: "?"),
             "SmartPlay recovery: "+(if(prefs.getBoolean("nextv_smartplay_enabled",true))"ON" else "OFF"),
             "Channel: "+(current?.name ?: "None"),
             "Source: "+(current?.source ?: "None"),
@@ -7620,6 +9503,10 @@ class MainActivity: Activity() {
             }
             "background_url_checks"->startBackgroundChannelChecks()
             "live_channel_preview"->clearChannelPreview()
+            "myview_multiview_enabled"->{
+                multiViewDialog?.dismiss()
+                releaseMultiView()
+            }
             "nextv_smartplay_enabled"->{
                 // SmartPlay engine rotation is independent of ordinary reconnect.
                 fallbackEngineOverride=null
@@ -7707,7 +9594,7 @@ class MainActivity: Activity() {
             settingsFocusedIndex=-1
             settingsScrollY=0
         }
-        reset("NexTV Settings")
+        reset("MyView Settings")
         root.removeAllViews()
         root.addView(tvText("⚙  SETTINGS",30f,0xFF8CE8FF.toInt()).apply{
             setPadding(tvDp(12),tvDp(15),0,tvDp(6))
@@ -7735,41 +9622,55 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Check hidden channels automatically","auto_hidden_channel_check",true))
         root.addView(label("Checks hidden channels after startup without delaying playback."))
         root.addView(settingsToggle("Check hidden channels in background","background_hidden_channel_check",true))
-        root.addView(label("When you leave NexTV after playback, a low-priority check continues while the app process remains alive. Results are saved and shown when you return. Android may stop background work if it kills the app."))
+        root.addView(label("When you leave MyView after playback, a low-priority check continues while the app process remains alive. Results are saved and shown when you return. Android may stop background work if it kills the app."))
         root.addView(settingsToggle("Automatically restore working channels","auto_unhide_working_channels",false))
         root.addView(label("OFF by default. When ON, a channel is restored only after actual playback succeeds. URL checks alone never unhide channels."))
         if(prefs.getBoolean("nextv_epg_enabled",true))root.addView(button("TV guide (EPG)"){configureEpg()})
         if(prefs.getBoolean("nextv_epg_enabled",true))root.addView(button("TV guide time adjustment"){configureEpgOffset()})
         if(prefs.getBoolean("nextv_profiles_enabled",true))root.addView(button("User profile: "+profileLabel()){manageViewerProfiles()})
-        root.addView(tvSection("NEXTV FEATURE CONTROLS"))
+        root.addView(tvSection("MYVIEW FEATURE CONTROLS"))
         root.addView(label("Each available feature can be switched ON or OFF. Features still in development are not presented as working switches."))
         root.addView(settingsToggle("SmartPlay — automatic playback recovery","nextv_smartplay_enabled",true))
-        root.addView(label("MPV edition: SmartPlay recovers interrupted streams and alternative URLs without switching to an uninstalled playback engine."))
+        root.addView(label("ON allows automatic recovery to try other installed engines after repeated failures. OFF disables SmartPlay engine rotation. Manually selected engines remain respected."))
         root.addView(settingsToggle("EPG and programme guide","nextv_epg_enabled",true))
         root.addView(settingsToggle("Personalized Home screen","nextv_home_enabled",true))
         root.addView(settingsToggle("Household profiles","nextv_profiles_enabled",true))
         root.addView(settingsToggle("Settings backup and restore","nextv_backup_enabled",true))
         root.addView(settingsToggle("Live channel preview","live_channel_preview",false))
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
-        root.addView(label("Planned for a later release: Instant Switching, Smart Logos and MultiView. No unfinished feature is enabled."))
+        root.addView(label("Observed start percentages require at least three attempts; they are not guaranteed future availability."))
+        root.addView(settingsToggle("Enable MultiView","myview_multiview_enabled",true))
+        if(prefs.getBoolean("myview_multiview_enabled",true))
+            root.addView(button("MultiView — 2 or 4 channels"){chooseMultiView()})
+        root.addView(label("MultiView is Media3-only and limited by TV decoder capacity. Some formats cannot play simultaneously."))
+        root.addView(settingsToggle("Smart Logos — match other playlist entries","myview_smart_logo_matching",true))
+        root.addView(label("Reuses an unambiguous logo from your other playlist entries; no external logo database or channel identity guessing."))
+        root.addView(label("Automatic external logo lookup and preloaded instant switching remain unimplemented."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
-        root.addView(label("Native playback uses MPV only. Legacy engine controls are being retired."))
-        root.addView(button("MPV decoder for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvDecoder).orEmpty().ifBlank{"No channel selected"}){chooseMpvDecoderForCurrentChannel()})
-        root.addView(button("MPV decoder and frame diagnostics"){showMpvPlaybackDiagnostics()})
-        root.addView(button("MPV HDR/SDR output for playing channel: "+channels.getOrNull(active)?.let(::selectedMpvOutput).orEmpty().ifBlank{"No channel selected"}){chooseMpvOutputForCurrentChannel()})
-        root.addView(label("Auto is recommended. Force HDR10 requires HDR-capable display output; Force SDR tests SDR tone mapping. Changing mode restarts this channel."))
-        root.addView(button("Neutralize MPV picture adjustments (current playback)"){resetMpvPictureForCurrentChannel()})
-        root.addView(label("For distorted colours or jerky motion: neutralize picture adjustments, then compare Software and Hardware copy on the same channel. Decoder changes restart that channel."))
+        root.addView(settingsToggle("Match display refresh for direct VOD","myview_match_vod_refresh",false))
+        root.addView(label("OFF by default. Direct MP4/M4V movie or series only. Keeps the same resolution, never switches display modes for Live TV. May cause a brief screen blackout."))
+        root.addView(settingsToggle("Recover abnormal direct-VOD clock progression","myview_vod_clock_recovery",false))
+        root.addView(label("OFF by default. One same-source recovery after sustained abnormal media-time progression. This is not a lip-sync measurement."))
+        root.addView(button("Enabled playback engines: "+enabledEngines().joinToString()){configureEnabledEngines()})
+        root.addView(settingsToggle("LibVLC enhanced stall recovery (off = VLC-compatible)", "nextv_libvlc_enhanced_recovery", false))
+        root.addView(label("VLC-compatible mode avoids forced restarts based on custom frame/time watchdogs. LibVLC errors and stopped-stream recovery remain active. Applies to the next channel."))
+        root.addView(label("Disable engines for crash isolation. At least one must remain enabled. Changes apply on the next channel; automatic recovery also respects these switches."))
         root.addView(button("Info panel opacity: "+prefs.getInt("information_opacity",65)+"%"){chooseInformationTransparency()})
         root.addView(settingsToggle("Show programme information in channel details","show_channel_epg",true))
-        root.addView(label("Playback engine: MPV (fixed for this edition)"))
-        root.addView(label("Live preview can be switched ON/OFF in NexTV Feature Controls above."))
+        root.addView(button("Default playback engine: "+(prefs.getString("engine","Media3")?:"Media3")){
+            val choices=(listOf("Auto")+enabledEngines()).toTypedArray()
+            AlertDialog.Builder(this).setTitle("Default playback engine").setSingleChoiceItems(choices,choices.indexOf(prefs.getString("engine","Media3"))){dialog,i->
+                prefs.edit().putString("engine",choices[i]).apply()
+                dialog.dismiss();settings()
+            }.setNegativeButton("Cancel",null).show()
+        })
+        root.addView(label("Live preview can be switched ON/OFF in MyView Feature Controls above."))
         root.addView(button("Startup buffering profile: "+bufferProfile()){chooseBufferProfile()})
         root.addView(label("Ultra Fast = quickest switching; Balanced = recommended; Stable / Maximum Buffer = fewer pauses on uneven networks. Changes apply to the next channel."))
         root.addView(settingsToggle("Check alternative stream links in background","background_url_checks",false){startBackgroundChannelChecks()})
         root.addView(label("YouTube: Native HLS first when publicly available; WebView fallback for other videos."))
         root.addView(settingsToggle("Skip unavailable channels automatically","auto_skip_nonworking",false))
-        root.addView(label("OFF by default: stay on a channel during interruptions. Turn ON only if you want NexTV to move automatically after available playback engines fail."))
+        root.addView(label("OFF by default: stay on a channel during interruptions. Turn ON only if you want MyView to move automatically after available playback engines fail."))
         root.addView(settingsToggle("Reconnect interrupted streams","auto_reconnect",true))
         root.addView(tvSection("PARENTAL & ACCESS CONTROL"))
         root.addView(button("Manage protected channels & groups"){manageLockedChannels()})
@@ -7796,8 +9697,8 @@ class MainActivity: Activity() {
             root.addView(settingsToggle("Attempt launch after device boot (Android 9 or earlier)","boot",false))
             root.addView(label("Startup launch depends on TV manufacturer restrictions. The TV may require separate auto-start permission."))
         }else{
-            root.addView(label("Android 10+: NexTV cannot reliably launch itself from a normal boot receiver. Open NexTV from your TV launcher, or use an OEM-supported auto-start setting if available."))
-            root.addView(label("Automatic last-channel playback starts when NexTV is opened, after licensing and parental checks. The legacy boot toggle has no effect on Android 10+."))
+            root.addView(label("Android 10+: MyView cannot reliably launch itself from a normal boot receiver. Open NexTV from your TV launcher, or use an OEM-supported auto-start setting if available."))
+            root.addView(label("Automatic last-channel playback starts when MyView is opened, after licensing and parental checks. The legacy boot toggle has no effect on Android 10+."))
         }
         root.addView(button("Default stream quality: "+(prefs.getString("quality_global","Auto") ?: "Auto")){selectQuality()})
         root.addView(label("Auto uses the original quality offered by the active playback engine/stream. Manual resolution preferences apply only where the engine and stream support them."))
@@ -7883,7 +9784,15 @@ class MainActivity: Activity() {
         }
     }
 
-    private fun isRemoteTransportReady():Boolean = mpvPlayer?.hasStarted==true
+    private fun isRemoteTransportReady(): Boolean {
+        val exo = player
+        if (exo != null) return try {
+            exo.playbackState == Player.STATE_READY
+        } catch (_: Exception) { false }
+        val vlc = vlcPlayer
+        if (vlc != null) return try { vlc.isPlaying } catch (_: Exception) { false }
+        return false
+    }
 
     override fun dispatchKeyEvent(event:KeyEvent):Boolean{
         // Do not reenter native teardown, but never discard remote recovery.
@@ -7995,7 +9904,7 @@ class MainActivity: Activity() {
             val direction=if(event.keyCode==KeyEvent.KEYCODE_VOLUME_UP)android.media.AudioManager.ADJUST_RAISE else android.media.AudioManager.ADJUST_LOWER
             audio.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC,direction,0)
             // A TV remote volume key is a user action; retry unmuting
-            // YouTube without affecting native playback.
+            // YouTube without affecting Media3 or LibVLC playback.
             if(event.keyCode==KeyEvent.KEYCODE_VOLUME_UP){
                 val current=channels.getOrNull(active)
                 val host=try{current?.url?.let{Uri.parse(it).host?.lowercase(java.util.Locale.ROOT)}}catch(_:Exception){null}
@@ -8044,9 +9953,12 @@ class MainActivity: Activity() {
                 if(media=="live" && event.keyCode in setOf(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,KeyEvent.KEYCODE_MEDIA_PLAY,KeyEvent.KEYCODE_MEDIA_PAUSE)){
                     if(isRemoteTransportReady()) safeRemoteTransport {
                         when(event.keyCode){
-                            KeyEvent.KEYCODE_MEDIA_PLAY->mpvPlayer?.resume()
-                            KeyEvent.KEYCODE_MEDIA_PAUSE->mpvPlayer?.pause()
-                            else->mpvPlayer?.togglePause()
+                            KeyEvent.KEYCODE_MEDIA_PLAY->{player?.play();vlcPlayer?.play()}
+                            KeyEvent.KEYCODE_MEDIA_PAUSE->{player?.pause();vlcPlayer?.pause()}
+                            else->{
+                                player?.let{if(it.isPlaying)it.pause() else it.play()}
+                                vlcPlayer?.let{if(it.isPlaying)it.pause() else it.play()}
+                            }
                         }
                     }
                     return true
@@ -8070,10 +9982,14 @@ class MainActivity: Activity() {
                             val delta=if(event.keyCode==KeyEvent.KEYCODE_DPAD_RIGHT ||
                                 event.keyCode==KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)10_000L else -10_000L
                             if(isRemoteTransportReady()) safeRemoteTransport {
-                                val mpv=mpvPlayer
-                                if(mpv!=null){
-                                    val target=(mpv.positionMs+delta).coerceAtLeast(0L)
-                                    mpv.seekTo(if(mpv.durationMs>0)target.coerceAtMost(mpv.durationMs) else target)
+                                val exo=player
+                                val vlc=vlcPlayer
+                                if(exo!=null && exo.isCurrentMediaItemSeekable){
+                                    val target=(exo.currentPosition+delta).coerceAtLeast(0L)
+                                    exo.seekTo(if(exo.duration>0)target.coerceAtMost(exo.duration) else target)
+                                }else if(vlc!=null && vlc.isSeekable){
+                                    val target=(vlc.time+delta).coerceAtLeast(0L)
+                                    vlc.time=if(vlc.length>0)target.coerceAtMost(vlc.length) else target
                                 }else Toast.makeText(this,"Seeking unavailable for this stream",Toast.LENGTH_SHORT).show()
                             }
                             return true
@@ -8082,7 +9998,8 @@ class MainActivity: Activity() {
                         KeyEvent.KEYCODE_NUMPAD_ENTER->{mediaPlaybackControls();return true}
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE->{
                             if(isRemoteTransportReady()) safeRemoteTransport {
-                                mpvPlayer?.togglePause()
+                                player?.let{if(it.isPlaying)it.pause() else it.play()}
+                                vlcPlayer?.let{if(it.isPlaying)it.pause() else it.play()}
                             }
                             return true
                         }
@@ -8157,7 +10074,11 @@ class MainActivity: Activity() {
         // engine may synchronously dispatch an error while stop()/release() runs;
         // that error must never initiate recovery or replace the next channel.
         playbackGeneration++
-        // Preserve MPV resume position before releasing the player.
+        restoreVodRefreshRate()
+        // Stop any isolated session before tearing down the legacy player.
+        // The session controller rejects stale generations and is safe when idle.
+        isolatedVlcSessions.stopActive()
+        isolatedActiveEngineId=null
         startupWatchdog?.let{handler.removeCallbacks(it)}
         startupWatchdog=null
         autoBufferHealthyTask?.let{handler.removeCallbacks(it)}
@@ -8183,10 +10104,6 @@ class MainActivity: Activity() {
         try{saveCurrentMediaProgress()}catch(e:Throwable){
             HomeTvDiagnostics.w("Playback","Progress save failed during channel switch",e)
         }
-        try{mpvPlayer?.release()}catch(e:Throwable){
-            HomeTvDiagnostics.w("MPV","Native playback release failed",e)
-        }
-        mpvPlayer=null
         closeVideoPreview()
         picturePreviewRestartTask?.let{handler.removeCallbacks(it)}
         picturePreviewRestartTask=null
@@ -8212,7 +10129,22 @@ class MainActivity: Activity() {
         retryTask=null
         qualityUpgradeTask?.let{handler.removeCallbacks(it)}
         qualityUpgradeTask=null
-        bannerTask=null;banner=null;videoScreen=null
+        bannerTask=null;banner=null;videoScreen=null;currentPlayerView=null
+        releaseAudioEqualizer()
+        val oldPlayer=player
+        player=null
+        try{oldPlayer?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","Media3 cleanup failed",e)}
+        activeChannelGainProcessor=null
+        val oldVlc=vlcPlayer
+        vlcPlayer=null
+        oldVlc?.let{v->
+            try{v.stop()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC stop failed",e)}
+            try{v.vlcVout.detachViews()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC detach failed",e)}
+            try{v.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC release failed",e)}
+        }
+        val oldCore=vlcCore
+        vlcCore=null
+        try{oldCore?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC core cleanup failed",e)}
         val oldWeb=web
         web=null
         try{oldWeb?.onPause();oldWeb?.destroy()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","WebView cleanup failed",e)}
@@ -8240,10 +10172,12 @@ class MainActivity: Activity() {
     override fun onDestroy(){
         epgTuneTask?.let{handler.removeCallbacks(it)};epgTuneTask=null
         sleepTimerTask?.let{handler.removeCallbacks(it)};sleepTimerTask=null
+        stopVlcProbe()
         backgroundProbeGeneration++
-        backgroundProbeWorker.shutdownNow()
         refreshGeneration++
         periodicProbeTask?.let{handler.removeCallbacks(it)}
+        probePlayers.toList().forEach{try{it.release()}catch(_:Exception){}}
+        probePlayers.clear()
         stopPlayback()
         // Drop in-memory caches and queued UI work on final exit. Keep the
         // persistent playlist files, preferences and validated license cache.
@@ -8260,6 +10194,9 @@ class MainActivity: Activity() {
         alternativeAttempted.clear()
         if(isFinishing)HomeTvDiagnostics.markCleanExit(this)
         unregisterLicenseNetworkCallback()
+        isolatedVlcSessions.release()
+        isolatedVlcClient?.close()
+        isolatedVlcClient = null
         super.onDestroy()
     }
 }

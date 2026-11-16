@@ -1,0 +1,64 @@
+name: NexTV consolidated verification
+
+on:
+  push:
+    branches: [development]
+  pull_request:
+    branches: [development]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The runner already provides Android cmdline-tools; avoid the setup-android
+      # action's obsolete "sdkmanager tools" request (package no longer exists).
+      - name: Configure Android SDK from runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?GitHub Ubuntu runner must provide ANDROID_HOME}"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || \
+            { echo "Android sdkmanager is missing from the runner" >&2; exit 1; }
+
+      - name: Install Android platform and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Verify dependencies, compile and test
+        run: gradle --no-daemon :app:verifySingleLibVlc :app:assembleDebug :app:testDebugUnitTest
+
+      - name: Publish test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextv-test-reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

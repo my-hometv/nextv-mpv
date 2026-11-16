@@ -3,7 +3,7 @@ package com.softppj.nextv
 import java.net.URI
 import java.util.Locale
 
-/** Allow supported network stream protocols for independent background probes,
+/** Allow supported network stream protocols for independent LibVLC probes,
  * without mistaking YouTube pages for direct media sources. */
 internal object BackgroundProbeUrlPolicy {
     /** Canonical comparison key, without rewriting the URL sent to the player. */
@@ -24,14 +24,6 @@ internal object BackgroundProbeUrlPolicy {
         return true
     }
 
-    /** Only safe direct HTTP media URLs are eligible for the decoder-free check.
-     * Other schemes are unknown, never automatically treated as failed. */
-    fun isHttpProbeCandidate(url:String):Boolean {
-        if(!isNativeProbeCandidate(url))return false
-        val scheme=runCatching{URI(url).scheme?.lowercase(Locale.ROOT)}.getOrNull()
-        return scheme=="http" || scheme=="https"
-    }
-
     /** A bounded HTTP range check can legitimately return 206 Partial Content.
      * Reject HTML landing pages and redirects that did not resolve to media. */
     fun isReachableHttpResponse(status: Int, contentType: String?): Boolean =
@@ -50,14 +42,22 @@ internal object BackgroundProbeUrlPolicy {
         )
     }
 
+    /** Media3's standard HTTP progressive/HLS/DASH and RTSP sources are
+     * supported without an optional RTMP extension. Keep RTMP on LibVLC. */
+    fun isMedia3ProbeCandidate(rawUrl: String): Boolean {
+        if (!isNativeProbeCandidate(rawUrl)) return false
+        val scheme = runCatching { URI(rawUrl).scheme?.lowercase(Locale.ROOT) }.getOrNull()
+        return scheme == "http" || scheme == "https" || scheme == "rtsp"
+    }
+
     fun isNativeProbeCandidate(rawUrl: String): Boolean {
         return try {
             val uri = URI(rawUrl)
             val scheme = uri.scheme?.lowercase(Locale.ROOT)
             val host = uri.host?.lowercase(Locale.ROOT)?.trimEnd('.') ?: return false
             if (host.isEmpty()) return false
-            // RTSP and RTMP families are common IPTV camera/live sources that native players
-            // may probe directly. Do not admit file, content or script URIs.
+            // RTSP and RTMP families are common IPTV camera/live sources that LibVLC
+            // can probe directly. Do not admit file, content or script URIs.
             if (scheme !in setOf("http", "https", "rtsp", "rtsps", "rtmp", "rtmps", "rtmpt")) return false
             // URI.host may accept an authority with user-info. Never pass a
             // credential-bearing URL to a background native probe, where the

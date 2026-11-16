@@ -1,0 +1,82 @@
+name: MyView Full App - Private Compile and Test APK
+on:
+  push:
+    branches: [myview-full-app]
+    paths:
+      - 'app/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/myview-full-app.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: myview-private-full-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm private full-app identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = "myview-full-app"
+          grep -Fq 'applicationId = "com.softppj.myview"' app/build.gradle.kts
+          grep -Fq 'name="app_name">MyView' app/src/main/res/values/strings.xml
+          test -f app/src/main/java/com/softppj/nextv/MainActivity.kt
+          test -f app/src/main/java/com/softppj/nextv/BootReceiver.kt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Android SDK and native tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Verify single LibVLC, compile and run tests
+        run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Assemble full MyView APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Verify APK package and build identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk > /tmp/myview-badging.txt
+          grep -E "^package: name='com.softppj.myview' " /tmp/myview-badging.txt
+          grep -F "application-label:'MyView'" /tmp/myview-badging.txt
+          cp app/build/outputs/apk/debug/app-debug.apk MyView-Full-Test.apk
+          sha256sum MyView-Full-Test.apk
+      - name: Upload full private MyView testing APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Test-${{ github.run_number }}
+          path: MyView-Full-Test.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

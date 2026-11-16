@@ -1,0 +1,14 @@
+# APK packaging and artifact uploads are intentionally suspended.
+# Keep this workflow file for a future user-approved testing phase.
+# All active development validation is handled by p0-consolidated-validation.yml.
+name: NexTV APK packaging (paused — no artifacts)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  packaging-paused:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "APK packaging is paused until explicitly approved."
