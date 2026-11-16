@@ -1,15 +1,37 @@
-# MyView — public Android TV playback test
+# MyView — standalone public Android TV development
 
-This is a **clean-room public test application**, NOT the full private NexTV-derived MyView application.
+This public branch contains independent MyView Android TV code. It uses no bundled
+private playlist, provider credentials, activation token, signing key, or proprietary assets.
+The app uses the unique Android application ID `com.softppj.myview` so it can coexist
+with other TV applications.
 
-It provides a standalone Android TV launcher, a Media3 stream test for authorized
-HTTPS DASH/HLS/media URLs, and a WebView test for authorized provider webpages.
-It does **not** contain the private NexTV playlist, licensing, favorites, LibVLC,
-engine fallback or recovery systems. It does not bypass DRM or guarantee Widevine
-playback. Use this APK to evaluate Android TV playback compatibility.
+## Current features
 
-Package: `com.softppj.myview`. Build: GitHub Actions workflow
-`MyView public test APK`, artifact `MyView.apk`.
+- Media3 HTTPS HLS/DASH/MP4 playback from URLs entered on the device
+- Paste a user-provided HTTPS M3U playlist and browse its channels
+- DPAD-focusable channel list and channel-up/channel-down remote shortcuts
+- Limited same-URL retry after eligible playback failures; no automatic URL substitutions
+- Provider webpage compatibility test using a restricted HTTPS WebView
+- Unit tests for playlist parsing, safety and limits
 
-No private source or credentials are copied here. The full private application
-remains at `my-hometv/nextv` branch `dash-standalone`.
+This is a standalone development build, not yet a complete full-featured IPTV product.
+It does not include household profiles, production EPG, licensing, protected-content
+DRM bypass, private playlists, or additional playback engines.
+
+## Verification and APK policy
+
+Pushes to `myview-public-build` run `.github/workflows/myview-verify.yml`.
+The verification workflow compiles Android Kotlin and runs local JVM tests;
+it never assembles or uploads an APK.
+
+The separate `.github/workflows/myview-public-apk.yml` is **manual-only** and
+should be used after compilation passes and the user approves APK preparation.
+
+For local checks with JDK 17 and Android SDK 36 installed:
+
+```bash
+gradle :app:compileDebugKotlin :app:testDebugUnitTest
+```
+
+Only add provider-authorized streams on your own device. Do not commit playlist
+contents, account details, private credentials or signing keys to this public project.
