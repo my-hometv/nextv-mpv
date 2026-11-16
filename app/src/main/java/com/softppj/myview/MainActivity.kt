@@ -16,6 +16,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebSettings
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -53,6 +54,7 @@ class MainActivity : Activity() {
     private var selectedGroup = ""
     private var showClock = true
     private var channelPage = 0
+    private var guidePage = 0
     private val channelPageSize = 80
     private val exportRequest = 1001
     private val importRequest = 1002
@@ -356,24 +358,37 @@ class MainActivity : Activity() {
         }
         panel.addView(Button(this).apply { text = "Back"; setOnClickListener { showMenu() } })
         panel.addView(TextView(this).apply {
-            text = "TV Guide • Now / Next"
+            text = "TV Guide • Now and upcoming"
             textSize = 24f
             setTextColor(android.graphics.Color.WHITE)
         })
-        for (index in playlistChannels.indices) {
-            if (playlistChannels[index].url in hiddenSet()) continue
+        val available = playlistChannels.indices.filter { playlistChannels[it].url !in hiddenSet() }
+        val pageSize = 40
+        val pages = ((available.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        guidePage = guidePage.coerceIn(0, pages - 1)
+        if (pages > 1) panel.addView(Button(this).apply {
+            text = "Page ${guidePage + 1} / $pages • Next"
+            setOnClickListener { guidePage = (guidePage + 1) % pages; showGuideScreen() }
+        })
+        val now = System.currentTimeMillis()
+        val schedule = epgProgrammes.map {
+            GuideTimeline.Event(it.channelId, it.startMs, it.endMs, it.title)
+        }
+        for (index in available.drop(guidePage * pageSize).take(pageSize)) {
+            val channel = playlistChannels[index]
+            val entries = GuideTimeline.upcoming(schedule, channel.tvgId, now, limit = 4)
+            val description = if (entries.isEmpty()) "No guide data" else entries.joinToString("\n") { programme ->
+                "${DateFormat.format("HH:mm", Date(programme.start))}  ${programme.title}"
+            }
             panel.addView(Button(this).apply {
-                text = "${index + 1}. ${playlistChannels[index].name}\n${guideLine(index)}"
+                text = "${index + 1}. ${channel.name}\n$description"
                 isFocusable = true
                 setOnClickListener { setChannel(index) }
             })
         }
-        root.addView(ScrollView(this).apply { addView(panel) },
-            FrameLayout.LayoutParams(-1, -1))
+        root.addView(ScrollView(this).apply { addView(panel) }, FrameLayout.LayoutParams(-1, -1))
         panel.getChildAt(0).requestFocus()
     }
-
-
 
     private fun confirmDiagnosticsExport() {
         AlertDialog.Builder(this).setTitle("Export playback diagnostics")
@@ -959,6 +974,9 @@ class MainActivity : Activity() {
         browser = web
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
+        web.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        web.settings.javaScriptCanOpenWindowsAutomatically = false
+        web.settings.setSupportMultipleWindows(false)
         web.settings.mediaPlaybackRequiresUserGesture = false
         web.settings.allowFileAccess = false
         web.settings.allowContentAccess = false
