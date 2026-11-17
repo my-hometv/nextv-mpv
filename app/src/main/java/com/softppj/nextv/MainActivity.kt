@@ -523,14 +523,37 @@ class MainActivity: Activity() {
     private var continuousChannelPosition=emptyMap<String,Int>()
     private var channelSources=emptySet<String>()
     private fun channelKey(c:Channel)=HomeTvPolicies.channelKey(c)
+    private fun channelOrderPreference(source:String)=viewerKey("position_order_"+hash(source.trim().lowercase(java.util.Locale.ROOT)))
+    private fun savedChannelOrder(source:String):List<String>{
+        val raw=prefs.getString(channelOrderPreference(source),null) ?:return emptyList()
+        return try{
+            val a=JSONArray(raw)
+            (0 until a.length()).mapNotNull{a.optString(it).takeIf(String::isNotBlank)}.distinct()
+        }catch(_:Exception){emptyList()}
+    }
+    private fun applySavedChannelOrder(indices:List<Int>):List<Int>{
+        if(indices.isEmpty())return indices
+        val bySource=indices.groupBy{channels[it].source}
+        return indices.map{channels[it].source}.distinct().flatMap{source->
+            ChannelOrderPolicy.apply(bySource[source].orEmpty(),savedChannelOrder(source)){channelKey(channels[it])}
+        }
+    }
     private fun ensureChannelIndex(){
         if(channelIndexOwner===channels && channelIndexSize==channels.size)return
         val snapshot=HomeTvPolicies.buildChannelIndex(channels)
         channelByKey=snapshot.indicesByKey
         channelRepresentatives=snapshot.representatives
-        liveChannelRepresentatives=snapshot.liveRepresentatives
-        channelPosition=snapshot.perPlaylistNumbers
-        continuousChannelPosition=snapshot.continuousNumbers
+        liveChannelRepresentatives=applySavedChannelOrder(snapshot.liveRepresentatives)
+        val counts=mutableMapOf<String,Int>()
+        channelPosition=liveChannelRepresentatives.associate{index->
+            val source=channels[index].source
+            val n=(counts[source] ?:0)+1
+            counts[source]=n
+            channelKey(channels[index]) to n
+        }
+        continuousChannelPosition=liveChannelRepresentatives.withIndex().associate{(position,index)->
+            channelKey(channels[index]) to position+1
+        }
         channelSources=channels.asSequence().map{it.source}.toSet()
         channelIndexOwner=channels
         channelIndexSize=channels.size
@@ -2962,6 +2985,8 @@ class MainActivity: Activity() {
         }
         val key=if(title=="Favorites")"channel_order_favorites" else "channel_order_all"
         val saved=prefs.getString(viewerKey(key),"") ?: ""
+        if(distinct.any{savedChannelOrder(channels[it].source).isNotEmpty()})
+            return applySavedChannelOrder(distinct)
         if(saved.isBlank())return distinct
         val positions=try{
             val array=JSONArray(saved)
@@ -2992,15 +3017,55 @@ class MainActivity: Activity() {
         invalidateSurfingCache()
         channelCollection(title,reordered)
     }
+    private fun moveChannelToPosition(index:Int,onMoved:()->Unit){
+        val selected=channels.getOrNull(index) ?:return
+        if(selected.mediaType!="live"){
+            Toast.makeText(this,"Positions apply to Live TV",Toast.LENGTH_SHORT).show()
+            return
+        }
+        ensureChannelIndex()
+        val source=selected.source
+        val keys=liveChannelRepresentatives.filter{channels[it].source==source}
+            .map{channelKey(channels[it])}
+        val current=keys.indexOf(channelKey(selected))
+        if(current<0)return
+        val input=EditText(this).apply{
+            inputType=android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+            setText((current+1).toString())
+            selectAll()
+        }
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("Move "+selected.name)
+            .setMessage("Enter position 1–"+keys.size+" within "+source+
+                ". Saved positions override playlist ordering after refresh.")
+            .setView(input)
+            .setPositiveButton("Save Position"){_,_->
+                val position=input.text.toString().toIntOrNull()
+                if(position==null || position !in 1..keys.size){
+                    Toast.makeText(this,"Enter 1–"+keys.size,Toast.LENGTH_LONG).show()
+                }else{
+                    val ordered=ChannelOrderPolicy.move(keys,channelKey(selected),position)
+                    prefs.edit().putString(channelOrderPreference(source),JSONArray(ordered).toString())
+                        .putInt(viewerKey("channel_sort_mode"),0).apply()
+                    channelIndexOwner=null
+                    invalidateSurfingCache()
+                    ensureChannelIndex()
+                    Toast.makeText(this,selected.name+" moved to "+position,Toast.LENGTH_SHORT).show()
+                    onMoved()
+                }
+            }.setNegativeButton("Cancel",null).create())
+    }
     // Long press in channel lists: quick actions only. Never open the right-key settings.
-    private fun showChannelListQuickActions(index:Int,refresh:()->Unit){
+    private fun showChannelListQuickActions(index:Int,refresh:()->Unit,onMoved:()->Unit=refresh){
         if(index !in channels.indices)return
         val c=channels[index]
         val favorite=channels.any{sameChannel(it,c) && favoriteIds.contains(id(it))}
         val options=arrayOf(
             if(isManuallyHidden(c))"Unhide" else "Hide",
             if(favorite)"Non Favourite" else "Favourite",
-            if(isLocked(c))"Unlock" else "Lock"
+            if(isLocked(c))"Unlock" else "Lock",
+            "↕  Move Channel"
         )
         showSideDialog(AlertDialog.Builder(this)
             .setTitle(numberFor(index).toString()+". "+c.name)
@@ -3020,6 +3085,7 @@ class MainActivity: Activity() {
                         prefs.edit().putStringSet("locked_channels",locked).apply()
                         refresh()
                     }
+                    3->moveChannelToPosition(index,onMoved)
                 }
             }.setNegativeButton("Back",null).create())
     }
@@ -3083,12 +3149,13 @@ class MainActivity: Activity() {
         }
         list.setOnItemLongClickListener{_,_,position,_->
             val selected=indices[position]
-            showChannelListQuickActions(selected){
+            showChannelListQuickActions(selected,{
                 (list.adapter as android.widget.BaseAdapter).notifyDataSetChanged()
-                // Preserve the selected channel and the open list.
                 list.setSelection(position)
                 list.requestFocus()
-            }
+            },{
+                channelCollection(title,indices)
+            })
             true
         }
         if(title=="All channels"){
@@ -3118,7 +3185,7 @@ class MainActivity: Activity() {
                 }
             }
         }
-        root.addView(label("Long press a channel: Hide / Unhide · Favourite · Lock / Unlock"))
+        root.addView(label("Long press a channel: Move · Hide / Unhide · Favourite · Lock / Unlock"))
         root.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         root.addView(button("Back"){showHome()})
     }
@@ -5216,11 +5283,14 @@ class MainActivity: Activity() {
         }
         list.setOnItemClickListener{_,_,position,_->playIndex(preferredChannel(indices[position]))}
         list.setOnItemLongClickListener{_,_,position,_->
-            showChannelListQuickActions(indices[position]){
+            showChannelListQuickActions(indices[position],{
                 (list.adapter as android.widget.BaseAdapter).notifyDataSetChanged()
                 list.setSelection(position)
                 list.requestFocus()
-            }
+            },{
+                if(drawer.parent===screen)screen.removeView(drawer)
+                showOverlayList()
+            })
             true
         }
         root.addView(label("Long press: Hide / Unhide · Favourite · Lock / Unlock"))
@@ -7250,7 +7320,7 @@ class MainActivity: Activity() {
             selector=highlight
             isDrawSelectorOnTop=false
         }
-        val available=playlistIndices().filter{
+        val available=applySavedChannelOrder(playlistIndices()).filter{
             !isGroupHidden(channels[it].group) &&
                 (searchQuery==null || channels[it].name.contains(searchQuery,true) ||
                     channels[it].group.contains(searchQuery,true))
@@ -7282,11 +7352,14 @@ class MainActivity: Activity() {
             playIndex(preferredChannel(selected))
         }
         list.setOnItemLongClickListener{_,_,position,_->
-            showChannelListQuickActions(available[position]){
+            showChannelListQuickActions(available[position],{
                 (list.adapter as android.widget.BaseAdapter).notifyDataSetChanged()
                 list.setSelection(position)
                 list.requestFocus()
-            }
+            },{
+                if(drawer.parent===screen)screen.removeView(drawer)
+                showOverlayList(searchQuery)
+            })
             true
         }
         list.setOnKeyListener{_,code,event->
@@ -7525,11 +7598,14 @@ class MainActivity: Activity() {
         fun close(){if(drawer.parent===screen)screen.removeView(drawer);screen.requestFocus()}
         list.setOnItemClickListener{_,_,position,_->close();playIndex(preferredChannel(indices[position]))}
         list.setOnItemLongClickListener{_,_,position,_->
-            showChannelListQuickActions(indices[position]){
+            showChannelListQuickActions(indices[position],{
                 (list.adapter as android.widget.BaseAdapter).notifyDataSetChanged()
                 list.setSelection(position)
                 list.requestFocus()
-            }
+            },{
+                if(drawer.parent===screen)screen.removeView(drawer)
+                showOverlayList()
+            })
             true
         }
         list.setOnKeyListener{_,code,event->
