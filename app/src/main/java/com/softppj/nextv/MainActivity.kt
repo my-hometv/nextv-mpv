@@ -3895,27 +3895,38 @@ class MainActivity: Activity() {
 
     // My Home TV media library. Unmarked EXTINF entries are always Live TV.
     private fun mediaItems(type:String)=visibleIndices().filter{channels[it].mediaType==type}
-    // Bounded image cache: do not start a network thread on every recycled list row.
-    private val posterCache=object:android.util.LruCache<String,android.graphics.Bitmap>(48){}
+    // Resource-limited TVs cannot safely cache 48 unscaled full-HD posters.
+    // Byte accounting bounds pixel memory independently of image count.
+    private val posterCache=object:android.util.LruCache<String,android.graphics.Bitmap>(12*1024*1024){
+        override fun sizeOf(key:String,value:android.graphics.Bitmap)=value.byteCount
+    }
     private val posterLoading=java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val posterExecutor=java.util.concurrent.ThreadPoolExecutor(
+        2,2,0L,java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.ArrayBlockingQueue<Runnable>(64))
     private fun loadPoster(image:android.widget.ImageView,url:String){
         image.tag=url
         if(url.isBlank()){image.setImageDrawable(null);return}
         posterCache.get(url)?.let{image.setImageBitmap(it);return}
         image.setImageDrawable(null)
         if(!posterLoading.add(url))return
-        thread(name="MyHomeTV-poster"){
-            try{
-                val conn=URL(url).openConnection().apply{connectTimeout=5000;readTimeout=5000}
-                val bmp=conn.getInputStream().use{android.graphics.BitmapFactory.decodeStream(it)}
-                if(bmp!=null && !isFinishing && !isDestroyed){
-                    posterCache.put(url,bmp)
-                    runOnUiThread{
-                        if(!isFinishing && !isDestroyed && image.tag==url)
-                            image.setImageBitmap(bmp)
+        try{
+            posterExecutor.execute{
+                try{
+                    val conn=URL(url).openConnection().apply{connectTimeout=5000;readTimeout=5000}
+                    val bmp=conn.getInputStream().use{BoundedLogoDecoder.decode(it,512)}
+                    if(bmp!=null && !isFinishing && !isDestroyed){
+                        runOnUiThread{
+                            if(!isFinishing && !isDestroyed){
+                                posterCache.put(url,bmp)
+                                if(image.tag==url)image.setImageBitmap(bmp)
+                            }
+                        }
                     }
-                }
-            }catch(_:Exception){}finally{posterLoading.remove(url)}
+                }catch(_:Exception){}finally{posterLoading.remove(url)}
+            }
+        }catch(_:java.util.concurrent.RejectedExecutionException){
+            posterLoading.remove(url)
         }
     }
     private fun youtubeLibrary(){
@@ -11164,6 +11175,7 @@ class MainActivity: Activity() {
         externalLogoPending.clear()
         externalLogoIndex=null
         logoExecutor.shutdownNow()
+        posterExecutor.shutdownNow()
         logoCache.evictAll()
         logoLoading.clear()
         logoWaiting.clear()
