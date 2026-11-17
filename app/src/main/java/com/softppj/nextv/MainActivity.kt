@@ -6602,23 +6602,27 @@ class MainActivity: Activity() {
     }
     private fun showVideoPreview(index:Int){
         closeVideoPreview()
-        if(!prefs.getBoolean("live_channel_preview",false) || !licenseReady ||
-            playbackTeardownInProgress || multiViewDialog!=null)return
         val screen=videoScreen ?:return
         if(index !in channels.indices)return
         val resolvedIndex=preferredChannel(index)
         if(resolvedIndex !in channels.indices)return
         val c=channels[resolvedIndex]
-        // The secondary preview is deliberately restricted to the same
-        // Media3 engine. LibVLC/Web sources must never start a competing
-        // decoder or bypass the channel's PIN and source permissions.
-        if(isLocked(c) && unlockedChannel!=id(c))return
-        if(c.source in lockedPlaylistNames() && c.source !in unlockedPlaylistsThisSession)return
-        if(c.group in lockedGroupNames() && c.group !in unlockedGroupsThisSession)return
-        if(engineFor(c)!="Media3")return
-        // The on-screen player already displays this stream; a duplicate
-        // preview wastes a decoder and competes for network bandwidth.
-        if(active in channels.indices && channels[active].url==c.url)return
+        val unlocked=(unlockedChannel==id(c) || !isLocked(c)) &&
+            (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession) &&
+            (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
+        // The active Media3 player takes priority; no LibVLC, WebView, or
+        // MultiView decoder competition is permitted for speculative previews.
+        if(!LivePrebufferPolicy.mayStart(
+                enabled=prefs.getBoolean("live_channel_preview",false),
+                licenseReady=licenseReady,
+                mainPlayerPlaying=player?.isPlaying==true,
+                mainEngineIsMedia3=player!=null && vlcPlayer==null && web==null,
+                previewEngineIsMedia3=engineFor(c)=="Media3",
+                unlocked=unlocked,
+                anotherDecoderSessionActive=playbackTeardownInProgress ||
+                    multiViewDialog!=null || multiViewPlayers.isNotEmpty(),
+                sameStream=channels.getOrNull(active)?.url==c.url
+            ))return
         if(!BackgroundProbeUrlPolicy.isNativeProbeCandidate(c.url))return
         val width=(resources.displayMetrics.widthPixels*0.28f).toInt().coerceAtLeast(220)
         val height=(width*9/16).coerceAtLeast(120)
