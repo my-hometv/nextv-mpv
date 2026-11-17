@@ -13,16 +13,14 @@ internal object VideoQualityPolicy {
         preference == "720p" || preference == "1080p"
 
     /** Leave decoder capacity for the on-screen player. */
+    @Suppress("UNUSED_PARAMETER")
     fun backgroundProbeLimit(
         foregroundActive: Boolean,
         foregroundBuffering: Boolean = false,
         foregroundNativeVlc: Boolean = false,
         foregroundStarting: Boolean = false
     ): Int =
-        when {
-            foregroundActive && (foregroundBuffering || foregroundNativeVlc ||
-                foregroundStarting) -> 0
-            foregroundActive -> 1
-            else -> 2
-        }
+        // No speculative decoder may compete with foreground video, even after
+        // the initial buffering phase ends. Limit idle checks to one decoder.
+        if (foregroundActive) 0 else 1
 }
