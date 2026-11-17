@@ -1,7 +1,7 @@
 name: MyView Source Verification (NO APK)
 on:
   push:
-    branches: [myview-full-app]
+    branches: [myview-full-app, myview-cinematic-home]
     paths:
       - 'app/**'
       - 'build.gradle.kts'
