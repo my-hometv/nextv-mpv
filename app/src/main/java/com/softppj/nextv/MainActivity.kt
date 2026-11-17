@@ -10162,9 +10162,16 @@ class MainActivity: Activity() {
                         staged.forEach{(key,incoming)->
                             val value:Any=when{
                                 mode==0 && key=="playlists" && incoming is String->mergePlaylistBackup(incoming)
-                                mode==0 && (key=="viewer_profiles" || key=="recent_channels" ||
-                                    (key.startsWith("viewer_") && key.endsWith("_recent_channels"))) &&
-                                    incoming is String->mergeStringArrayBackup(key,incoming)
+                                mode==0 && incoming is String && (key=="favorite_groups" ||
+                                    (key.startsWith("viewer_") && key.endsWith("_favorite_groups")))->
+                                    FavoriteGroupBackupMergePolicy.merge(
+                                        prefs.getString(key,"{}") ?: "{}",incoming)
+                                mode==0 && incoming is String && (key=="viewer_profiles" ||
+                                    key=="recent_channels" || key=="favorite_group_order" ||
+                                    (key.startsWith("viewer_") &&
+                                        (key.endsWith("_recent_channels") ||
+                                            key.endsWith("_favorite_group_order"))))->
+                                    mergeStringArrayBackup(key,incoming)
                                 mode==0 && incoming is Set<*>->
                                     (prefs.getStringSet(key,emptySet()) ?: emptySet()) + incoming.filterIsInstance<String>()
                                 else->incoming
