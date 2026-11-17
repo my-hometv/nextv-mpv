@@ -1043,7 +1043,15 @@ class MainActivity: Activity() {
     }
     private var fallbackAttempted=mutableSetOf<String>()
     // Viewer-specific preferences; license, playlists and parental restrictions remain shared.
-    private fun viewerId():String=prefs.getString("active_viewer","default")?.takeIf{it=="default" || it.matches(Regex("[A-Za-z0-9 _-]{1,24}"))} ?: "default"
+    private fun viewerId():String {
+        if(!prefs.getBoolean("nextv_profiles_enabled",true))return "default"
+        val requested=prefs.getString("active_viewer","default") ?:return "default"
+        if(requested=="default")return requested
+        val listed=try{JSONArray(prefs.getString("viewer_profiles","[]"))}
+            catch(_:Exception){return "default"}
+        val members=(0 until listed.length()).map{listed.optString(it)}
+        return ViewerPreferencePolicy.activeViewer(requested,members)
+    }
     private fun viewerKey(key:String):String=if(viewerId()=="default")key else "viewer_"+viewerId()+"_"+key
     private val favoriteIds get()=prefs.getStringSet(viewerKey("favorites"),emptySet()) ?: emptySet()
     private fun profileLabel():String=if(viewerId()=="default")"Default" else viewerId()
@@ -1087,13 +1095,10 @@ class MainActivity: Activity() {
                             .setPositiveButton("Remove"){_,_->
                                 val remaining=JSONArray()
                                 for(i in 0 until names.length())if(names.optString(i)!=old)remaining.put(names.optString(i))
-                                prefs.edit().putString("viewer_profiles",remaining.toString())
+                                val editor=prefs.edit().putString("viewer_profiles",remaining.toString())
                                     .putString("active_viewer","default")
-                                    .remove("viewer_"+old+"_favorites").remove("viewer_"+old+"_recent_channels")
-                                     .remove("viewer_"+old+"_favorites_surfing").remove("viewer_"+old+"_favorite_groups")
-                                     .remove("viewer_"+old+"_favorite_group_order").remove("viewer_"+old+"_active_favorite_group")
-                                     .remove("viewer_"+old+"_default_favorite_group").remove("viewer_"+old+"_channel_order_favorites")
-                                     .remove("viewer_"+old+"_channel_order_all").remove("viewer_"+old+"_channel_sort_mode").apply()
+                                ViewerPreferencePolicy.profileKeys(old).forEach(editor::remove)
+                                editor.apply()
                                 invalidateSurfingCache()
                                 settings()
                             }.setNegativeButton("Cancel",null).show()
@@ -4461,6 +4466,7 @@ class MainActivity: Activity() {
             val payload=pendingTextExport
             pendingTextExport=null
             if(resultCode!=RESULT_OK || data?.data==null || payload==null)return
+            if(requestCode==exportBackupRequest && !prefs.getBoolean("nextv_backup_enabled",true))return
             try{
                 contentResolver.openOutputStream(data.data!!,"wt")?.bufferedWriter(Charsets.UTF_8)?.use{it.write(payload)}
                     ?:throw IllegalStateException("Cannot write to the selected destination")
@@ -4471,13 +4477,16 @@ class MainActivity: Activity() {
             return
         }
         if(requestCode==importBackupRequest){
-            if(resultCode!=RESULT_OK)return
+            if(resultCode!=RESULT_OK || !prefs.getBoolean("nextv_backup_enabled",true))return
             val uri=data?.data ?:return
             thread{
                 try{
-                    val raw=contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}
+                    val raw=contentResolver.openInputStream(uri)?.use{BackupSafety.readLimitedUtf8(it)}
                         ?:throw IllegalArgumentException("Cannot read selected backup")
-                    runOnUiThread{restoreSettingsFromText(raw)}
+                    runOnUiThread{
+                        if(!isFinishing && !isDestroyed && prefs.getBoolean("nextv_backup_enabled",true))
+                            restoreSettingsFromText(raw)
+                    }
                 }catch(e:Exception){
                     runOnUiThread{Toast.makeText(this,"Backup could not be opened: "+e.message,Toast.LENGTH_LONG).show()}
                 }
@@ -10110,6 +10119,10 @@ class MainActivity: Activity() {
             }
         }
         val payload=JSONObject().put("format","HomeTV-settings-v1").put("settings",data).toString(2)
+        if(!BackupSafety.fitsBackupLimit(payload)){
+            Toast.makeText(this,"Settings backup exceeds the 2 MB portable limit",Toast.LENGTH_LONG).show()
+            return
+        }
         AlertDialog.Builder(this).setTitle("Save settings backup")
             .setMessage("The backup includes playlist URLs, which may contain provider credentials. Licence activation and the parental PIN are excluded. Save the file only to a location you trust.")
             .setPositiveButton("Choose location"){_,_->
@@ -10155,6 +10168,7 @@ class MainActivity: Activity() {
         }
     }
     private fun restoreSettingsFromText(raw:String){
+        if(!prefs.getBoolean("nextv_backup_enabled",true))return
         try{
             require(raw.toByteArray(Charsets.UTF_8).size<=BackupSafety.MAX_BACKUP_BYTES){"Backup exceeds the 2 MB safety limit"}
             val backup=JSONObject(raw)
@@ -10184,6 +10198,8 @@ class MainActivity: Activity() {
             AlertDialog.Builder(this).setTitle("Choose restore method")
                 .setItems(arrayOf("Merge with existing settings","Replace existing settings")){_,mode->
                     try{
+                        val previousToggles=FeatureTogglePolicy.runtimeToggles
+                            .associate{(key,default)->key to prefs.getBoolean(key,default)}
                         val edit=prefs.edit()
                         if(mode==1){
                             prefs.all.keys.filter{key->
@@ -10209,7 +10225,14 @@ class MainActivity: Activity() {
                                 is Set<*>->edit.putStringSet(key,value.filterIsInstance<String>().toSet())
                             }
                         }
-                        edit.apply()
+                        if(!edit.commit())throw IllegalStateException("Unable to save restored settings")
+                        // A restore can disable active decoders, EPG and network
+                        // workers just like the corresponding Settings switch.
+                        FeatureTogglePolicy.runtimeToggles.forEach{(key,default)->
+                            val current=prefs.getBoolean(key,default)
+                            if(previousToggles[key]!=current)onFeatureToggleChanged(key,current)
+                        }
+                        invalidateSurfingCache()
                         Toast.makeText(this,(if(mode==0)"Merged " else "Replaced with ")+staged.size+
                             " settings. License and parental PIN were kept.",Toast.LENGTH_LONG).show()
                     }catch(e:Exception){
@@ -10294,6 +10317,7 @@ class MainActivity: Activity() {
         if(enabled){
             // Re-enable saved reminders that were suspended by EPG OFF.
             if(key=="nextv_epg_enabled")armEpgTune()
+            if(key=="nextv_profiles_enabled")invalidateSurfingCache()
             return
         }
         when(key){
@@ -10310,7 +10334,9 @@ class MainActivity: Activity() {
             }
             "background_url_checks"->startBackgroundChannelChecks()
             "live_channel_preview"->{
-                if(!previewIsAutomatic)clearChannelPreview()
+                // Keep the selected channel/info intact, but release a
+                // manual preview decoder immediately when its toggle is OFF.
+                if(!previewIsAutomatic)closeVideoPreview()
             }
             "myview_instant_preload_enabled"->{
                 if(previewIsAutomatic)closeVideoPreview()
@@ -10324,6 +10350,7 @@ class MainActivity: Activity() {
                 multiViewDialog?.dismiss()
                 releaseMultiView()
             }
+            "nextv_profiles_enabled"->invalidateSurfingCache()
             "nextv_smartplay_enabled"->{
                 // SmartPlay engine rotation is independent of ordinary reconnect.
                 fallbackEngineOverride=null
@@ -10535,7 +10562,7 @@ class MainActivity: Activity() {
             root.addView(settingsToggle("Attempt launch after device boot (Android 9 or earlier)","boot",false))
             root.addView(label("Startup launch depends on TV manufacturer restrictions. The TV may require separate auto-start permission."))
         }else{
-            root.addView(label("Android 10+: MyView cannot reliably launch itself from a normal boot receiver. Open NexTV from your TV launcher, or use an OEM-supported auto-start setting if available."))
+            root.addView(label("Android 10+: MyView cannot reliably launch itself from a normal boot receiver. Open MyView from your TV launcher, or use an OEM-supported auto-start setting if available."))
             root.addView(label("Automatic last-channel playback starts when MyView is opened, after licensing and parental checks. The legacy boot toggle has no effect on Android 10+."))
         }
         root.addView(button("Default stream quality: "+(prefs.getString("quality_global","Best Available") ?: "Best Available")){selectQuality()})

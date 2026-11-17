@@ -12,6 +12,16 @@ class FeatureTogglePolicyTest {
             automatic=true,enabled=FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH))
     }
 
+    @Test fun restoredFeatureControlsHaveExplicitStableDefaults() {
+        val toggles=FeatureTogglePolicy.runtimeToggles
+        assertEquals(false,toggles["background_url_checks"])
+        assertEquals(false,toggles["live_channel_preview"])
+        assertEquals(true,toggles["nextv_epg_enabled"])
+        assertEquals(true,toggles["myview_multiview_enabled"])
+        assertEquals(true,toggles["nextv_profiles_enabled"])
+        assertEquals(toggles.size,toggles.keys.toSet().size)
+    }
+
     @Test fun manualRefreshRemainsAvailableWithNewDefaults() {
         assertTrue(FeatureTogglePolicy.shouldRunAutomaticRefresh(
             automatic=false,enabled=FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH))

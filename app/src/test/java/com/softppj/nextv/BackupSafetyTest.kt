@@ -36,6 +36,13 @@ class BackupSafetyTest {
         }
     }
 
+    @Test fun exportAndImportUseTheSameUtf8ByteLimit() {
+        val valid="😀".repeat(BackupSafety.MAX_BACKUP_BYTES / 4)
+        assertTrue(BackupSafety.fitsBackupLimit(valid))
+        assertEquals(valid,BackupSafety.readLimitedUtf8(ByteArrayInputStream(valid.toByteArray(Charsets.UTF_8))))
+        assertFalse(BackupSafety.fitsBackupLimit(valid+"X"))
+    }
+
     @Test fun boundedReaderAcceptsValidUtf8() {
         val content = """{"format":"HomeTV-settings-v1","settings":{}}"""
         assertEquals(content, BackupSafety.readLimitedUtf8(ByteArrayInputStream(content.toByteArray())))

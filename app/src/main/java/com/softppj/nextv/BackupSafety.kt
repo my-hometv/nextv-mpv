@@ -28,6 +28,10 @@ internal object BackupSafety {
         return secretKeyParts.none { it in name }
     }
 
+    /** Exports must fit the same byte ceiling that import enforces. */
+    fun fitsBackupLimit(payload:String):Boolean =
+        payload.toByteArray(Charsets.UTF_8).size<=MAX_BACKUP_BYTES
+
     /** Reject oversized input while streaming, before allocating the JSON document. */
     fun readLimitedUtf8(input: InputStream): String {
         val output = ByteArrayOutputStream()
