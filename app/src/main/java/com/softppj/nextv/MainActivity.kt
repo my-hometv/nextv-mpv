@@ -103,7 +103,7 @@ class MainActivity: Activity() {
             // The supplied family artwork is 16:9: fill the entire TV,
             // preserving aspect ratio rather than cropping to a tiny icon.
             setImageResource(R.drawable.tv_banner)
-            scaleType=ImageView.ScaleType.CENTER_CROP
+            scaleType=ImageView.ScaleType.FIT_CENTER
             contentDescription="MyView family TV artwork"
         },FrameLayout.LayoutParams(-1,-1))
         val status=LinearLayout(this).apply{
@@ -4204,7 +4204,7 @@ class MainActivity: Activity() {
         // a generated family scene. Keep it behind accessible text and remote focus.
         hero.addView(ImageView(this).apply{
             setImageResource(R.drawable.tv_banner)
-            scaleType=ImageView.ScaleType.CENTER_CROP
+            scaleType=ImageView.ScaleType.FIT_CENTER
             contentDescription="MyView family artwork"
         },android.widget.FrameLayout.LayoutParams(-1,-1))
         hero.addView(android.view.View(this).apply{
@@ -7222,7 +7222,7 @@ class MainActivity: Activity() {
         // Family branding appears on the right without replacing the channel logo.
         panel.addView(ImageView(this).apply{
             setImageResource(R.drawable.tv_banner)
-            scaleType=ImageView.ScaleType.CENTER_CROP
+            scaleType=ImageView.ScaleType.FIT_CENTER
             contentDescription="MyView family app logo"
         },LinearLayout.LayoutParams(tvDp(112),tvDp(63)).apply{
             marginStart=tvDp(10)
