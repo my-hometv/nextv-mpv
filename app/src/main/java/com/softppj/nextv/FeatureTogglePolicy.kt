@@ -16,7 +16,7 @@ internal object FeatureTogglePolicy {
         "auto_playlist_check" to DEFAULT_AUTO_PLAYLIST_REFRESH,
         "background_url_checks" to false,
         "live_channel_preview" to false,
-        "myview_instant_preload_enabled" to true,
+        "myview_instant_preload_enabled" to false,
         "myview_external_logos_enabled" to false,
         "myview_multiview_enabled" to true,
         "nextv_smartplay_enabled" to true,
