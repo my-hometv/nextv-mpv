@@ -168,6 +168,14 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("CharArray(64 * 1024)", diagnostics)
         self.assertIn("readReport(includeAnrTraces:Boolean=false)", diagnostics)
 
+    def test_playback_diagnostics_never_write_files_on_remote_ui_thread(self):
+        diagnostics = (ROOT / "app/src/main/java/com/softppj/nextv/HomeTvDiagnostics.kt").read_text(encoding="utf-8")
+        self.assertIn("MyView-diagnostic-writer", diagnostics)
+        self.assertIn("ArrayBlockingQueue<Runnable>(256)", diagnostics)
+        self.assertIn("logWriter.execute { persist(level, tag, message, error) }", diagnostics)
+        self.assertIn('@Synchronized private fun persist(', diagnostics)
+        self.assertIn('persist("ERROR", "HomeTV", "Uncaught crash on thread "', diagnostics)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
