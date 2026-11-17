@@ -41,6 +41,7 @@ import kotlin.concurrent.thread
 data class Channel(val name:String, val url:String, val group:String, val logo:String="", val source:String="", val headers:Map<String,String> = emptyMap(), val epgId:String="", val webChannel:String="", val mediaType:String="live", val year:String="", val genre:String="", val artist:String="", val album:String="", val season:String="", val episode:String="", val description:String="")
 data class Playlist(val name:String, val url:String, val enabled:Boolean=true)
 
+@androidx.media3.common.util.UnstableApi
 class MainActivity: Activity() {
     private val prefs by lazy { getSharedPreferences("nextv", MODE_PRIVATE) }
     private var channels = mutableListOf<Channel>()
