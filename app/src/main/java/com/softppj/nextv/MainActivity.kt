@@ -815,6 +815,19 @@ class MainActivity: Activity() {
     }
     // Main-thread playback teardown is reentrant when native players dispatch callbacks.
     private var playbackTeardownInProgress=false
+    // Timing is scoped to an Activity playback generation, not a channel index:
+    // stale callbacks cannot make a previous tune appear to have succeeded.
+    private var tuneRequestedAtMs=0L
+    private var tuneTimingGeneration=-1
+    private fun logFirstPlaybackProgress(index:Int,screen:FrameLayout,engine:String,kind:String){
+        if(active!=index || videoScreen!==screen ||
+            tuneTimingGeneration!=playbackGeneration || tuneRequestedAtMs<=0L)return
+        val elapsed=android.os.SystemClock.elapsedRealtime()-tuneRequestedAtMs
+        tuneTimingGeneration=-1
+        HomeTvDiagnostics.i("StartupTiming",
+            "$engine $kind after ${elapsed.coerceAtLeast(0L)}ms; channel="+
+                (channels.getOrNull(index)?.name ?: "unknown"))
+    }
     // Preserve the latest remote recovery command during reentrant native teardown.
     private var pendingTeardownRemoteKey:Int?=null
     // A remote command arriving from a re-entrant native callback must retain
@@ -8810,6 +8823,7 @@ class MainActivity: Activity() {
     }
 
     private fun playIndex(index:Int){
+        val tuneRequestTime=android.os.SystemClock.elapsedRealtime()
         // Explicit tune, numeric input and menu selection supersede any
         // outstanding rapid-CH request before it can retune unexpectedly.
         cancelRapidSurf()
@@ -8917,6 +8931,11 @@ class MainActivity: Activity() {
         }
         stopPlayback()
         active=index
+        tuneRequestedAtMs=tuneRequestTime
+        tuneTimingGeneration=playbackGeneration
+        val startupTeardownMs=android.os.SystemClock.elapsedRealtime()-tuneRequestTime
+        if(startupTeardownMs>=250L)HomeTvDiagnostics.w("StartupTiming",
+            "Channel tune blocked during teardown for "+startupTeardownMs+"ms")
         if(pendingAlternativeKey==channelKey(c) && pendingAlternativeUrl==c.url &&
             pendingAlternativeGeneration<0)
             pendingAlternativeGeneration=playbackGeneration
@@ -9387,6 +9406,7 @@ class MainActivity: Activity() {
                         }
                         // Do not mark a Media3 source as working merely because its
                         // audio starts; require an actual rendered video frame.
+                        logFirstPlaybackProgress(index,screen,"Media3","first video frame")
                         rememberWorking(c,volumePlaybackGeneration)
                         scheduleAdjacentPrebuffer(index,screen)
                     }
@@ -9609,6 +9629,7 @@ class MainActivity: Activity() {
                                 if(status==NativePlaybackWatchdog.Result.PLAYING &&
                                     monitor.hasObservedProgress && !confirmed){
                                     confirmed=true
+                                    logFirstPlaybackProgress(index,screen,"Isolated LibVLC","native progress")
                                     rememberWorking(c)
                                     autoBufferHealthy()
                                 }
@@ -9858,6 +9879,7 @@ class MainActivity: Activity() {
                                 confirmedProgress=true
                                 started=true
                                 handler.removeCallbacks(watchdog)
+                                logFirstPlaybackProgress(index,screen,"LibVLC","media progress")
                                 rememberWorking(c)
                                 autoBufferHealthy()
                             }
