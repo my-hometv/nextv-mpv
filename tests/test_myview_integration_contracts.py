@@ -144,6 +144,12 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("posterExecutor.shutdownNow()", self.activity)
         self.assertNotIn("android.graphics.BitmapFactory.decodeStream(it)", self.activity)
 
+    def test_live_video_is_not_confirmed_by_early_audio(self):
+        self.assertIn("val hasSelectedAudio=groups.any", self.activity)
+        self.assertIn("val hasVideo=groups.any", self.activity)
+        self.assertIn("if(hasSelectedAudio && !hasVideo)", self.activity)
+        self.assertIn("exo.playbackState==Player.STATE_READY", self.activity)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
