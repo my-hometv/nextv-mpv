@@ -10185,7 +10185,11 @@ class MainActivity: Activity() {
                             val current=prefs.getBoolean(key,default)
                             if(previousToggles[key]!=current)onFeatureToggleChanged(key,current)
                         }
-                        invalidateSurfingCache()
+                        // A restored order affects numeric positions and the
+                        // logical channel representatives, not only the
+                        // short-lived surfing cache.
+                        channelIndexOwner=null
+                        ensureChannelIndex()
                         Toast.makeText(this,(if(mode==0)"Merged " else "Replaced with ")+staged.size+
                             " settings. License and parental PIN were kept.",Toast.LENGTH_LONG).show()
                     }catch(e:Exception){

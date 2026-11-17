@@ -36,6 +36,14 @@ def check(root: Path = ROOT) -> list[str]:
     home = section("private fun showHome()", "private val importPlaylistRequest")
     controller = (root / "app/src/main/java/com/softppj/nextv/IsolatedVlcSessionController.kt").read_text()
 
+    restore = section("private fun restoreSettingsFromText(raw:String)", "private fun showDiagnosticLogs()")
+    require("channelIndexOwner=null" in restore and "ensureChannelIndex()" in restore,
+            "Restoring channel order must rebuild numeric channel indices immediately")
+    require("PlaylistBackupMergePolicy.merge(" in activity,
+            "Restoring merged playlists must use the case-sensitive URL policy")
+    require("Open NexTV from your TV launcher" not in activity,
+            "MyView UI must not show obsolete NexTV launcher instructions")
+
     require("detachRelease()" in controller and
             "isolatedVlcSessions.detachRelease()" in activity,
             "Isolated LibVLC shutdown must detach before queued Binder release")
