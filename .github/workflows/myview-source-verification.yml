@@ -7,6 +7,10 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - '.github/workflows/myview-source-verification.yml'
+      - '.github/workflows/myview-branding-build.yml'
+      - '.github/workflows/myview-full-app.yml'
+      - 'tools/verify_myview_branding.py'
+      - 'tools/verify_myview_source_contract.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -40,6 +44,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      - name: Verify original artwork and source/release contracts (NO APK)
+        run: |
+          python3 tools/verify_myview_branding.py
+          python3 tools/verify_myview_source_contract.py
       - name: Compile Kotlin and run unit tests (never assemble an APK)
         run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
       - name: Verify no APK was assembled
