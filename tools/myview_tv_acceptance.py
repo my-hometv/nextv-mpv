@@ -8,6 +8,7 @@ Only locally generated reports; no network uploads. Logs are filtered and redact
 import argparse
 import datetime as dt
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -58,9 +59,10 @@ def adb(serial, *args, timeout=25):
     except (OSError, subprocess.TimeoutExpired) as e:
         return "", str(e), 1
 
-def command_output(serial, *args):
+def command_output(serial, *args, max_output=18000):
     out, err, status = adb(serial, *args)
-    return {"ok": status == 0, "output": redact(out[-18000:]), "error": redact(err)}
+    # Redact before truncation; allow longer tails for diagnostics when requested.
+    return {"ok": status == 0, "output": redact(out[-max_output:]), "error": redact(err)}
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -105,21 +107,35 @@ def main():
             if value not in ("PASS", "FAIL", "BLOCKED"):
                 value = "NOT_TESTED"
             note = input("Evidence/notes (avoid private URLs and license data): ").strip()
+            # A bare affirmative response is insufficient release evidence.
+            if value == "PASS" and not note:
+                print("PASS requires a brief observation; recording NOT_TESTED instead.")
+                value = "NOT_TESTED"
             report["checks"][code] = {"description": description, "status": value, "notes": redact(note)}
-    logs = command_output(serial, "logcat", "-d", "-t", "3000", "-v", "brief")
+    logs = command_output(serial, "logcat", "-d", "-t", "3000", "-v", "brief", max_output=250000)
     report["crash_indicators"] = [redact(line[:600]) for line in logs["output"].splitlines()
                                   if CRASH.search(line)][:100]
     report["logcat_collection_ok"] = logs["ok"]
+    report["logcat_truncated"] = len(logs["output"]) >= 250000
     statuses = [v["status"] for v in report["checks"].values()]
     report["release_gate"] = ("CANDIDATE_FOR_REVIEW" if report["installed"] and
+                             logs["ok"] and not report["logcat_truncated"] and
                              all(x == "PASS" for x in statuses) and not report["crash_indicators"]
                              else "HOLD")
     # Even candidate status is NOT certification: an engineer must verify observations and logs.
     output = dest / "acceptance.json"
-    output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # Keep device evidence private on supported POSIX filesystems.
+    payload = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(payload)
     print(f"Recorded {output}; gate={report['release_gate']}; "
           f"{statuses.count('PASS')}/30 observed PASS; "
           f"{len(report['crash_indicators'])} recent crash indicators")
+    if not logs["ok"]:
+        print("Could not collect logcat; release gate remains HOLD.")
+    if report["logcat_truncated"]:
+        print("Logcat output reached collection limit; release gate remains HOLD.")
     if not report["installed"]:
         print("MyView package not found. APK build remains a separate, explicitly approved step.")
 
