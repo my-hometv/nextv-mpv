@@ -10778,7 +10778,10 @@ class MainActivity: Activity() {
         restoreVodRefreshRate()
         // Stop any isolated session before tearing down the legacy player.
         // The session controller rejects stale generations and is safe when idle.
-        isolatedVlcSessions.stopActive()
+        // Detach the exact old remote generation synchronously, but defer the
+        // potentially blocking Binder stop. A later service generation cannot
+        // be stopped by the captured old-generation request.
+        isolatedVlcSessions.detachActiveStop()?.let{ nativeVlcCleanup.submit(it) }
         isolatedActiveEngineId=null
         startupWatchdog?.let{handler.removeCallbacks(it)}
         startupWatchdog=null
@@ -10933,8 +10936,13 @@ class MainActivity: Activity() {
         if(isFinishing)HomeTvDiagnostics.markCleanExit(this)
         unregisterLicenseNetworkCallback()
         isolatedVlcSessions.release()
-        isolatedVlcClient?.close()
-        isolatedVlcClient = null
+        val oldIsolatedClient=isolatedVlcClient
+        isolatedVlcClient=null
+        // Binder release/close may block if the isolated process is stalled.
+        // Keep terminal shutdown off the Activity's remote/navigation looper.
+        if(oldIsolatedClient!=null)nativeVlcCleanup.submit{
+            oldIsolatedClient.close()
+        }
         // Detached native sessions already submitted to the worker finish in
         // order; do not block the Activity main thread waiting for shutdown.
         nativeVlcCleanup.shutdown()
