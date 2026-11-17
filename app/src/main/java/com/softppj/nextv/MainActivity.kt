@@ -6717,11 +6717,15 @@ class MainActivity: Activity() {
                             // attempting the other direction. Never allocate
                             // two background decoders or affect the live stream.
                             closeVideoPreview()
-                            if(oppositePreloadGeneration!=requestedPlaybackGeneration &&
-                                requestedPlaybackGeneration==playbackGeneration &&
-                                player?.isPlaying==true && appInForeground &&
-                                prefs.getBoolean("myview_instant_preload_enabled",true) &&
-                                previewIndex<0 && multiViewDialog==null){
+                            if(AdjacentPreloadPolicy.mayRotate(
+                                alreadyRotated=oppositePreloadGeneration==requestedPlaybackGeneration,
+                                currentGeneration=requestedPlaybackGeneration==playbackGeneration,
+                                foregroundPlaying=player?.isPlaying==true,
+                                appInForeground=appInForeground,
+                                enabled=prefs.getBoolean("myview_instant_preload_enabled",true),
+                                previewSelected=previewIndex>=0,
+                                multiViewActive=multiViewDialog!=null ||
+                                    multiViewPlayers.isNotEmpty())){
                                 oppositePreloadGeneration=requestedPlaybackGeneration
                                 val current=active
                                 val available=surfingIndices()
