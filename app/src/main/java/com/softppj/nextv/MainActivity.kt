@@ -10303,14 +10303,85 @@ class MainActivity: Activity() {
             .setNegativeButton("Close",null).create()
         showSideDialog(dialog)
     }
-    private fun exportDiagnosticReport(){
-        val report=HomeTvDiagnostics.readReport()
-        if(report.isBlank()){
-            Toast.makeText(this,"No diagnostic logs are available yet.",Toast.LENGTH_SHORT).show()
-            return
+    /**
+     * Many Android TV builds have no ACTION_CREATE_DOCUMENT provider, so the
+     * previous picker-only diagnostic export could not save a report at all.
+     * Save into public Downloads on Android 10+ without a file picker; fall
+     * back to the app-specific Documents folder on older/restricted TVs.
+     * All disk access and report assembly stays off the remote UI thread.
+     */
+    private fun saveDiagnosticToDownloads(name:String,report:String):String {
+        if(android.os.Build.VERSION.SDK_INT>=29){
+            try{
+                val values=android.content.ContentValues().apply{
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,name)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"text/plain")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_DOWNLOADS+"/MyView")
+                    put(android.provider.MediaStore.MediaColumns.IS_PENDING,1)
+                }
+                val resolver=contentResolver
+                val uri=resolver.insert(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values)
+                    ?:throw java.io.IOException("Downloads provider refused the report")
+                try{
+                    resolver.openOutputStream(uri,"w")?.bufferedWriter(Charsets.UTF_8)?.use{
+                        it.write(report)
+                    } ?:throw java.io.IOException("Cannot open Downloads output")
+                    resolver.update(uri,android.content.ContentValues().apply{
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING,0)
+                    },null,null)
+                    return "Downloads/MyView/"+name
+                }catch(failure:Exception){
+                    resolver.delete(uri,null,null)
+                    throw failure
+                }
+            }catch(failure:Exception){
+                HomeTvDiagnostics.w("Diagnostics",
+                    "Shared Downloads unavailable; attempting app-specific storage",failure)
+            }
         }
-        val stamp=java.text.SimpleDateFormat("yyyyMMdd-HHmm",java.util.Locale.ROOT).format(java.util.Date())
-        launchTextExport("MyView-diagnostics-"+stamp+".txt","text/plain",report,exportDiagnosticsRequest)
+        val dir=getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
+            ?:java.io.File(filesDir,"diagnostic-exports")
+        if(!dir.exists() && !dir.mkdirs())
+            throw java.io.IOException("Cannot create a writable diagnostic folder")
+        val target=java.io.File(dir,name)
+        target.writeText(report,Charsets.UTF_8)
+        return target.absolutePath
+    }
+    private fun exportDiagnosticReport(){
+        thread(name="MyView-diagnostic-export"){
+            val report=HomeTvDiagnostics.readReport()
+            if(report.isBlank()){
+                runOnUiThread{
+                    if(!isFinishing && !isDestroyed)
+                        Toast.makeText(this,"No diagnostic logs are available yet.",Toast.LENGTH_SHORT).show()
+                }
+                return@thread
+            }
+            val stamp=java.text.SimpleDateFormat("yyyyMMdd-HHmmss",java.util.Locale.ROOT)
+                .format(java.util.Date())
+            val filename="MyView-diagnostics-"+stamp+".txt"
+            val result=runCatching{saveDiagnosticToDownloads(filename,report)}
+            runOnUiThread{
+                if(isFinishing || isDestroyed)return@runOnUiThread
+                result.fold(
+                    onSuccess={location->
+                        AlertDialog.Builder(this).setTitle("Diagnostic report saved")
+                            .setMessage("Saved to:\\n"+location+
+                                "\\n\\nUse a file manager or USB transfer to retrieve the report. It may contain private channel information.")
+                            .setPositiveButton("OK",null)
+                            .setNeutralButton("Choose another location"){_,_->
+                                launchTextExport(filename,"text/plain",report,exportDiagnosticsRequest)
+                            }.show()
+                    },
+                    onFailure={error->
+                        showDiagnosticUsbFallback(report,
+                            "Direct diagnostic save failed: "+(error.message ?: "unknown error"))
+                    }
+                )
+            }
+        }
     }
     @UnstableApi
     private fun showPlaybackDiagnostics(){
