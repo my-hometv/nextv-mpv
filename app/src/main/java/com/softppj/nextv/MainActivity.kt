@@ -6602,12 +6602,20 @@ class MainActivity: Activity() {
     }
     private fun showVideoPreview(index:Int){
         closeVideoPreview()
-        if(!prefs.getBoolean("live_channel_preview",false))return
+        if(!prefs.getBoolean("live_channel_preview",false) || !licenseReady ||
+            playbackTeardownInProgress || multiViewDialog!=null)return
         val screen=videoScreen ?:return
         if(index !in channels.indices)return
         val resolvedIndex=preferredChannel(index)
         if(resolvedIndex !in channels.indices)return
         val c=channels[resolvedIndex]
+        // The secondary preview is deliberately restricted to the same
+        // Media3 engine. LibVLC/Web sources must never start a competing
+        // decoder or bypass the channel's PIN and source permissions.
+        if(isLocked(c) && unlockedChannel!=id(c))return
+        if(c.source in lockedPlaylistNames() && c.source !in unlockedPlaylistsThisSession)return
+        if(c.group in lockedGroupNames() && c.group !in unlockedGroupsThisSession)return
+        if(engineFor(c)!="Media3")return
         // The on-screen player already displays this stream; a duplicate
         // preview wastes a decoder and competes for network bandwidth.
         if(active in channels.indices && channels[active].url==c.url)return
@@ -6706,6 +6714,11 @@ class MainActivity: Activity() {
         // UP/DOWN only moves the highlighted channel. The current stream and
         // decoder remain untouched until OK is pressed.
         showChannelInfo(previewIndex,"Press OK to play")
+        // Start the optional second decoder only after the highlighted row
+        // stays selected. A rapid remote repeat cancels the old generation.
+        // This prebuffers the highlighted channel without disrupting the
+        // foreground picture or claiming an unsafe instant handoff.
+        if(prefs.getBoolean("live_channel_preview",false))showVideoPreview(previewIndex)
     }
     private fun screenInfoOnStart(index:Int){
         handler.postDelayed({if(active==index)showChannelInfo(index)},500)
