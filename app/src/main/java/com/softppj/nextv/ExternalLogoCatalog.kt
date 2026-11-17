@@ -16,6 +16,9 @@ internal object ExternalLogoCatalog {
     private const val MAX_RESPONSE_BYTES = 20 * 1024 * 1024
     private const val MAX_LOGO_RECORDS = 150_000
     const val REFRESH_INTERVAL_MS = 24L * 60L * 60L * 1000L
+    @Volatile private var inFlight: HttpURLConnection? = null
+
+    fun cancel(){ inFlight?.disconnect() }
 
     fun fetch(targets:List<ExternalLogoMatchPolicy.Target>):Map<String,String> {
         if (targets.isEmpty()) return emptyMap()
@@ -30,6 +33,7 @@ internal object ExternalLogoCatalog {
         val targetNames=targets.asSequence()
             .map { ExternalLogoMatchPolicy.canonical(it.channelName) }
             .filter { it.isNotBlank() }.toSet()
+        inFlight=connection
         try {
             if (connection.responseCode != 200) return emptyMap()
             if (connection.contentLengthLong > MAX_RESPONSE_BYTES) return emptyMap()
@@ -82,6 +86,7 @@ internal object ExternalLogoCatalog {
             }
         }finally{
             connection.disconnect()
+            if(inFlight===connection)inFlight=null
         }
     }
 }
