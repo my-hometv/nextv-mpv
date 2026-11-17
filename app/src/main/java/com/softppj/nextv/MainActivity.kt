@@ -46,7 +46,6 @@ class MainActivity: Activity() {
     private var channels = mutableListOf<Channel>()
     // Licensing is verified online before any cached or remote playlist is opened.
     private val licenseApi="https://hometv-license-next.prasanthpjoy.workers.dev"
-    private val licensedPlaylist="hometv://licensed-playlist"
     private var licenseReady=false
     private var licenseChecking=false
     private var startupHiddenScanScheduled=false
@@ -93,19 +92,6 @@ class MainActivity: Activity() {
         }finally{conn.disconnect()}
     }
     private fun licensePayload():JSONObject=JSONObject().put("device",installationId()).put("token",prefs.getString("license_token",""))
-    private fun licensedM3u():String {
-        val conn=(URL(licenseApi+"/playlist").openConnection() as java.net.HttpURLConnection)
-        try {
-            conn.requestMethod="POST";conn.doOutput=true;conn.connectTimeout=12000;conn.readTimeout=20000
-            conn.setRequestProperty("Content-Type","application/json")
-            conn.outputStream.use{it.write(licensePayload().toString().toByteArray(Charsets.UTF_8))}
-            val status=conn.responseCode
-            val data=(if(status in 200..299)conn.inputStream else conn.errorStream)?.bufferedReader()?.use{it.readText()} ?: ""
-            if(status !in 200..299)throw IllegalStateException(try{JSONObject(data).optString("error","License validation failed")}catch(_:Exception){"License validation failed"})
-            if(!data.trimStart().startsWith("#EXTM3U"))throw IllegalStateException("Invalid licensed playlist")
-            return data
-        }finally{conn.disconnect()}
-    }
     private fun showLicenseCheckingScreen(){
         // License checks must not leave a previous video or its audio running.
         stopPlayback()
@@ -3643,8 +3629,8 @@ class MainActivity: Activity() {
         root.addView(label(title))
     }
     private fun playlists():MutableList<Playlist> {
-        // HomeTV Live is the only preloaded playlist. Preserve user-added
-        // playlists, but do not restore the legacy TV/Master default feeds.
+        // Public MyView ships with no provider playlist. Only sources added
+        // explicitly by the TV user are loaded; licensing remains independent.
         val legacyTv="https://raw.githubusercontent.com/my-hometv/tv/main/TV.m3u"
         val legacyMaster="https://raw.githubusercontent.com/my-hometv/tv/main/Master.m3u"
         val arr=JSONArray(prefs.getString("playlists","[]"))
@@ -3660,20 +3646,22 @@ class MainActivity: Activity() {
                 normalized.equals("https://github.com/my-hometv/tv/blob/main/TV.m3u",true) ||
                 normalized.equals("https://github.com/my-hometv/tv/blob/main/Master.m3u",true)
             if(legacy){removedLegacy=true;continue}
-            if(url.isNotBlank() && url!=licensedPlaylist)
+            if(url.isNotBlank() && url!="hometv://licensed-playlist")
                 configured.add(Playlist(name,url,o.optBoolean("enabled",true)))
         }
-        val result=mutableListOf(Playlist("HomeTV Live",licensedPlaylist)).apply{addAll(configured)}
+        // Remove the previously implicit licensed source when upgrading without
+        // deleting any real user-added source or its associated configuration.
         val selected=prefs.getString("selected_playlist_source",null)
-        if(selected==null || selected.equals("TV",true) || selected.equals("Master",true) ||
+        if(selected=="hometv://licensed-playlist" ||
+            selected.equals("TV",true) || selected.equals("Master",true) ||
             selected.equals(legacyTv,true) || selected.equals(legacyMaster,true)){
-            prefs.edit().putString("selected_playlist_source",licensedPlaylist).apply()
+            prefs.edit().remove("selected_playlist_source").apply()
         }
-        if(removedLegacy)savePlaylists(result)
-        return result
+        if(removedLegacy)savePlaylists(configured)
+        return configured
     }
     private fun savePlaylists(list:List<Playlist>) {
-        val arr=JSONArray(); list.filter{it.url!=licensedPlaylist}.forEach { arr.put(JSONObject().put("name",it.name).put("url",it.url).put("enabled",it.enabled)) }
+        val arr=JSONArray(); list.filter{it.url!="hometv://licensed-playlist"}.forEach { arr.put(JSONObject().put("name",it.name).put("url",it.url).put("enabled",it.enabled)) }
         prefs.edit().putString("playlists",arr.toString()).apply()
     }
 
@@ -4422,16 +4410,7 @@ class MainActivity: Activity() {
                             val file=cacheFile(p)
                             val metadataKey="playlist_http_"+playlistCacheKey(p)
                             val parsed:List<Channel>
-                            if(p.url==licensedPlaylist){
-                                val body=licensedM3u()
-                                parsed=parseM3u(body,p.name)
-                                if(parsed.isEmpty())throw IllegalStateException("No valid channels in "+p.name)
-                                val temp=java.io.File(file.absolutePath+".tmp")
-                                temp.writeText(body)
-                                if(!temp.renameTo(file)){temp.copyTo(file,overwrite=true);temp.delete()}
-                                refreshed[index]=true
-                                checked[index]=true
-                            }else if(p.url.startsWith("file:",true)){
+                            if(p.url.startsWith("file:",true)){
                                 val localFile=java.io.File(java.net.URI(p.url))
                                 if(!localFile.isFile)throw java.io.IOException("Imported playlist file is missing")
                                 val body=localFile.inputStream().use{readPlaylistText(it)}
