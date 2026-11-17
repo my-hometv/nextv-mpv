@@ -83,15 +83,27 @@ internal class IsolatedVlcSessionController(private val registry: IsolatedVlcReg
         try { previous?.stop(requestGeneration) } catch (_: Exception) { /* native teardown must not crash playback */ }
     }
 
-    /** Stop the currently owned session during activity/player teardown.
-     * Never allow an old callback to stop a newer session.
+    /**
+     * Immediately invalidate old ownership under the controller lock without
+     * making a potentially blocking Binder call. The returned task captures
+     * the exact OLD generation; executing it after a new start cannot stop a
+     * newer service generation, because the remote service checks that token.
      */
     @Synchronized
-    fun stopActive() {
-        if (released) return
-        val previous = active ?: return
+    fun detachActiveStop(): (() -> Unit)? {
+        if (released) return null
+        val previous = active ?: return null
+        val oldGeneration = generation
         active = null
-        try { previous.stop(generation) } catch (_: Exception) { /* native teardown must not crash activity */ }
+        return {
+            try { previous.stop(oldGeneration) }
+            catch (_: Exception) { /* best-effort detached native teardown */ }
+        }
+    }
+
+    /** Synchronous compatibility entry point for existing callers/tests. */
+    fun stopActive() {
+        detachActiveStop()?.invoke()
     }
 
     @Synchronized
