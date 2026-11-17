@@ -9454,76 +9454,109 @@ class MainActivity: Activity() {
                 poll?.let { handler.removeCallbacks(it) }
                 poll = null
             }
+            private var startPending=false
+            private var surfaceRequestGeneration=0
             private fun watchPlayback() {
-                val check = object:Runnable {
+                val check=object:Runnable {
                     override fun run() {
-                        if (!attached || active!=index || videoScreen!==screen ||
-                            playbackGeneration!=activityGeneration) return
-                        val state = isolatedVlcClient?.playbackState(generation) ?: 0
-                        val progress = isolatedVlcClient?.playbackProgressCount(generation) ?: -1L
-                        val monitor = watchdog ?: return
-                        val status = monitor.check(
-                            state, progress, android.os.SystemClock.elapsedRealtime()
-                        )
-                        if (status == NativePlaybackWatchdog.Result.PLAYING &&
-                            monitor.hasObservedProgress && !confirmed) {
-                            confirmed = true
-                            rememberWorking(c)
-                            autoBufferHealthy()
+                        if(!attached || active!=index || videoScreen!==screen ||
+                            playbackGeneration!=activityGeneration)return
+                        // Binder reads may stall with a busy native process.
+                        // Return to Android's main loop immediately and process
+                        // only current-session results back on that loop.
+                        nativeVlcCleanup.submit{
+                            val state=isolatedVlcClient?.playbackState(generation) ?: 0
+                            val progress=isolatedVlcClient?.playbackProgressCount(generation) ?: -1L
+                            handler.post{
+                                if(!attached || active!=index || videoScreen!==screen ||
+                                    playbackGeneration!=activityGeneration)return@post
+                                val monitor=watchdog ?:return@post
+                                val status=monitor.check(state,progress,
+                                    android.os.SystemClock.elapsedRealtime())
+                                if(status==NativePlaybackWatchdog.Result.PLAYING &&
+                                    monitor.hasObservedProgress && !confirmed){
+                                    confirmed=true
+                                    rememberWorking(c)
+                                    autoBufferHealthy()
+                                }
+                                val failure=when(status){
+                                    NativePlaybackWatchdog.Result.FAILED->"Native playback failed"
+                                    NativePlaybackWatchdog.Result.ENDED->"Native playback ended"
+                                    NativePlaybackWatchdog.Result.STARTUP_TIMEOUT->"Native startup timed out"
+                                    NativePlaybackWatchdog.Result.FIRST_PROGRESS_TIMEOUT->"Native stream made no progress"
+                                    NativePlaybackWatchdog.Result.STALLED->"Native playback stalled"
+                                    else->null
+                                }
+                                if(failure!=null){
+                                    if(!surfaceRecovery.requestRecovery())return@post
+                                    attached=false
+                                    cancelPoll()
+                                    isolatedVlcSessions.detachStop(generation)
+                                        ?.let{nativeVlcCleanup.submit(it)}
+                                    showBanner(failure+". Trying recovery.",true)
+                                    handleEngineFailure(index,screen)
+                                    return@post
+                                }
+                                handler.postDelayed(this,500L)
+                            }
                         }
-                        val failure = when (status) {
-                            NativePlaybackWatchdog.Result.FAILED -> "Native playback failed"
-                            NativePlaybackWatchdog.Result.ENDED -> "Native playback ended"
-                            NativePlaybackWatchdog.Result.STARTUP_TIMEOUT -> "Native startup timed out"
-                            NativePlaybackWatchdog.Result.FIRST_PROGRESS_TIMEOUT -> "Native stream made no progress"
-                            NativePlaybackWatchdog.Result.STALLED -> "Native playback stalled"
-                            else -> null
-                        }
-                        if (failure != null) {
-                            if (!surfaceRecovery.requestRecovery()) return
-                            attached = false
-                            cancelPoll()
-                            isolatedVlcSessions.stop(generation)
-                            showBanner(failure + ". Trying recovery.", true)
-                            handleEngineFailure(index,screen)
-                            return
-                        }
-                        handler.postDelayed(this,500L)
                     }
                 }
-                poll = check
+                poll=check
                 handler.postDelayed(check,500L)
             }
             override fun surfaceCreated(holder:SurfaceHolder) {
-                if (!surfaceRecovery.canStart() || attached || active!=index || videoScreen!==screen ||
-                    playbackGeneration!=activityGeneration || !holder.surface.isValid) return
-                attached = isolatedVlcSessions.startWithSurface(
-                    engineId,c.url,generation,holder.surface
-                )
-                if (attached) {
-                    watchdog = NativePlaybackWatchdog(android.os.SystemClock.elapsedRealtime())
-                    watchPlayback()
-                } else {
-                    // Keep the requested native engine identity until recovery
-                    // has selected its next engine, even when Binder start fails.
-                    handler.post {
-                        if (active==index && videoScreen===screen &&
-                            playbackGeneration==activityGeneration) {
-                            if (!surfaceRecovery.requestRecovery()) return@post
+                if(!surfaceRecovery.canStart() || attached || startPending ||
+                    active!=index || videoScreen!==screen ||
+                    playbackGeneration!=activityGeneration || !holder.surface.isValid)return
+                val surface=holder.surface
+                val request=++surfaceRequestGeneration
+                startPending=true
+                // A remote-start IPC can take seconds. Never invoke it on
+                // surfaceCreated's main thread or while handling a remote key.
+                val queued=nativeVlcCleanup.submit{
+                    val accepted=try{
+                        isolatedVlcSessions.startWithSurface(engineId,c.url,generation,surface)
+                    }catch(e:Exception){
+                        HomeTvDiagnostics.w("Playback","Isolated LibVLC start failed",e)
+                        false
+                    }
+                    handler.post{
+                        if(request!=surfaceRequestGeneration || !surfaceRecovery.canStart() ||
+                            !surface.isValid || active!=index || videoScreen!==screen ||
+                            playbackGeneration!=activityGeneration){
+                            if(accepted)isolatedVlcSessions.detachStop(generation)
+                                ?.let{nativeVlcCleanup.submit(it)}
+                            return@post
+                        }
+                        startPending=false
+                        attached=accepted
+                        if(accepted){
+                            watchdog=NativePlaybackWatchdog(android.os.SystemClock.elapsedRealtime())
+                            watchPlayback()
+                        }else if(surfaceRecovery.requestRecovery()){
                             showBanner("Native playback could not start",true)
                             handleEngineFailure(index,screen)
                         }
                     }
                 }
+                if(!queued){
+                    startPending=false
+                    if(surfaceRecovery.requestRecovery())handleEngineFailure(index,screen)
+                }
             }
             override fun surfaceChanged(holder:SurfaceHolder,format:Int,width:Int,height:Int) = Unit
             override fun surfaceDestroyed(holder:SurfaceHolder) {
                 cancelPoll()
-                watchdog = null
-                val wasAttached = attached
-                attached = false
-                if (wasAttached) isolatedVlcSessions.stop(generation)
-                val shouldRecover = surfaceRecovery.onSurfaceDestroyed(wasAttached)
+                watchdog=null
+                val wasAttached=attached
+                val wasStarting=startPending
+                attached=false
+                startPending=false
+                surfaceRequestGeneration++
+                if(wasAttached)isolatedVlcSessions.detachStop(generation)
+                    ?.let{nativeVlcCleanup.submit(it)}
+                val shouldRecover=surfaceRecovery.onSurfaceDestroyed(wasAttached || wasStarting)
                 // A destroyed Surface cannot be reused by the same native
                 // generation. Trigger one fresh recovery session, unless the
                 // Activity is switching channels or being torn down.
