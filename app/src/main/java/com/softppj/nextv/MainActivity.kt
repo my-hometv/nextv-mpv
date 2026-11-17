@@ -6936,6 +6936,14 @@ class MainActivity: Activity() {
         list.isFocusable=true
         list.isFocusableInTouchMode=true
         list.choiceMode=ListView.CHOICE_MODE_SINGLE
+        // Consistent D-pad selection across Live channels, groups, and menu
+        // drawers; the default Android list selector can be invisible on TV.
+        list.selector=android.graphics.drawable.GradientDrawable().apply{
+            setColor(0xFF23628D.toInt())
+            setCornerRadius(tvDp(8).toFloat())
+            setStroke(tvDp(2),0xFFB7EAFF.toInt())
+        }
+        list.isDrawSelectorOnTop=false
         list.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
             override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long){
                 HomeTvDiagnostics.i("RemoteInput","Drawer selection changed position="+position+
