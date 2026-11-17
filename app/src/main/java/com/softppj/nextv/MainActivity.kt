@@ -6989,7 +6989,7 @@ class MainActivity: Activity() {
         // The active Media3 player takes priority; no LibVLC, WebView, or
         // MultiView decoder competition is permitted for speculative previews.
         if(!LivePrebufferPolicy.mayStart(
-                enabled=if(automatic)prefs.getBoolean("myview_instant_preload_enabled",true)
+                enabled=if(automatic)prefs.getBoolean("myview_instant_preload_enabled",false)
                     else prefs.getBoolean("live_channel_preview",false),
                 licenseReady=licenseReady,
                 mainPlayerPlaying=player?.isPlaying==true,
@@ -7068,7 +7068,7 @@ class MainActivity: Activity() {
                                 currentGeneration=requestedPlaybackGeneration==playbackGeneration,
                                 foregroundPlaying=player?.isPlaying==true,
                                 appInForeground=appInForeground,
-                                enabled=prefs.getBoolean("myview_instant_preload_enabled",true),
+                                enabled=prefs.getBoolean("myview_instant_preload_enabled",false),
                                 previewSelected=previewIndex>=0,
                                 multiViewActive=multiViewDialog!=null ||
                                     multiViewPlayers.isNotEmpty())){
@@ -7323,7 +7323,7 @@ class MainActivity: Activity() {
         return exo
     }
     private fun scheduleAdjacentPrebuffer(index:Int,screen:FrameLayout){
-        if(!prefs.getBoolean("myview_instant_preload_enabled",true) ||
+        if(!prefs.getBoolean("myview_instant_preload_enabled",false) ||
             previewIndex>=0 || previewPlayer!=null || !licenseReady)return
         val generation=playbackGeneration
         handler.postDelayed({
@@ -9964,7 +9964,8 @@ class MainActivity: Activity() {
             playIndex(next)
         }
         rapidSurfTask=task
-        handler.postDelayed(task,120L)
+        // Debounce physical CH+/CH- bursts before allocating a new decoder.
+        handler.postDelayed(task,350L)
     }
     private fun resumeLast(){
         if(channels.isEmpty()){showHome();return}
@@ -10461,8 +10462,8 @@ class MainActivity: Activity() {
                 }.setNegativeButton("Cancel",null).create())
         })
         root.addView(label("The UP/DOWN channel information disappears after the chosen idle period. Press OK before it closes to tune the selected channel."))
-        root.addView(settingsToggle("Preload adjacent Media3 channel (one only)","myview_instant_preload_enabled",true))
-        root.addView(label("Uses one silent background Media3 preparation after picture is stable. On supported TVs, ready channels hand over without reopening the stream. LibVLC, locked channels and unsupported formats use normal switching."))
+        root.addView(settingsToggle("Preload adjacent Media3 channel (one only)","myview_instant_preload_enabled",false))
+        root.addView(label("OFF by default to reduce second-decoder crashes on TVs with limited decoder resources. Enable only after normal channel changes are stable. When enabled, one silent Media3 neighbour may be prepared; LibVLC and restricted streams use normal switching."))
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
         root.addView(label("Observed start percentages require at least three attempts; they are not guaranteed future availability."))
         root.addView(settingsToggle("Enable MultiView","myview_multiview_enabled",true))
