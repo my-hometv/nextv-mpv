@@ -5,6 +5,9 @@ package com.softppj.nextv
  * before the same source/group/channel gates as ordinary playback succeed.
  */
 internal object MultiViewAccessPolicy {
+    /** An entitlement loss requires immediate decoder shutdown, even in MultiView. */
+    fun mustReleaseSession(licensed:Boolean):Boolean = !licensed
+
     fun canEnter(
         licensed: Boolean,
         channelLocked: Boolean,
