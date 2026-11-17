@@ -781,6 +781,13 @@ class MainActivity: Activity() {
     // Only detached LibVLC native instances may be stopped on this worker.
     // Media3 and SurfaceView methods stay on the Android application looper.
     private val nativeVlcCleanup=NativeVlcCleanupQueue()
+    // Separate Binder operations from direct native teardown: a stuck
+    // libvlc.stop() must not starve an independent isolated-service session.
+    private val isolatedVlcOps=NativeVlcCleanupQueue(
+        executor=java.util.concurrent.Executors.newSingleThreadExecutor{task->
+            Thread(task,"MyView-isolated-VLC").apply{isDaemon=true}
+        }
+    )
     private fun enqueueDetachedVlcCleanup(
         probe:VlcPlayer?,core:LibVLC?,onComplete:(()->Unit)?=null
     ){
@@ -9464,7 +9471,7 @@ class MainActivity: Activity() {
                         // Binder reads may stall with a busy native process.
                         // Return to Android's main loop immediately and process
                         // only current-session results back on that loop.
-                        nativeVlcCleanup.submit{
+                        isolatedVlcOps.submit{
                             val state=isolatedVlcClient?.playbackState(generation) ?: 0
                             val progress=isolatedVlcClient?.playbackProgressCount(generation) ?: -1L
                             handler.post{
@@ -9492,7 +9499,7 @@ class MainActivity: Activity() {
                                     attached=false
                                     cancelPoll()
                                     isolatedVlcSessions.detachStop(generation)
-                                        ?.let{nativeVlcCleanup.submit(it)}
+                                        ?.let{isolatedVlcOps.submit(it)}
                                     showBanner(failure+". Trying recovery.",true)
                                     handleEngineFailure(index,screen)
                                     return@post
@@ -9514,7 +9521,7 @@ class MainActivity: Activity() {
                 startPending=true
                 // A remote-start IPC can take seconds. Never invoke it on
                 // surfaceCreated's main thread or while handling a remote key.
-                val queued=nativeVlcCleanup.submit{
+                val queued=isolatedVlcOps.submit{
                     val accepted=try{
                         isolatedVlcSessions.startWithSurface(engineId,c.url,generation,surface)
                     }catch(e:Exception){
@@ -9526,7 +9533,7 @@ class MainActivity: Activity() {
                             !surface.isValid || active!=index || videoScreen!==screen ||
                             playbackGeneration!=activityGeneration){
                             if(accepted)isolatedVlcSessions.detachStop(generation)
-                                ?.let{nativeVlcCleanup.submit(it)}
+                                ?.let{isolatedVlcOps.submit(it)}
                             return@post
                         }
                         startPending=false
@@ -9555,7 +9562,7 @@ class MainActivity: Activity() {
                 startPending=false
                 surfaceRequestGeneration++
                 if(wasAttached)isolatedVlcSessions.detachStop(generation)
-                    ?.let{nativeVlcCleanup.submit(it)}
+                    ?.let{isolatedVlcOps.submit(it)}
                 val shouldRecover=surfaceRecovery.onSurfaceDestroyed(wasAttached || wasStarting)
                 // A destroyed Surface cannot be reused by the same native
                 // generation. Trigger one fresh recovery session, unless the
@@ -10835,7 +10842,7 @@ class MainActivity: Activity() {
         // Detach the exact old remote generation synchronously, but defer the
         // potentially blocking Binder stop. A later service generation cannot
         // be stopped by the captured old-generation request.
-        isolatedVlcSessions.detachActiveStop()?.let{ nativeVlcCleanup.submit(it) }
+        isolatedVlcSessions.detachActiveStop()?.let{ isolatedVlcOps.submit(it) }
         isolatedActiveEngineId=null
         startupWatchdog?.let{handler.removeCallbacks(it)}
         startupWatchdog=null
@@ -11012,12 +11019,13 @@ class MainActivity: Activity() {
         isolatedVlcClient=null
         // Binder release/close may block if the isolated process is stalled.
         // Keep terminal shutdown off the Activity's remote/navigation looper.
-        if(oldIsolatedClient!=null)nativeVlcCleanup.submit{
+        if(oldIsolatedClient!=null)isolatedVlcOps.submit{
             oldIsolatedClient.close()
         }
         // Detached native sessions already submitted to the worker finish in
         // order; do not block the Activity main thread waiting for shutdown.
         nativeVlcCleanup.shutdown()
+        isolatedVlcOps.shutdown()
         super.onDestroy()
     }
 }
