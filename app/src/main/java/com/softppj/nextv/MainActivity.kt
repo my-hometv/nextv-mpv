@@ -6587,6 +6587,9 @@ class MainActivity: Activity() {
     private var previewVideoTask:Runnable?=null
     private var previewPlayer:ExoPlayer?=null
     private var previewPanel:FrameLayout?=null
+    private var previewSourceIdentity:String?=null
+    private var previewSourceUrl:String?=null
+    private var previewIsAutomatic=false
     private var previewGeneration=0
     private fun closeVideoPreview(){
         previewGeneration++
@@ -6594,26 +6597,34 @@ class MainActivity: Activity() {
         previewVideoTask=null
         val oldPreview=previewPlayer
         previewPlayer=null
+        previewSourceIdentity=null
+        previewSourceUrl=null
+        previewIsAutomatic=false
         try{oldPreview?.release()}catch(e:Throwable){
             HomeTvDiagnostics.w("Playback","Preview release failed during channel switch",e)
         }
         previewPanel?.let{panel->(panel.parent as? android.view.ViewGroup)?.removeView(panel)}
         previewPanel=null
     }
-    private fun showVideoPreview(index:Int){
-        closeVideoPreview()
+    private fun showVideoPreview(index:Int,automatic:Boolean=false){
         val screen=videoScreen ?:return
         if(index !in channels.indices)return
         val resolvedIndex=preferredChannel(index)
         if(resolvedIndex !in channels.indices)return
         val c=channels[resolvedIndex]
+        // A highlighted channel may already be prepared by automatic surfing.
+        // Do not discard usable buffered data just because the D-pad moved.
+        if(previewPlayer!=null && previewSourceIdentity==id(c) &&
+            previewSourceUrl==c.url && previewPlayer?.playerError==null)return
+        closeVideoPreview()
         val unlocked=(unlockedChannel==id(c) || !isLocked(c)) &&
             (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession) &&
             (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
         // The active Media3 player takes priority; no LibVLC, WebView, or
         // MultiView decoder competition is permitted for speculative previews.
         if(!LivePrebufferPolicy.mayStart(
-                enabled=prefs.getBoolean("live_channel_preview",false),
+                enabled=if(automatic)prefs.getBoolean("myview_instant_preload_enabled",true)
+                    else prefs.getBoolean("live_channel_preview",false),
                 licenseReady=licenseReady,
                 mainPlayerPlaying=player?.isPlaying==true,
                 mainEngineIsMedia3=player!=null && vlcPlayer==null && web==null,
@@ -6624,31 +6635,38 @@ class MainActivity: Activity() {
                 sameStream=channels.getOrNull(active)?.url==c.url
             ))return
         if(!BackgroundProbeUrlPolicy.isNativeProbeCandidate(c.url))return
-        val width=(resources.displayMetrics.widthPixels*0.28f).toInt().coerceAtLeast(220)
-        val height=(width*9/16).coerceAtLeast(120)
-        val panel=FrameLayout(this).apply{
+        // Automatic preparation has no extra on-screen video surface and no
+        // automatic audio. Manual preview keeps its small, muted TV overlay.
+        val panel=if(automatic)null else FrameLayout(this).apply{
             setBackgroundColor(0xFF101E31.toInt())
             elevation=12f
         }
         previewPanel=panel
-        val params=FrameLayout.LayoutParams(width,height,Gravity.TOP or Gravity.RIGHT).apply{
-            topMargin=(resources.displayMetrics.density*52).toInt()
-            rightMargin=(resources.displayMetrics.density*18).toInt()
+        if(panel!=null){
+            val width=(resources.displayMetrics.widthPixels*0.28f).toInt().coerceAtLeast(220)
+            val height=(width*9/16).coerceAtLeast(120)
+            val params=FrameLayout.LayoutParams(width,height,Gravity.TOP or Gravity.RIGHT).apply{
+                topMargin=(resources.displayMetrics.density*52).toInt()
+                rightMargin=(resources.displayMetrics.density*18).toInt()
+            }
+            screen.addView(panel,params)
+            panel.addView(TextView(this).apply{
+                text="LIVE PREVIEW  •  "+c.name
+                textSize=13f
+                setTextColor(android.graphics.Color.WHITE)
+                setPadding(8,8,8,8)
+            },FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM))
         }
-        screen.addView(panel,params)
-        panel.addView(TextView(this).apply{
-            text="LIVE PREVIEW  •  "+c.name
-            textSize=13f
-            setTextColor(android.graphics.Color.WHITE)
-            setPadding(8,8,8,8)
-        },FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM))
+        previewSourceIdentity=id(c)
+        previewSourceUrl=c.url
+        previewIsAutomatic=automatic
         val generation=previewGeneration
         val requestedPlaybackGeneration=playbackGeneration
         val task=object:Runnable{
             private var deferrals=0
             override fun run(){
             if(generation!=previewGeneration || requestedPlaybackGeneration!=playbackGeneration ||
-                previewIndex!=index || videoScreen!==screen)return
+                (!automatic && previewIndex!=index) || videoScreen!==screen)return
             // A preview is optional. Wait briefly for foreground startup, but
             // never let a stale request create a decoder after channel switching.
             if(active in channels.indices && channels[active].url==c.url)return
@@ -6672,19 +6690,18 @@ class MainActivity: Activity() {
                 previewPlayer=exo
                 exo.volume=0f
                 exo.setAudioAttributes(AudioAttributes.DEFAULT,false)
-                val view=PlayerView(this@MainActivity).apply{
-                    player=exo
-                    useController=false
-                    resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                if(panel!=null){
+                    val view=PlayerView(this@MainActivity).apply{
+                        player=exo
+                        useController=false
+                        resizeMode=androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                    panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
                 }
-                panel.addView(view,0,FrameLayout.LayoutParams(-1,-1))
                 exo.setMediaItem(mediaItemForStream(c.url))
                 exo.prepare()
-                if(c.mediaType in setOf("movie","series","music")){
-                    val resume=mediaResumeSeconds(c)
-                    if(resume>0)exo.seekTo(resume*1000L)
-                }
-                exo.play()
+                // Automatic preparation never starts audio or steals focus.
+                if(automatic)exo.playWhenReady=false else exo.play()
                 exo.addListener(object:Player.Listener{
                     override fun onPlayerError(error:PlaybackException){
                         if(previewPlayer===exo)closeVideoPreview()
@@ -6817,9 +6834,45 @@ class MainActivity: Activity() {
     }
     private fun confirmPreview(){
         val target=previewIndex
-        clearChannelPreview()
+        // playIndex validates PIN/playlist gates, then promotes an eligible
+        // prepared player. Do not release it before that security check.
         if(target in channels.indices)playIndex(preferredChannel(target))
         else showBanner("Use ▲ / ▼ to preview a channel, then press OK to play")
+    }
+    private fun takeReadyPrebuffer(c:Channel):ExoPlayer?{
+        val exo=previewPlayer ?:return null
+        if(!LivePrebufferPolicy.mayAdopt(
+                licenseReady=licenseReady,
+                correctIdentity=previewSourceIdentity==id(c) && previewSourceUrl==c.url,
+                ready=exo.playbackState==Player.STATE_READY && exo.playerError==null,
+                engineIsMedia3=engineFor(c)=="Media3",
+                unlocked=(unlockedChannel==id(c) || !isLocked(c)) &&
+                    (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession) &&
+                    (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
+            ))return null
+        previewPlayer=null
+        // Surface ownership transfers to the normal full-screen PlayerView.
+        // No media item is re-requested and no second ExoPlayer is allocated.
+        val panel=previewPanel
+        if(panel!=null){
+            for(i in 0 until panel.childCount){
+                (panel.getChildAt(i) as? PlayerView)?.player=null
+            }
+        }
+        closeVideoPreview()
+        return exo
+    }
+    private fun scheduleAdjacentPrebuffer(index:Int,screen:FrameLayout){
+        if(!prefs.getBoolean("myview_instant_preload_enabled",true) ||
+            previewIndex>=0 || previewPlayer!=null || !licenseReady)return
+        val generation=playbackGeneration
+        handler.postDelayed({
+            if(generation!=playbackGeneration || active!=index || videoScreen!==screen ||
+                previewIndex>=0 || previewPlayer!=null || player?.isPlaying!=true)return@postDelayed
+            val available=surfingIndices()
+            val next=nextSurfingIndex(index,surfingDirection,available)
+            if(next in channels.indices && next!=index)showVideoPreview(next,automatic=true)
+        },1200L)
     }
     private val logoCache=object:android.util.LruCache<String,android.graphics.Bitmap>(6*1024*1024){
         override fun sizeOf(key:String,value:android.graphics.Bitmap)=value.byteCount
@@ -8260,6 +8313,8 @@ class MainActivity: Activity() {
             pendingAlternativeEngine=null
             pendingAlternativeGeneration=-1
         }
+        val prebuffered=if(c.mediaType=="live" && routeWebOverride!=true)
+            takeReadyPrebuffer(c) else null
         playbackGeneration++
         autoBufferHealthyTask?.let{handler.removeCallbacks(it)}
         autoBufferHealthyTask=null
@@ -8545,7 +8600,7 @@ class MainActivity: Activity() {
             val renderersFactory=HomeTvRenderersFactory(this,gainProcessor)
                 .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
-            val exo=ExoPlayer.Builder(this,renderersFactory)
+            val exo=prebuffered ?:ExoPlayer.Builder(this,renderersFactory)
                 .setMediaSourceFactory(mediaSourceFactoryForStreams(factory)).setLoadControl(loadControl).build()
             exo.setAudioAttributes(AudioAttributes.DEFAULT,true)
             exo.trackSelectionParameters=exo.trackSelectionParameters.buildUpon()
@@ -8709,6 +8764,7 @@ class MainActivity: Activity() {
                         // Do not mark a Media3 source as working merely because its
                         // audio starts; require an actual rendered video frame.
                         rememberWorking(c,volumePlaybackGeneration)
+                        scheduleAdjacentPrebuffer(index,screen)
                     }
                 }
             })
@@ -8821,8 +8877,10 @@ class MainActivity: Activity() {
             })
             try{
                 applyMedia3PicturePreset(exo,c)
-                exo.setMediaItem(mediaItemForStream(youtubeNativeStreamUrl ?: c.url))
-                exo.prepare()
+                if(prebuffered==null){
+                    exo.setMediaItem(mediaItemForStream(youtubeNativeStreamUrl ?: c.url))
+                    exo.prepare()
+                }
                 exo.play()
             }catch(e:Exception){
                 if(youtubeNativeStreamUrl!=null && fallbackYouTubeNativeToWeb(index,screen))return
@@ -9213,7 +9271,7 @@ class MainActivity: Activity() {
         rapidSurfTarget=-1
     }
     private fun switchChannel(delta:Int){
-        clearChannelPreview()
+        if(previewIndex>=0)clearChannelPreview()
         surfingDirection=if(delta>=0)1 else -1
         if(!licenseReady || playbackTeardownInProgress)return
         val available=surfingIndices()
@@ -9572,7 +9630,12 @@ class MainActivity: Activity() {
                 if(key=="auto_hidden_channel_check")startupHiddenScanScheduled=false
             }
             "background_url_checks"->startBackgroundChannelChecks()
-            "live_channel_preview"->clearChannelPreview()
+            "live_channel_preview"->{
+                if(!previewIsAutomatic)clearChannelPreview()
+            }
+            "myview_instant_preload_enabled"->{
+                if(previewIsAutomatic)closeVideoPreview()
+            }
             "myview_multiview_enabled"->{
                 multiViewDialog?.dismiss()
                 releaseMultiView()
@@ -9707,6 +9770,8 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Household profiles","nextv_profiles_enabled",true))
         root.addView(settingsToggle("Settings backup and restore","nextv_backup_enabled",true))
         root.addView(settingsToggle("Live channel preview","live_channel_preview",false))
+        root.addView(settingsToggle("Preload adjacent Media3 channel (one only)","myview_instant_preload_enabled",true))
+        root.addView(label("Uses one silent background Media3 preparation after picture is stable. On supported TVs, ready channels hand over without reopening the stream. LibVLC, locked channels and unsupported formats use normal switching."))
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
         root.addView(label("Observed start percentages require at least three attempts; they are not guaranteed future availability."))
         root.addView(settingsToggle("Enable MultiView","myview_multiview_enabled",true))
@@ -9715,7 +9780,7 @@ class MainActivity: Activity() {
         root.addView(label("MultiView is Media3-only and limited by TV decoder capacity. Some formats cannot play simultaneously."))
         root.addView(settingsToggle("Smart Logos — match other playlist entries","myview_smart_logo_matching",true))
         root.addView(label("Reuses an unambiguous logo from your other playlist entries; no external logo database or channel identity guessing."))
-        root.addView(label("Automatic external logo lookup and preloaded instant switching remain unimplemented."))
+        root.addView(label("External logo lookup remains unimplemented. Instant switching uses an optional, bounded Media3-only preload and falls back safely if a channel is not ready."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
         root.addView(settingsToggle("Match display refresh for direct VOD","myview_match_vod_refresh",false))
         root.addView(label("OFF by default. Direct MP4/M4V movie or series only. Keeps the same resolution, never switches display modes for Live TV. May cause a brief screen blackout."))
