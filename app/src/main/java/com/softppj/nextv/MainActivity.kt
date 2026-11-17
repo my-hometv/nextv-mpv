@@ -3147,7 +3147,7 @@ class MainActivity: Activity() {
     private fun bufferProfile():String{
         val channel=channels.getOrNull(active)
         val override=channel?.let{prefs.getString("buffer_channel_"+channelKey(it),null)}
-        return override ?: (prefs.getString("buffer_profile","Auto") ?: "Best Available")
+        return override ?: (prefs.getString("buffer_profile","Auto") ?: "Auto")
     }
     private fun bufferValues():IntArray=when(bufferProfile()){
         "Auto"->bufferLevelValues(autoBufferLevel)
@@ -3366,7 +3366,7 @@ class MainActivity: Activity() {
                 if(engineEnabled(it))return it
             }
         }
-        val universal=prefs.getString("engine","Auto") ?: "Best Available"
+        val universal=prefs.getString("engine","Auto") ?: "Auto"
         if(prefs.getBoolean("libvlc_only_"+hash(c.url),false) && engineEnabled("LibVLC"))return "LibVLC"
         if(engineEnabled(universal))return universal
         return PlaybackEnginePolicy.firstEnabled(initialEngines(c))
@@ -3376,7 +3376,7 @@ class MainActivity: Activity() {
         val returnToPlaybackDrawer=videoScreen?.findViewWithTag<View>("settings_drawer")!=null
         val c=channels[i]
         val universal=(prefs.getString("engine","Media3") ?: "Media3")
-            .takeIf(::engineEnabled) ?: "Best Available"
+            .takeIf(::engineEnabled) ?: "Auto"
         val available=enabledEngines()
         val choices=(listOf("Auto (Universal: "+playbackEngineLabel(universal)+")")+
             available.map(::playbackEngineLabel)).toTypedArray()
@@ -9354,8 +9354,8 @@ class MainActivity: Activity() {
         val items=arrayOf(
             "Playback engine: "+(prefs.getString("engine","Media3")?:"Media3"),
             "Buffering profile: "+bufferProfile(),
-            "Default stream quality: "+(prefs.getString("quality_global","Best Available")?:"Auto"),
-            "Default screen fit: "+(prefs.getString("screen_mode","16:9")?:"Fit"),
+            "Default stream quality: "+(prefs.getString("quality_global","Best Available")?:"Best Available"),
+            "Default screen fit: "+(prefs.getString("screen_mode","16:9")?:"16:9"),
             "Automatic reconnection: "+if(prefs.getBoolean("auto_reconnect",true))"ON" else "OFF",
             "Resume previous channel: "+if(prefs.getBoolean("resume",true))"ON" else "OFF",
             "Clock display",
