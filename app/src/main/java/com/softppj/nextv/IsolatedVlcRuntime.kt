@@ -37,7 +37,9 @@ internal class IsolatedVlcRegistry(runtimes: List<IsolatedVlcRuntime>) {
     fun releaseAll() {
         if (released) return
         released = true
-        entries.values.forEach { try { it.release() } catch (_: Exception) { } }
+        // JNI linkage failures are Errors, not Exceptions. A broken native
+        // runtime must not prevent remaining registered runtimes from closing.
+        entries.values.forEach { try { it.release() } catch (_: Throwable) { } }
     }
 
     private fun safeReady(runtime: IsolatedVlcRuntime): Boolean =
