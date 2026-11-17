@@ -9785,6 +9785,7 @@ class MainActivity: Activity() {
                 if(previewIsAutomatic)closeVideoPreview()
             }
             "myview_external_logos_enabled"->{
+                ExternalLogoCatalog.cancel()
                 externalLogoPending.clear()
                 externalLogoIndex=null
             }
