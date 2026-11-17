@@ -16,6 +16,23 @@ class IsolatedVlcSessionControllerTest {
         override fun release() { releases++ }
     }
 
+    @Test fun cancelledSurfaceStopCannotAffectNewerPlayback(){
+        val runtime=Fake("3.5.1")
+        val controller=IsolatedVlcSessionController(IsolatedVlcRegistry(listOf(runtime)))
+        assertTrue(controller.start(runtime.engineId,"https://example.invalid/a",8))
+        assertNull(controller.detachStop(7))
+        assertEquals(runtime.engineId,controller.activeEngineId())
+        val old=controller.detachStop(8)
+        assertNotNull(old)
+        assertNull(controller.activeEngineId())
+        assertTrue(controller.start(runtime.engineId,"https://example.invalid/b",9))
+        old!!.invoke()
+        assertEquals(runtime.engineId,controller.activeEngineId())
+        assertNull(controller.detachStop(8))
+        controller.stop(9)
+        assertNull(controller.activeEngineId())
+    }
+
     @Test fun detachedBinderStopCannotOverrideNewerGeneration(){
         val runtime=object:IsolatedVlcRuntime {
             override val version="3.5.1"
