@@ -10857,14 +10857,12 @@ class MainActivity: Activity() {
             if(recoveryKey!=null){
                 handler.post{
                     if(isFinishing || isDestroyed || !licenseReady)return@post
-                    if(active<0 && recoveryChannelKey!=null &&
-                        recoveryKey in setOf(KeyEvent.KEYCODE_CHANNEL_UP,KeyEvent.KEYCODE_CHANNEL_DOWN,
-                            KeyEvent.KEYCODE_MEDIA_NEXT,KeyEvent.KEYCODE_MEDIA_PREVIOUS)){
+                    if(RemotePreemptionPolicy.shouldReplaySavedChannelSkip(
+                            active>=0,recoveryChannelKey,recoveryKey)){
                         val previous=channels.indexOfFirst{channelKey(it)==recoveryChannelKey}
                         val available=surfingIndices()
                         if(previous>=0 && available.isNotEmpty()){
-                            val direction=if(recoveryKey==KeyEvent.KEYCODE_CHANNEL_UP ||
-                                recoveryKey==KeyEvent.KEYCODE_MEDIA_NEXT)1 else -1
+                            val direction=RemotePreemptionPolicy.skipDirection(recoveryKey)
                             val next=nextSurfingIndex(previous,direction,available)
                             if(next in channels.indices)playIndex(next)
                         }
