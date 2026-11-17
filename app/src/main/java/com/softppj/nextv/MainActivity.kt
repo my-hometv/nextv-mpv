@@ -7340,7 +7340,7 @@ class MainActivity: Activity() {
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
         })
-        val actions=listOf("⚙  Settings","⌂  Home","🙈  Hidden channels",
+        val actions=listOf("⚙  All Settings","⌂  Home","🙈  Hidden channels",
             "✓  Check hidden channels","▤  EPG / TV Guide",
             "↻  Refresh from source","▦  Playlists")
         val list=ListView(this)
@@ -7353,7 +7353,10 @@ class MainActivity: Activity() {
         list.setOnItemClickListener{_,_,choice,_->
             close()
             when(choice){
-                0->liveSettings()
+                // LEFT → LEFT → LEFT must expose EVERY setting, not only the
+                // shortened Live TV quick-settings dialog. Full settings include
+                // automatic playlist refresh and both hidden-channel scan toggles.
+                0->settings()
                 1->showHome()
                 2->hiddenChannels()
                 3->checkHiddenChannelsNow()
