@@ -72,6 +72,23 @@ class MyViewIntegrationContracts(unittest.TestCase):
             self.assertIn(required, workflow)
         self.assertNotIn(":app:assembleDebug", workflow)
 
+    def test_optional_second_decoder_is_off_by_default(self):
+        # Existing user choices remain untouched; new installations avoid
+        # speculative decoder competition until deliberately enabled.
+        self.assertNotIn(
+            'prefs.getBoolean("myview_instant_preload_enabled",true)',
+            self.activity,
+        )
+        self.assertIn(
+            'settingsToggle("Preload adjacent Media3 channel (one only)",'
+            '"myview_instant_preload_enabled",false)',
+            self.activity,
+        )
+
+    def test_channel_skip_key_burst_is_debounced(self):
+        self.assertIn("handler.postDelayed(task,350L)", self.activity)
+        self.assertIn("private fun cancelRapidSurf()", self.activity)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
