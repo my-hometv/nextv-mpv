@@ -6988,6 +6988,8 @@ class MainActivity: Activity() {
             externalLogoRequestRunning)return
         val now=System.currentTimeMillis()
         val fetchedAt=prefs.getLong("myview_external_logo_last_fetch",0L)
+        val attemptedAt=prefs.getLong("myview_external_logo_last_attempt",0L)
+        if(!force && now>=attemptedAt && now-attemptedAt<15L*60L*1000L)return
         if(!force && now>=fetchedAt &&
             now-fetchedAt<ExternalLogoCatalog.REFRESH_INTERVAL_MS)return
         val targets=channels.asSequence()
@@ -6996,6 +6998,7 @@ class MainActivity: Activity() {
             .distinct().take(5000).toList()
         if(targets.isEmpty())return
         externalLogoRequestRunning=true
+        prefs.edit().putLong("myview_external_logo_last_attempt",now).apply()
         kotlin.concurrent.thread(name="MyView-public-channel-logos",isDaemon=true){
             val result=try{ExternalLogoCatalog.fetch(targets)}
                 catch(e:Exception){
