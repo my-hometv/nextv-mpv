@@ -2144,8 +2144,8 @@ class MainActivity: Activity() {
             Toast.makeText(this,"No scheduled programmes",Toast.LENGTH_SHORT).show()
             return
         }
-        showSideDialog(AlertDialog.Builder(this).setTitle("Scheduled programmes • Select to cancel")
-            .setMessage("Reminders and auto-switch operate while MyView is open. They are not guaranteed when the TV or app is stopped.")
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("Scheduled • MyView must be open • Select to cancel")
             .setItems(items.map{programmeTime(it.optLong("start"))+"  "+it.optString("title")+"  ["+
                 (if(it.optString("mode","reminder")=="auto")"Auto-switch]" else "Reminder]")}.toTypedArray()){_,position->
                 val key=items[position].optString("key")
