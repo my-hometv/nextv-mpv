@@ -52,6 +52,8 @@ jobs:
           python3 tools/verify_myview_source_contract.py
       - name: Verify single LibVLC, compile and run tests
         run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Android Lint release gate
+        run: gradle --no-daemon --stacktrace :app:lintDebug
       - name: Assemble full MyView APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Verify APK package and build identity
