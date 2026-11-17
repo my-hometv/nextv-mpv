@@ -799,12 +799,19 @@ class MainActivity: Activity() {
     private var multiViewDialog:AlertDialog?=null
     private val multiViewPlayers=mutableListOf<ExoPlayer>()
     private fun releaseMultiView(){
-        multiViewPlayers.toList().forEach{
-            try{it.stop();it.release()}catch(e:Exception){
-                HomeTvDiagnostics.w("MyView","MultiView release",e)
+        // A failing native stop must never skip release of that decoder or
+        // prevent the other MultiView sessions from being cleaned up.
+        val closing=multiViewPlayers.toList()
+        multiViewPlayers.clear()
+        closing.forEach{exo->
+            try{exo.stop()}catch(e:Exception){
+                HomeTvDiagnostics.w("MyView","MultiView stop",e)
+            }finally{
+                try{exo.release()}catch(e:Exception){
+                    HomeTvDiagnostics.w("MyView","MultiView release",e)
+                }
             }
         }
-        multiViewPlayers.clear()
     }
     private fun chooseMultiView(){
         if(!prefs.getBoolean("myview_multiview_enabled",true)){
