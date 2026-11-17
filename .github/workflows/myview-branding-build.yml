@@ -1,4 +1,4 @@
-name: MyView Approved Family Artwork APK Build
+name: MyView Family Artwork Full-Screen APK Build
 # One-time APK build: triggered only by creating/updating this dedicated
 # workflow with the exact approval marker in the commit message.
 # The normal manual-only release workflow remains unchanged.
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   verify-and-build:
-    if: github.event.head_commit.message == 'Build approved MyView branded APK [myview-logo-build]'
+    if: github.event.head_commit.message == 'Build approved full-screen MyView APK [myview-fullscreen-build]'
     runs-on: ubuntu-latest
     timeout-minutes: 55
     steps:
