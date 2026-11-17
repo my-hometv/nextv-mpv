@@ -9,8 +9,16 @@ internal object ExternalLogoMatchPolicy {
     data class Entry(val channelId: String, val url: String, val format: String, val inUse: Boolean)
     data class Target(val channelName: String, val epgId: String)
 
-    fun canonical(text: String): String =
-        text.lowercase(java.util.Locale.ROOT).filter { it.isLetterOrDigit() }
+    private val qualitySuffix = Regex(
+        """(?:\\s|[_\\[(])+?(?:sd|hd|fhd|uhd|4k|1080p|720p)(?:\\s|[_\\])])*?$""",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** Remove only separate resolution labels, never the letters in a channel name. */
+    fun canonical(text: String): String {
+        val trimmed = text.trim().replace(qualitySuffix, "").trim()
+        return trimmed.lowercase(java.util.Locale.ROOT).filter { it.isLetterOrDigit() }
+    }
 
     fun isSupported(entry: Entry): Boolean {
         val format = entry.format.uppercase(java.util.Locale.ROOT)
