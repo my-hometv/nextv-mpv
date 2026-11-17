@@ -12,6 +12,13 @@ internal object VideoQualityPolicy {
     fun shouldRequestYoutubeWebQuality(preference: String): Boolean =
         preference == "720p" || preference == "1080p"
 
+    /** Optional scans resume only after foreground work has fully stopped. */
+    fun mayResumeIdleChecks(
+        appForeground:Boolean, licensed:Boolean, foregroundActive:Boolean,
+        teardown:Boolean, enabled:Boolean, safeStartup:Boolean
+    ):Boolean = appForeground && licensed && !foregroundActive && !teardown &&
+        enabled && !safeStartup
+
     /** Leave decoder capacity for the on-screen player. */
     @Suppress("UNUSED_PARAMETER")
     fun backgroundProbeLimit(
