@@ -1919,7 +1919,7 @@ class MainActivity: Activity() {
         retryTask=task
         handler.postDelayed(task,delayMs)
     }
-    private fun handleEngineFailure(index:Int,screen:FrameLayout):Boolean{
+    private fun handleEngineFailure(index:Int,screen:FrameLayout,failedEngine:String?=null):Boolean{
         if(index !in channels.indices || active!=index || videoScreen!==screen ||
             playbackTeardownInProgress)return true
         // Media3 and LibVLC can report the same failure through both a
@@ -1943,7 +1943,9 @@ class MainActivity: Activity() {
         }
         val c=channels[index]
         val key=channelKey(c)
-        val current=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
+        // A native constructor can fail before vlcPlayer is assigned.
+        // Attribute that failure to the attempted engine, not Media3.
+        val current=failedEngine ?: isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
         val pinnedUrl=prefs.getString("manual_url_"+key,null)
             ?:prefs.getString("working_url_"+key,null)
         val pinnedEngine=prefs.getString("manual_engine_"+key,null)
@@ -9969,9 +9971,15 @@ class MainActivity: Activity() {
             vlc.play()
             handler.postDelayed({if(vlcPlayer===vlc)applyVideoSize()},1000)
         }catch(e:Exception){
-            android.util.Log.e("HomeTV","LibVLC startup failed",e)
+            HomeTvDiagnostics.e("Playback","LibVLC startup failed",e)
             showBanner("LibVLC error: "+(e.message?:"unknown"),true)
-            handleEngineFailure(index,screen)
+            handleEngineFailure(index,screen,failedEngine="LibVLC")
+        }catch(e:LinkageError){
+            // Missing native symbols/ABI incompatibility is a LinkageError,
+            // not an Exception; do not let it terminate the TV Activity.
+            HomeTvDiagnostics.e("Playback","LibVLC native linkage unavailable",e)
+            showBanner("LibVLC native decoder unavailable. Trying another player.",true)
+            handleEngineFailure(index,screen,failedEngine="LibVLC")
         }
     }
     // The surfing sequence is already filtered and ordered in the background
