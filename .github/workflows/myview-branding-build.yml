@@ -1,5 +1,5 @@
 name: MyView Family Artwork Full-Screen APK Build
-# One-time APK build: triggered only by creating/updating this dedicated
+# Approved engineering validation: triggered only by updating this dedicated
 # workflow with the exact approval marker in the commit message.
 # The normal manual-only release workflow remains unchanged.
 on:
@@ -61,6 +61,89 @@ jobs:
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk > /tmp/myview-badging.txt
           grep -E "^package: name='com.softppj.myview' " /tmp/myview-badging.txt
           grep -F "application-label:'MyView'" /tmp/myview-badging.txt
+          # Verify native VLC libraries are actually packaged, not merely declared.
+          unzip -Z -1 app/build/outputs/apk/debug/app-debug.apk > /tmp/myview-entries.txt
+          grep -Eq '^lib/[^/]+/libvlc[.]so
+          sha256sum MyView-Full-Test.apk
+      - name: Upload family-branded MyView testing APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Family-Branded-Test-${{ github.run_number }}
+          path: MyView-Full-Test.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+ /tmp/myview-entries.txt
+          grep -Eq '^lib/[^/]+/libvlccore[.]so
+          sha256sum MyView-Full-Test.apk
+      - name: Upload family-branded MyView testing APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Family-Branded-Test-${{ github.run_number }}
+          path: MyView-Full-Test.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+ /tmp/myview-entries.txt
+          grep -Eq '^lib/[^/]+/libnative_runtime_probe[.]so
+          sha256sum MyView-Full-Test.apk
+      - name: Upload family-branded MyView testing APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Family-Branded-Test-${{ github.run_number }}
+          path: MyView-Full-Test.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+ /tmp/myview-entries.txt
+          printf 'Packaged native ABIs:\n'
+          grep '^lib/.*[.]so
+          sha256sum MyView-Full-Test.apk
+      - name: Upload family-branded MyView testing APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Family-Branded-Test-${{ github.run_number }}
+          path: MyView-Full-Test.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Full-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+ /tmp/myview-entries.txt | cut -d/ -f2 | sort -u
           cp app/build/outputs/apk/debug/app-debug.apk MyView-Full-Test.apk
           sha256sum MyView-Full-Test.apk
       - name: Upload family-branded MyView testing APK
