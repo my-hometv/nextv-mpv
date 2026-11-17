@@ -3646,35 +3646,30 @@ class MainActivity: Activity() {
         root.addView(label(title))
     }
     private fun playlists():MutableList<Playlist> {
-        // Public MyView ships with no provider playlist. Only sources added
-        // explicitly by the TV user are loaded; licensing remains independent.
-        val legacyTv="https://raw.githubusercontent.com/my-hometv/tv/main/TV.m3u"
-        val legacyMaster="https://raw.githubusercontent.com/my-hometv/tv/main/Master.m3u"
-        val arr=JSONArray(prefs.getString("playlists","[]"))
+        // Public MyView ships with no default provider. Never delete a saved
+        // user playlist based on its URL or display name; both can be intentional.
+        // Only the historical internal entitlement marker is not a user source.
         val configured=mutableListOf<Playlist>()
-        var removedLegacy=false
+        val arr=try{JSONArray(prefs.getString("playlists","[]"))}
+            catch(e:Exception){
+                HomeTvDiagnostics.w("Playlists","Saved playlist settings are malformed",e)
+                JSONArray()
+            }
+        var strippedInternalMarker=false
         for(i in 0 until arr.length()){
-            val o=arr.getJSONObject(i)
-            val url=o.optString("url","")
-            val name=o.optString("name","")
-            val normalized=url.substringBefore('?').substringBefore('#').trimEnd('/')
-            val legacy=normalized.equals(legacyTv,true) ||
-                normalized.equals(legacyMaster,true) ||
-                normalized.equals("https://github.com/my-hometv/tv/blob/main/TV.m3u",true) ||
-                normalized.equals("https://github.com/my-hometv/tv/blob/main/Master.m3u",true)
-            if(legacy){removedLegacy=true;continue}
-            if(url.isNotBlank() && url!="hometv://licensed-playlist")
-                configured.add(Playlist(name,url,o.optBoolean("enabled",true)))
+            val o=arr.optJSONObject(i) ?:continue
+            val url=o.optString("url","").trim()
+            val name=o.optString("name","").trim()
+            if(url=="hometv://licensed-playlist"){
+                strippedInternalMarker=true
+                continue
+            }
+            if(url.isNotBlank())configured.add(Playlist(name,url,o.optBoolean("enabled",true)))
         }
-        // Remove the previously implicit licensed source when upgrading without
-        // deleting any real user-added source or its associated configuration.
         val selected=prefs.getString("selected_playlist_source",null)
-        if(selected=="hometv://licensed-playlist" ||
-            selected.equals("TV",true) || selected.equals("Master",true) ||
-            selected.equals(legacyTv,true) || selected.equals(legacyMaster,true)){
+        if(selected=="hometv://licensed-playlist")
             prefs.edit().remove("selected_playlist_source").apply()
-        }
-        if(removedLegacy)savePlaylists(configured)
+        if(strippedInternalMarker)savePlaylists(configured)
         return configured
     }
     private fun savePlaylists(list:List<Playlist>) {
