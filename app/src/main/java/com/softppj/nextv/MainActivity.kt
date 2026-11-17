@@ -382,8 +382,8 @@ class MainActivity: Activity() {
         // results after authorization has been revoked or surrendered.
         refreshGeneration++
         stopPlayback()
-        reset("HomeTV • License activation")
-        root.addView(label("Enter your HomeTV License Key"))
+        reset("MyView • License activation")
+        root.addView(label("Enter your MyView License Key"))
         if(!error.isNullOrBlank())root.addView(label(error))
         val key=EditText(this).apply{
             hint="HTV-XXXXX-XXXXX-XXXXX-XXXXX"
@@ -398,7 +398,7 @@ class MainActivity: Activity() {
                 beginLicensedSession()
             })
         }
-        val activate=button("Activate HomeTV"){
+        val activate=button("Activate MyView"){
             val value=key.text.toString().trim().uppercase(java.util.Locale.ROOT)
             if(value.isBlank()){key.error="Enter a license key";return@button}
             key.isEnabled=false
@@ -3826,7 +3826,7 @@ class MainActivity: Activity() {
             else->null
         }
         if(!navigatingBack && destination!=null && currentMenu!=null &&
-            (title=="HomeTV Settings" && !settingsScreenVisible)){
+            (title=="MyView Settings" && !settingsScreenVisible)){
             navigationHistory.add(currentMenu!!)
         }
         if(destination!=null)currentMenu=destination
@@ -4333,7 +4333,7 @@ class MainActivity: Activity() {
         homeContent.addView(tvRow(
             tvCard("＋","Playlists","Manage sources"){managePlaylists()},
             tvCard("↻","Refresh","Rebuild playlists"){refresh({showHome()},true)},
-            tvCard("⚙","Settings","Personalize HomeTV"){settings()},
+            tvCard("⚙","Settings","Personalize MyView"){settings()},
             tvCard("🙈","Hidden","Hidden channels"){hiddenChannels()}
         ))
         // Continue TV is a real focusable action. The former child-at-2 target
@@ -7785,7 +7785,7 @@ class MainActivity: Activity() {
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
-            text="HOMETV  •  PLAYLISTS"
+            text="MYVIEW  •  PLAYLISTS"
             textSize=20f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
@@ -7819,7 +7819,7 @@ class MainActivity: Activity() {
                 when(action){
                     0->if(entry>=0)editPlaylist(entry)
                     1->{val items=playlists();if(entry>=0){items[entry]=items[entry].copy(enabled=false);savePlaylists(items);Toast.makeText(this,"Playlist disabled",Toast.LENGTH_SHORT).show()};close();showOverlayList()}
-                    2->if(entry>=0)AlertDialog.Builder(this).setTitle("Delete "+source+"?").setMessage("Remove this playlist and its channels from HomeTV?").setPositiveButton("Delete"){_,_->close();deletePlaylistSource(source)}.setNegativeButton("Cancel",null).show()
+                    2->if(entry>=0)AlertDialog.Builder(this).setTitle("Delete "+source+"?").setMessage("Remove this playlist and its channels from MyView?").setPositiveButton("Delete"){_,_->close();deletePlaylistSource(source)}.setNegativeButton("Cancel",null).show()
                     3->{close();managePlaylists()}
                 }
             }.show()
@@ -10087,7 +10087,7 @@ class MainActivity: Activity() {
             return
         }
         AlertDialog.Builder(this).setTitle("Save diagnostic report to USB")
-            .setMessage(reason+"\\n\\nSave to the NexTV app folder on the removable USB drive? Diagnostic reports may contain private stream URLs or device details.")
+            .setMessage(reason+"\\n\\nSave to the MyView app folder on the removable USB drive? Diagnostic reports may contain private stream URLs or device details.")
             .setPositiveButton("Save to USB"){_,_->
                 try{
                     val dir=candidates.first()
@@ -10368,7 +10368,7 @@ class MainActivity: Activity() {
     // Clear disposable app caches only. Never modify license preferences,
     // installation ID, playlist configuration, PIN, or server activation.
     private fun confirmClearCache(){
-        AlertDialog.Builder(this).setTitle("Clear HomeTV cache")
+        AlertDialog.Builder(this).setTitle("Clear MyView cache")
             .setMessage("Delete downloaded playlist caches, temporary files and image cache? Your license, activation, playlists, PIN and settings will be kept. Playlists may need to download again.")
             .setPositiveButton("Clear cache"){_,_->
                 // Do not invalidate a playing stream or reset channel selection.
