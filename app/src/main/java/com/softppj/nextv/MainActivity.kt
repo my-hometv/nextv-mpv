@@ -789,6 +789,10 @@ class MainActivity: Activity() {
             Thread(task,"MyView-isolated-VLC").apply{isDaemon=true}
         }
     )
+    // Direct LibVLC instances share process-global native state. The next
+    // direct VLC start must not overlap an older detached stop/release.
+    // Updated only from the Activity looper; the release callback posts to it.
+    private var pendingDirectVlcReleases=0
     private fun enqueueDetachedVlcCleanup(
         probe:VlcPlayer?,core:LibVLC?,onComplete:(()->Unit)?=null
     ){
@@ -8898,6 +8902,17 @@ class MainActivity: Activity() {
             recoveryPending.clear()
             alternativePromptKey?.let{dismissAlternativePrompt(it)}
         }
+        // Native callbacks can synchronously re-enter playback teardown. Never
+        // attach a new decoder to a session whose previous release is still
+        // executing. Replay the latest requested tune after teardown.
+        if(playbackTeardownInProgress){
+            handler.post{
+                if(!isFinishing && !isDestroyed && licenseReady &&
+                    index in channels.indices && channels[index]===c)
+                    playIndex(index)
+            }
+            return
+        }
         stopPlayback()
         active=index
         if(pendingAlternativeKey==channelKey(c) && pendingAlternativeUrl==c.url &&
@@ -9733,6 +9748,31 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
     private fun startVlc(c:Channel,index:Int,screen:FrameLayout){
+        // Direct LibVLC native shutdown happens off the UI thread. Starting
+        // another core before that shutdown completes can overlap native
+        // decoder and surface ownership on resource-constrained TVs.
+        if(pendingDirectVlcReleases>0){
+            val generation=playbackGeneration
+            val startedAt=android.os.SystemClock.elapsedRealtime()
+            val deferred=object:Runnable{
+                override fun run(){
+                    if(playbackGeneration!=generation || active!=index ||
+                        videoScreen!==screen || !licenseReady ||
+                        isFinishing || isDestroyed)return
+                    if(pendingDirectVlcReleases==0){
+                        startVlc(c,index,screen)
+                    }else if(android.os.SystemClock.elapsedRealtime()-startedAt<8000L){
+                        handler.postDelayed(this,100L)
+                    }else{
+                        HomeTvDiagnostics.w("Playback",
+                            "Previous LibVLC cleanup exceeded 8 seconds; refusing overlapping native start")
+                        handleEngineFailure(index,screen)
+                    }
+                }
+            }
+            handler.postDelayed(deferred,100L)
+            return
+        }
         try{
             val cache=bufferValues()[0].coerceAtLeast(300)
             val options=arrayListOf("--network-caching="+cache,"--live-caching="+cache,"--http-reconnect","--no-video-title-show")
@@ -11014,10 +11054,18 @@ class MainActivity: Activity() {
         retryTask=null
         qualityUpgradeTask?.let{handler.removeCallbacks(it)}
         qualityUpgradeTask=null
-        bannerTask=null;banner=null;videoScreen=null;currentPlayerView=null
-        releaseAudioEqualizer()
+        bannerTask=null;banner=null;videoScreen=null
+        // Detach the outgoing Surface/Texture binding on Media3's app looper
+        // before releasing the decoder. Otherwise the old PlayerView can keep
+        // the codec surface attached while the next channel is initializing.
+        val oldView=currentPlayerView
+        currentPlayerView=null
         val oldPlayer=player
         player=null
+        try{oldView?.player=null}catch(e:Throwable){
+            HomeTvDiagnostics.w("Playback","Media3 view detach failed",e)
+        }
+        releaseAudioEqualizer()
         try{oldPlayer?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","Media3 cleanup failed",e)}
         activeChannelGainProcessor=null
         val oldVlc=vlcPlayer
@@ -11034,7 +11082,12 @@ class MainActivity: Activity() {
                 HomeTvDiagnostics.w("Playback","LibVLC view detach failed",e)
             }
         }
-        enqueueDetachedVlcCleanup(oldVlc,oldCore)
+        if(oldVlc!=null || oldCore!=null){
+            pendingDirectVlcReleases++
+            enqueueDetachedVlcCleanup(oldVlc,oldCore){
+                pendingDirectVlcReleases=(pendingDirectVlcReleases-1).coerceAtLeast(0)
+            }
+        }
         val oldWeb=web
         web=null
         try{oldWeb?.onPause();oldWeb?.destroy()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","WebView cleanup failed",e)}
