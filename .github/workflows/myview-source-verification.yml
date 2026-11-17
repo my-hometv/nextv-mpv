@@ -10,7 +10,8 @@ on:
       - '.github/workflows/myview-branding-build.yml'
       - '.github/workflows/myview-full-app.yml'
       - 'tools/verify_myview_branding.py'
-      - 'tools/verify_myview_source_contract.py'
+      - 'tools/**'
+      - 'tests/**'
   workflow_dispatch:
 permissions:
   contents: read
@@ -48,6 +49,10 @@ jobs:
         run: |
           python3 tools/verify_myview_branding.py
           python3 tools/verify_myview_source_contract.py
+      - name: Run Python security, native provenance and audit regression tests (NO APK)
+        run: |
+          python3 -m unittest discover -s tools -p 'test_*.py' -v
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Compile Kotlin and run unit tests (never assemble an APK)
         run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
       - name: Verify no APK was assembled
