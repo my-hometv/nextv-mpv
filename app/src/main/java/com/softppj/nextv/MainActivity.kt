@@ -4709,6 +4709,10 @@ class MainActivity: Activity() {
     }
     // Bounded background stream checks: optional players, never the on-screen player.
     @Volatile private var backgroundProbeGeneration=0
+    // Track releases queued behind a foreground command. onDestroy cancels
+    // Handler callbacks, so it must reclaim anything not yet disposed.
+    private val abandonedMedia3Probes=mutableSetOf<ExoPlayer>()
+    private val abandonedVlcProbes=mutableListOf<Pair<VlcPlayer?,LibVLC?>>()
     // A remote navigation key wins over speculative network/decoder activity.
     // These resources are released after the current key is dispatched so
     // native stop() cannot block the UI from honoring the key itself.
@@ -4739,29 +4743,38 @@ class MainActivity: Activity() {
         // releases into one main-thread event immediately behind the remote key.
         // Media3's Player API must not be called from a different application
         // looper. Splitting disposal across frames avoids a release storm.
+        abandonedMedia3Probes.addAll(abandoned)
         abandoned.forEachIndexed{position,probe->
             handler.postDelayed({
-                try{probe.stop()}catch(e:Exception){
-                    HomeTvDiagnostics.w("RemoteInput","Background probe stop",e)
-                }finally{
-                    try{probe.release()}catch(e:Exception){
-                        HomeTvDiagnostics.w("RemoteInput","Background probe release",e)
+                if(abandonedMedia3Probes.remove(probe)){
+                    try{probe.stop()}catch(e:Exception){
+                        HomeTvDiagnostics.w("RemoteInput","Background probe stop",e)
+                    }finally{
+                        try{probe.release()}catch(e:Exception){
+                            HomeTvDiagnostics.w("RemoteInput","Background probe release",e)
+                        }
                     }
                 }
             },350L+position*50L)
         }
-        handler.postDelayed({
-            try{oldVlcProbe?.stop()}catch(e:Exception){
-                HomeTvDiagnostics.w("RemoteInput","Native probe stop",e)
-            }finally{
-                try{oldVlcProbe?.release()}catch(e:Exception){
-                    HomeTvDiagnostics.w("RemoteInput","Native probe release",e)
+        if(oldVlcProbe!=null || oldVlcCore!=null){
+            val orphan=oldVlcProbe to oldVlcCore
+            abandonedVlcProbes.add(orphan)
+            handler.postDelayed({
+                if(abandonedVlcProbes.remove(orphan)){
+                    try{oldVlcProbe?.stop()}catch(e:Exception){
+                        HomeTvDiagnostics.w("RemoteInput","Native probe stop",e)
+                    }finally{
+                        try{oldVlcProbe?.release()}catch(e:Exception){
+                            HomeTvDiagnostics.w("RemoteInput","Native probe release",e)
+                        }
+                        try{oldVlcCore?.release()}catch(e:Exception){
+                            HomeTvDiagnostics.w("RemoteInput","Native core release",e)
+                        }
+                    }
                 }
-                try{oldVlcCore?.release()}catch(e:Exception){
-                    HomeTvDiagnostics.w("RemoteInput","Native core release",e)
-                }
-            }
-        },500L)
+            },500L)
+        }
         // Do not blindly cancel a different engine's newer recovery scan.
         // Foreground retuning/teardown owns cancellation of its recovery work.
     }
@@ -10889,6 +10902,19 @@ class MainActivity: Activity() {
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         probePlayers.toList().forEach{try{it.release()}catch(_:Exception){}}
         probePlayers.clear()
+        // Delayed remote preemption tasks are about to be cancelled. Drain the
+        // recorded orphan players now, preserving exactly-once release ownership.
+        abandonedMedia3Probes.toList().forEach{probe->
+            abandonedMedia3Probes.remove(probe)
+            try{probe.stop()}catch(_:Exception){}
+            try{probe.release()}catch(_:Exception){}
+        }
+        abandonedVlcProbes.toList().forEach{(probe,core)->
+            abandonedVlcProbes.remove(probe to core)
+            try{probe?.stop()}catch(_:Exception){}
+            try{probe?.release()}catch(_:Exception){}
+            try{core?.release()}catch(_:Exception){}
+        }
         stopPlayback()
         // Drop in-memory caches and queued UI work on final exit. Keep the
         // persistent playlist files, preferences and validated license cache.
