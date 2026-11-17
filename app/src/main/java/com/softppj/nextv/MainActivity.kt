@@ -6835,6 +6835,46 @@ class MainActivity: Activity() {
                 if(active in channels.indices)showChannelInfo(active)
             }.setNegativeButton("Cancel",null).create())
     }
+    /** Selectable Channel Info actions. Hide requires confirmation. */
+    private fun showChannelInfoActions(index:Int){
+        val channel=channels.getOrNull(index) ?:return
+        if(index!=active)return
+        val withGuide=prefs.getBoolean("nextv_epg_enabled",true) &&
+            prefs.getBoolean("show_channel_epg",true)
+        val favoriteLabel=if(isFavorite(channel))"☆  Remove Favorite" else "★  Add Favorite"
+        val hiddenLabel=if(isManuallyHidden(channel))"◉  Unhide Channel" else "🙈  Hide Channel"
+        val labels=(if(withGuide)listOf("▤  Programme Guide (Now / Next)") else emptyList())+
+            listOf(favoriteLabel,hiddenLabel,"⚙  More Channel Settings")
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle(numberFor(index).toString()+". "+channel.name+" — Info actions")
+            .setItems(labels.toTypedArray()){_,position->
+                val action=position-(if(withGuide)1 else 0)
+                when {
+                    withGuide && position==0->openCurrentChannelEpg()
+                    action==0->{
+                        favorite(channel)
+                        if(active==index)showChannelInfo(index)
+                    }
+                    action==1->{
+                        if(isManuallyHidden(channel)){
+                            toggleManualHide(channel)
+                            if(active==index)showChannelInfo(index)
+                        }else{
+                            showSideDialog(AlertDialog.Builder(this)
+                                .setTitle("Hide "+channel.name+"?")
+                                .setMessage("Hide this channel from normal channel surfing? You can restore it from Hidden Channels. The currently playing channel will not be interrupted.")
+                                .setPositiveButton("Hide Channel"){_,_->
+                                    toggleManualHide(channel)
+                                    if(active==index)showChannelInfo(index)
+                                }
+                                .setNegativeButton("Cancel",null).create())
+                        }
+                    }
+                    action==2->showChannelOptions()
+                }
+            }.setNegativeButton("Back",null).create())
+    }
+
     private fun showChannelInfo(index:Int,extra:String=""){
         val screen=videoScreen ?:return
         val channel=channels.getOrNull(index) ?:return
@@ -10395,7 +10435,7 @@ class MainActivity: Activity() {
                     KeyEvent.KEYCODE_CHANNEL_UP,KeyEvent.KEYCODE_MEDIA_NEXT,
                     KeyEvent.KEYCODE_BUTTON_R1->{switchChannel(1);return true}
                     KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER,
-                    KeyEvent.KEYCODE_NUMPAD_ENTER->{if(previewIndex>=0)confirmPreview() else if(active in channels.indices){if(banner!=null && prefs.getBoolean("show_channel_epg",true))openCurrentChannelEpg() else showChannelInfo(active)};return true}
+                    KeyEvent.KEYCODE_NUMPAD_ENTER->{if(previewIndex>=0)confirmPreview() else if(active in channels.indices){if(banner!=null)showChannelInfoActions(active) else showChannelInfo(active)};return true}
                     KeyEvent.KEYCODE_DPAD_LEFT->{showOverlayList();return true}
                     KeyEvent.KEYCODE_DPAD_RIGHT->{showChannelOptions();return true}
                     KeyEvent.KEYCODE_MENU->{showPlaybackSettings();return true}
