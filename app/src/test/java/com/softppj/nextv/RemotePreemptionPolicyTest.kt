@@ -23,6 +23,22 @@ class RemotePreemptionPolicyTest {
         for (key in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9)
             assertTrue(RemotePreemptionPolicy.isNavigationKey(key))
     }
+    @Test fun teardownReplaysChannelSkipOnlyWithSavedIdentity(){
+        assertTrue(RemotePreemptionPolicy.shouldReplaySavedChannelSkip(
+            false,"playlist-channel",KeyEvent.KEYCODE_CHANNEL_UP))
+        assertTrue(RemotePreemptionPolicy.shouldReplaySavedChannelSkip(
+            false,"playlist-channel",KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+        assertFalse(RemotePreemptionPolicy.shouldReplaySavedChannelSkip(
+            true,"playlist-channel",KeyEvent.KEYCODE_CHANNEL_UP))
+        assertFalse(RemotePreemptionPolicy.shouldReplaySavedChannelSkip(
+            false,null,KeyEvent.KEYCODE_CHANNEL_UP))
+        assertFalse(RemotePreemptionPolicy.shouldReplaySavedChannelSkip(
+            false,"playlist-channel",KeyEvent.KEYCODE_DPAD_CENTER))
+        assertEquals(1,RemotePreemptionPolicy.skipDirection(KeyEvent.KEYCODE_CHANNEL_UP))
+        assertEquals(1,RemotePreemptionPolicy.skipDirection(KeyEvent.KEYCODE_MEDIA_NEXT))
+        assertEquals(-1,RemotePreemptionPolicy.skipDirection(KeyEvent.KEYCODE_CHANNEL_DOWN))
+        assertEquals(-1,RemotePreemptionPolicy.skipDirection(KeyEvent.KEYCODE_MEDIA_PREVIOUS))
+    }
     @Test fun audioAndUnrelatedButtonsDoNotCancelBackgroundChecks(){
         listOf(KeyEvent.KEYCODE_VOLUME_UP,KeyEvent.KEYCODE_VOLUME_DOWN,
             KeyEvent.KEYCODE_VOLUME_MUTE,KeyEvent.KEYCODE_UNKNOWN
