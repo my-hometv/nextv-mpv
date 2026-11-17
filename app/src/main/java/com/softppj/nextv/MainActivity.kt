@@ -796,8 +796,21 @@ class MainActivity: Activity() {
         if(!prefs.getBoolean("myview_multiview_enabled",true))return
         if(requested !in setOf(2,4))return
         if(!licenseReady || multiViewDialog!=null || playbackTeardownInProgress)return
-        val options=surfingIndices().filter{it in channels.indices &&
-            !isLocked(channels[it]) && !isManuallyHidden(channels[it])}
+        val lockedSources=lockedPlaylistNames()
+        val lockedGroups=lockedGroupNames()
+        val options=surfingIndices().filter{index->
+            val candidate=channels.getOrNull(index) ?:return@filter false
+            MultiViewAccessPolicy.canEnter(
+                licensed=licenseReady,
+                channelLocked=isLocked(candidate),
+                channelUnlocked=unlockedChannel==id(candidate),
+                playlistLocked=candidate.source in lockedSources,
+                playlistUnlocked=candidate.source in unlockedPlaylistsThisSession,
+                groupLocked=candidate.group in lockedGroups,
+                groupUnlocked=candidate.group in unlockedGroupsThisSession,
+                manuallyHidden=isManuallyHidden(candidate)
+            )
+        }
         if(options.isEmpty()){
             Toast.makeText(this,"No unlocked visible channels for MultiView",Toast.LENGTH_LONG).show()
             return
@@ -807,6 +820,10 @@ class MainActivity: Activity() {
         // several decoder slots. Preserve the selected playlist's surfing order.
         val indices=MultiViewSelectionPolicy.select(options,first,requested){
             channelKey(channels[it])
+        }
+        if(indices.size<2){
+            Toast.makeText(this,"MultiView needs at least two permitted, different channels",Toast.LENGTH_LONG).show()
+            return
         }
         stopPlayback()
         releaseMultiView()
@@ -6586,6 +6603,7 @@ class MainActivity: Activity() {
     private var previewTask:Runnable?=null
     private var previewInfoPanel:View?=null
     private var previewVideoTask:Runnable?=null
+    private var previewExpiryTask:Runnable?=null
     private var previewPlayer:ExoPlayer?=null
     private var previewPanel:FrameLayout?=null
     private var previewSourceIdentity:String?=null
@@ -6596,6 +6614,8 @@ class MainActivity: Activity() {
         previewGeneration++
         previewVideoTask?.let{handler.removeCallbacks(it)}
         previewVideoTask=null
+        previewExpiryTask?.let{handler.removeCallbacks(it)}
+        previewExpiryTask=null
         val oldPreview=previewPlayer
         previewPlayer=null
         previewSourceIdentity=null
@@ -6689,6 +6709,16 @@ class MainActivity: Activity() {
                     .setLoadControl(previewBuffer)
                     .build()
                 previewPlayer=exo
+                // Speculative decoders are temporary. Prevent a remote stream
+                // from consuming a second decoder/bandwidth indefinitely.
+                if(automatic){
+                    val expire=Runnable{
+                        if(previewPlayer===exo && previewGeneration==generation)
+                            closeVideoPreview()
+                    }
+                    previewExpiryTask=expire
+                    handler.postDelayed(expire,15_000L)
+                }
                 exo.volume=0f
                 exo.setAudioAttributes(AudioAttributes.DEFAULT,false)
                 if(panel!=null){
