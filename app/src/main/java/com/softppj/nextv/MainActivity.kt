@@ -4315,7 +4315,9 @@ class MainActivity: Activity() {
             tvCard("⚙","Settings","Personalize HomeTV"){settings()},
             tvCard("🙈","Hidden","Hidden channels"){hiddenChannels()}
         ))
-        homeContent.post{(homeContent.getChildAt(2) as? LinearLayout)?.getChildAt(0)?.requestFocus()}
+        // Continue TV is a real focusable action. The former child-at-2 target
+        // pointed to a section TextView and silently failed to request focus.
+        continueBanner.post{if(homeScreenVisible && continueBanner.isAttachedToWindow)continueBanner.requestFocus()}
     }
     private val importPlaylistRequest=7291
     private fun importLocalPlaylist(){
