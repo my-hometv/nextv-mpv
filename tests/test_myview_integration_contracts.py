@@ -193,6 +193,7 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn(
             "preloadedOrders:Map<String,List<String>>?=null", self.activity
         )
+        self.assertIn("now-surfingCacheAt<30000L)return cached", self.activity)
 
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
