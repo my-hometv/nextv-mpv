@@ -3965,7 +3965,7 @@ class MainActivity: Activity() {
         navigation.addView(tvText("PPJSoft",16f,0xFF9CB4C9.toInt()).apply{
             setPadding(tvDp(10),tvDp(8),tvDp(8),0)
         })
-        navigation.addView(tvText("MY HOME TV",21f,0xFF92E9FF.toInt()).apply{
+        navigation.addView(tvText("MYVIEW",21f,0xFF92E9FF.toInt()).apply{
             setPadding(tvDp(10),0,tvDp(8),tvDp(18))
         })
         fun navigationButton(title:String,action:()->Unit){
@@ -4009,7 +4009,7 @@ class MainActivity: Activity() {
                 android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
                 intArrayOf(0xFF16466C.toInt(),0xFF0A1728.toInt())
             ).apply{cornerRadius=tvDp(19).toFloat()}
-            addView(tvText("⌂  MY HOME TV",32f,0xFF92E9FF.toInt()))
+            addView(tvText("⌂  MYVIEW",32f,0xFF92E9FF.toInt()))
             addView(tvText("Your entertainment. Your way.",16f,0xFFB7C8D8.toInt()))
             addView(tvText(actualChannelCount().toString()+" LIVE CHANNELS   •   "+viewerId().uppercase(),14f,0xFF5FE6CC.toInt()))
             addView(tvText("BY PPJSoft",12f,0xFFB7C8D8.toInt()).apply{gravity=Gravity.RIGHT})
@@ -6841,6 +6841,10 @@ class MainActivity: Activity() {
     }
     private fun takeReadyPrebuffer(c:Channel):ExoPlayer?{
         val exo=previewPlayer ?:return null
+        // The speculative player uses a lightweight renderer without our
+        // per-channel gain AudioProcessor. Preserve custom gain by using
+        // the normal full player rather than silently changing volume.
+        if(channelVolumeGain(c)!=1f)return null
         if(!LivePrebufferPolicy.mayAdopt(
                 licenseReady=licenseReady,
                 correctIdentity=previewSourceIdentity==id(c) && previewSourceUrl==c.url,
@@ -7148,7 +7152,7 @@ class MainActivity: Activity() {
             setBackgroundColor(0xF015283C.toInt())
         }
         drawer.addView(TextView(this).apply{
-            text="HOMETV  •  CHANNEL GROUPS  •  LEFT for menu"
+            text="MYVIEW  •  CHANNEL GROUPS  •  LEFT for menu"
             textSize=20f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
@@ -7189,7 +7193,7 @@ class MainActivity: Activity() {
             setBackgroundColor(0xF015283C.toInt())
         }
         drawer.addView(TextView(this).apply{
-            text="HOMETV  •  MENU  •  RIGHT for groups"
+            text="MYVIEW  •  MENU  •  RIGHT for groups"
             textSize=20f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
@@ -9271,7 +9275,8 @@ class MainActivity: Activity() {
         rapidSurfTarget=-1
     }
     private fun switchChannel(delta:Int){
-        if(previewIndex>=0)clearChannelPreview()
+        // Keep a prepared highlighted channel alive until the final tune;
+        // playIndex handles promotion or releases it safely on mismatch.
         surfingDirection=if(delta>=0)1 else -1
         if(!licenseReady || playbackTeardownInProgress)return
         val available=surfingIndices()
