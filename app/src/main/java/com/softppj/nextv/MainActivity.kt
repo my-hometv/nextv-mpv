@@ -3032,14 +3032,49 @@ class MainActivity: Activity() {
         val input=EditText(this).apply{
             inputType=android.text.InputType.TYPE_CLASS_NUMBER
             setSingleLine(true)
+            showSoftInputOnFocus=false
             setText((current+1).toString())
             selectAll()
         }
-        showSideDialog(AlertDialog.Builder(this)
-            .setTitle("Move "+selected.name)
-            .setMessage("Enter position 1–"+keys.size+" within "+source+
-                ". Saved positions override playlist ordering after refresh.")
-            .setView(input)
+        val positionLabel=TextView(this).apply{
+            textSize=20f
+            setTextColor(android.graphics.Color.WHITE)
+            gravity=Gravity.CENTER
+            setPadding(tvDp(8),tvDp(14),tvDp(8),tvDp(14))
+        }
+        val layout=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(tvDp(16),tvDp(8),tvDp(16),tvDp(12))
+        }
+        fun step(delta:Int){
+            val from=input.text.toString().toIntOrNull() ?:current+1
+            val target=(from+delta).coerceIn(1,keys.size)
+            input.setText(target.toString())
+            input.setSelection(input.text.length)
+            positionLabel.text="Position "+target+" of "+keys.size
+        }
+        positionLabel.text="Position "+(current+1)+" of "+keys.size
+        val up=button("▲  Move up one position"){step(-1)}
+        val down=button("▼  Move down one position"){step(1)}
+        layout.addView(positionLabel)
+        layout.addView(up)
+        layout.addView(down)
+        layout.addView(TextView(this).apply{
+            text="Use ▲ / ▼ to move, or type a position (1–"+keys.size+"). Press Save when ready."
+            setTextColor(0xFFB6C9DD.toInt())
+            setPadding(0,tvDp(10),0,tvDp(8))
+        })
+        layout.addView(input)
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("Move "+selected.name+" • "+source)
+            .setView(layout)
+            .setOnKeyListener{_,code,event->
+                if(event.action==KeyEvent.ACTION_DOWN &&
+                    code in setOf(KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_DPAD_DOWN)){
+                    if(event.repeatCount==0)step(if(code==KeyEvent.KEYCODE_DPAD_UP)-1 else 1)
+                    true
+                }else false
+            }
             .setPositiveButton("Save Position"){_,_->
                 val position=input.text.toString().toIntOrNull()
                 if(position==null || position !in 1..keys.size){
@@ -3054,7 +3089,9 @@ class MainActivity: Activity() {
                     Toast.makeText(this,selected.name+" moved to "+position,Toast.LENGTH_SHORT).show()
                     onMoved()
                 }
-            }.setNegativeButton("Cancel",null).create())
+            }.setNegativeButton("Cancel",null).create()
+        dialog.setOnShowListener{up.requestFocus()}
+        showSideDialog(dialog)
     }
     // Long press in channel lists: quick actions only. Never open the right-key settings.
     private fun showChannelListQuickActions(index:Int,refresh:()->Unit,onMoved:()->Unit=refresh){
