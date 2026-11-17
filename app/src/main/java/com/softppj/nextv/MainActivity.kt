@@ -9440,12 +9440,24 @@ class MainActivity: Activity() {
                                     matchVodRefreshRate(exo,c)
                             },1200L)
                         }
-                        // Audio-only entries can be confirmed after track selection
-                        // settles. Video streams are confirmed by onRenderedFirstFrame.
+                        // Confirm radio/audio-only streams only when Media3 has
+                        // positively enumerated selected audio and NO video tracks.
+                        // Absence of videoFormat alone is not evidence: on slower
+                        // live streams audio can start before the first video format,
+                        // and treating that as healthy pins a black-screen engine.
                         if(exo.videoFormat==null){
                             handler.postDelayed({
-                                if(player===exo && active==index && exo.isPlaying && exo.videoFormat==null)
-                                    rememberWorking(c,volumePlaybackGeneration)
+                                if(player===exo && active==index && videoScreen===screen &&
+                                    exo.isPlaying && exo.playbackState==Player.STATE_READY &&
+                                    exo.videoFormat==null){
+                                    val groups=exo.currentTracks.groups
+                                    val hasSelectedAudio=groups.any{
+                                        it.type==C.TRACK_TYPE_AUDIO && it.isSelected
+                                    }
+                                    val hasVideo=groups.any{it.type==C.TRACK_TYPE_VIDEO}
+                                    if(hasSelectedAudio && !hasVideo)
+                                        rememberWorking(c,volumePlaybackGeneration)
+                                }
                             },2500L)
                         }
                     }
