@@ -8901,6 +8901,12 @@ class MainActivity: Activity() {
                                 nowMs=now,
                                 previousRecoveryMs=retryAt)
                             if(retrySame){
+                                // Keep diagnostics/retry state bounded even for
+                                // very large channel lists and rotating playlists.
+                                if(liveFreezeRetryAt.size>=128 && retryKey !in liveFreezeRetryAt){
+                                    val oldest=liveFreezeRetryAt.minByOrNull{it.value}?.key
+                                    if(oldest!=null)liveFreezeRetryAt.remove(oldest)
+                                }
                                 liveFreezeRetryAt[retryKey]=now
                                 HomeTvDiagnostics.w("MyView",
                                     "Frozen live decoder: retrying same channel and URL once before fallback")
@@ -10543,9 +10549,22 @@ class MainActivity: Activity() {
     }
     override fun onTrimMemory(level:Int){
         super.onTrimMemory(level)
-        if(level>=ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)posterCache.evictAll()
+        if(level>=ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW){
+            posterCache.evictAll()
+            logoCache.evictAll()
+        }
     }
     override fun onDestroy(){
+        // Never keep external artwork HTTP requests or bitmap workers running
+        // after the viewer leaves the Activity.
+        ExternalLogoCatalog.cancel()
+        externalLogoPending.clear()
+        externalLogoIndex=null
+        logoExecutor.shutdownNow()
+        logoCache.evictAll()
+        logoLoading.clear()
+        logoWaiting.clear()
+        liveFreezeRetryAt.clear()
         epgTuneTask?.let{handler.removeCallbacks(it)};epgTuneTask=null
         sleepTimerTask?.let{handler.removeCallbacks(it)};sleepTimerTask=null
         stopVlcProbe()
