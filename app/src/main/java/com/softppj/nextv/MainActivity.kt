@@ -1097,7 +1097,7 @@ class MainActivity: Activity() {
                                 for(i in 0 until names.length())if(names.optString(i)!=old)remaining.put(names.optString(i))
                                 val editor=prefs.edit().putString("viewer_profiles",remaining.toString())
                                     .putString("active_viewer","default")
-                                ViewerPreferencePolicy.profileKeys(old).forEach(editor::remove)
+                                ViewerPreferencePolicy.profileKeys(old).forEach{editor.remove(it)}
                                 editor.apply()
                                 invalidateSurfingCache()
                                 settings()
