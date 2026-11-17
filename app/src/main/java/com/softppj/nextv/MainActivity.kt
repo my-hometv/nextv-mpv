@@ -2334,8 +2334,9 @@ class MainActivity: Activity() {
         val entries=programmeList(c).filter{it.end>now-3600000L}.take(80)
         if(entries.isEmpty()){
             showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" • TV Guide")
-                .setMessage("No matching EPG programmes. Check this channel's tvg-id and your EPG sources.")
-                .setPositiveButton("Close",null).create())
+                .setMessage("No matching EPG programmes. You can still watch this channel. Check its tvg-id and your EPG sources.")
+                .setPositiveButton("Watch channel"){_,_->playIndex(preferredChannel(i))}
+                .setNegativeButton("Close",null).create())
             return
         }
         val lines=entries.map{p->
@@ -2349,9 +2350,17 @@ class MainActivity: Activity() {
                 showSideDialog(AlertDialog.Builder(this)
                     .setTitle(programme.title)
                     .setMessage(programmeTime(programme.start)+"–"+programmeTime(programme.end)+"\n"+programme.description)
-                    .setPositiveButton(if(programme.start<=System.currentTimeMillis())"Watch now" else "Auto-switch"){_,_->scheduleEpgTune(c,programme,"auto")}
+                    .setPositiveButton(if(EpgGuidePolicy.action(programme.start,System.currentTimeMillis())==
+                            EpgGuidePolicy.ProgrammeAction.WATCH_NOW)"Watch now" else "Auto-switch"){_,_->
+                        if(EpgGuidePolicy.action(programme.start,System.currentTimeMillis())==
+                            EpgGuidePolicy.ProgrammeAction.WATCH_NOW){
+                            playIndex(preferredChannel(i))
+                        }else scheduleEpgTune(c,programme,"auto")
+                    }
                     .setNeutralButton(if(programme.start<=System.currentTimeMillis())"Guide" else "Remind only"){_,_->
-                        if(programme.start>System.currentTimeMillis())scheduleEpgTune(c,programme,"reminder")
+                        if(programme.start>System.currentTimeMillis())
+                            scheduleEpgTune(c,programme,"reminder")
+                        else showChannelEpg(i)
                     }
                     .setNegativeButton("Cancel",null).create())
             }
@@ -2381,7 +2390,7 @@ class MainActivity: Activity() {
     private fun showEpgGrid(startTime:Long=System.currentTimeMillis()){
         if(!prefs.getBoolean("nextv_epg_enabled",true))return
         val selectedTime=(startTime/1800000L)*1800000L
-        val indices=visibleIndices()
+        val indices=EpgGuidePolicy.rows(visibleIndices(),channels.size)
         val dialog=AlertDialog.Builder(this).create()
         val layout=LinearLayout(this).apply{
             orientation=LinearLayout.VERTICAL
@@ -2403,11 +2412,10 @@ class MainActivity: Activity() {
         // Snapshot programmes once per grid opening. Avoid repeated EPG matching,
         // sorting and offset mapping on every ListView row bind/scroll.
         val programmesByIndex=indices.associateWith{programmeList(channels[it])}
-        val matching=indices.filter{programmesByIndex[it]?.isNotEmpty()==true}
         val adapter=object:android.widget.BaseAdapter(){
-            override fun getCount()=matching.size
-            override fun getItem(position:Int):Any=matching[position]
-            override fun getItemId(position:Int)=matching[position].toLong()
+            override fun getCount()=indices.size
+            override fun getItem(position:Int):Any=indices[position]
+            override fun getItemId(position:Int)=indices[position].toLong()
             override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View{
                 val row=(convertView as? TextView) ?:TextView(this@MainActivity).apply{
                     textSize=17f
@@ -2416,7 +2424,7 @@ class MainActivity: Activity() {
                     maxLines=3
                     ellipsize=android.text.TextUtils.TruncateAt.END
                 }
-                val i=matching[position]
+                val i=indices[position]
                 val c=channels[i]
                 val entries=programmesByIndex[i].orEmpty()
                 val programme=entries.firstOrNull{it.start<=selectedTime && it.end>selectedTime}
@@ -2424,21 +2432,21 @@ class MainActivity: Activity() {
                 row.text=numberFor(i).toString()+". "+c.name+"\n"+
                     (programme?.let{programmeTime(it.start)+"–"+programmeTime(it.end)+"  "+it.title}
                         ?:next?.let{"Next "+programmeTime(it.start)+"  "+it.title}
-                        ?:"No programme at this time")
+                        ?:"No EPG data at this time")
                 return row
             }
         }
         list.adapter=adapter
         // Ensure remote DPAD starts on a programme row rather than an
         // unpredictable header/footer control when the guide opens.
-        if(matching.isNotEmpty()){
+        if(indices.isNotEmpty()){
             list.setSelection(0)
             list.requestFocus()
         }
         layout.addView(list,LinearLayout.LayoutParams(-1,
             (resources.displayMetrics.heightPixels*0.55f).toInt().coerceAtLeast(260)))
         list.setOnItemClickListener{_,_,position,_->
-            val i=matching[position]
+            val i=indices[position]
             dialog.dismiss()
             showChannelEpg(i)
         }
@@ -2455,8 +2463,8 @@ class MainActivity: Activity() {
         footer.addView(button("Sources"){dialog.dismiss();configureEpg()},LinearLayout.LayoutParams(0,-2,1f))
         footer.addView(button("Close"){dialog.dismiss()},LinearLayout.LayoutParams(0,-2,1f))
         layout.addView(footer)
-        if(matching.isEmpty()){
-            header.text="No matching EPG channels — check tvg-id and EPG sources"
+        if(indices.isEmpty()){
+            header.text="No visible channels in the selected playlist"
         }
         dialog.setView(layout)
         showSideDialog(dialog)
