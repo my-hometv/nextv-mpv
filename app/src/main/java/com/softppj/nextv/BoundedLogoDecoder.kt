@@ -31,7 +31,8 @@ internal object BoundedLogoDecoder {
         return output.toByteArray()
     }
 
-    fun decode(input: InputStream): Bitmap? {
+    fun decode(input: InputStream, displayDimension: Int = DISPLAY_DIMENSION): Bitmap? {
+        require(displayDimension in 64..1024) { "Unsupported artwork dimension" }
         val encoded = readBounded(input) ?: return null
         if (encoded.isEmpty()) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -40,16 +41,16 @@ internal object BoundedLogoDecoder {
             bounds.outHeight !in 1..MAX_DIMENSION) return null
 
         var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > DISPLAY_DIMENSION) {
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > displayDimension) {
             sample *= 2
         }
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
         val bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.size, options)
             ?: return null
-        if (bitmap.width <= DISPLAY_DIMENSION && bitmap.height <= DISPLAY_DIMENSION)
+        if (bitmap.width <= displayDimension && bitmap.height <= displayDimension)
             return bitmap
-        val scale = minOf(DISPLAY_DIMENSION.toFloat() / bitmap.width,
-            DISPLAY_DIMENSION.toFloat() / bitmap.height)
+        val scale = minOf(displayDimension.toFloat() / bitmap.width,
+            displayDimension.toFloat() / bitmap.height)
         val resized = Bitmap.createScaledBitmap(bitmap,
             (bitmap.width * scale).toInt().coerceAtLeast(1),
             (bitmap.height * scale).toInt().coerceAtLeast(1), true)
