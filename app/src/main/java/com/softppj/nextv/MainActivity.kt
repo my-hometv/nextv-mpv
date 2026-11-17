@@ -6606,6 +6606,9 @@ class MainActivity: Activity() {
     private var previewSourceUrl:String?=null
     private var previewIsAutomatic=false
     private var previewGeneration=0
+    // At most one automatic speculative decoder exists. After the preferred
+    // neighbour expires, try the opposite neighbour once for this generation.
+    private var oppositePreloadGeneration=-1
     private fun closeVideoPreview(){
         previewGeneration++
         previewVideoTask?.let{handler.removeCallbacks(it)}
@@ -6709,8 +6712,27 @@ class MainActivity: Activity() {
                 // from consuming a second decoder/bandwidth indefinitely.
                 if(automatic){
                     val expire=Runnable{
-                        if(previewPlayer===exo && previewGeneration==generation)
+                        if(previewPlayer===exo && previewGeneration==generation){
+                            // Release the outgoing speculative player before
+                            // attempting the other direction. Never allocate
+                            // two background decoders or affect the live stream.
                             closeVideoPreview()
+                            if(oppositePreloadGeneration!=requestedPlaybackGeneration &&
+                                requestedPlaybackGeneration==playbackGeneration &&
+                                player?.isPlaying==true && appInForeground &&
+                                prefs.getBoolean("myview_instant_preload_enabled",true) &&
+                                previewIndex<0 && multiViewDialog==null){
+                                oppositePreloadGeneration=requestedPlaybackGeneration
+                                val current=active
+                                val available=surfingIndices()
+                                if(current in channels.indices && videoScreen===screen){
+                                    val opposite=nextSurfingIndex(current,-surfingDirection,available)
+                                    if(opposite in channels.indices && opposite!=current &&
+                                        opposite!=resolvedIndex)
+                                        showVideoPreview(opposite,automatic=true)
+                                }
+                            }
+                        }
                     }
                     previewExpiryTask=expire
                     handler.postDelayed(expire,15_000L)
