@@ -89,6 +89,24 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("handler.postDelayed(task,350L)", self.activity)
         self.assertIn("private fun cancelRapidSurf()", self.activity)
 
+    def test_channel_switch_detaches_media3_surface_before_release(self):
+        # Prevent the previous PlayerView from retaining an outgoing codec
+        # surface while the next foreground channel is being created.
+        detach = self.activity.index("oldView?.player=null")
+        release = self.activity.index("oldPlayer?.release()")
+        self.assertLess(detach, release)
+
+    def test_direct_vlc_native_release_precedes_new_direct_vlc_start(self):
+        self.assertIn("private var pendingDirectVlcReleases=0", self.activity)
+        self.assertIn("pendingDirectVlcReleases++", self.activity)
+        self.assertIn("pendingDirectVlcReleases=(pendingDirectVlcReleases-1)", self.activity)
+        self.assertIn("if(pendingDirectVlcReleases>0)", self.activity)
+        self.assertIn("playbackGeneration!=generation", self.activity)
+
+    def test_reentrant_switch_is_generation_bound(self):
+        self.assertIn("val deferredGeneration=playbackGeneration", self.activity)
+        self.assertIn("playbackGeneration==deferredGeneration", self.activity)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
