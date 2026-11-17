@@ -6911,6 +6911,7 @@ class MainActivity: Activity() {
                 correctIdentity=previewSourceIdentity==id(c) && previewSourceUrl==c.url,
                 ready=exo.playbackState==Player.STATE_READY && exo.playerError==null,
                 engineIsMedia3=engineFor(c)=="Media3",
+                picturePresetIsStandard=selectedPicturePreset(c)=="Standard",
                 unlocked=(unlockedChannel==id(c) || !isLocked(c)) &&
                     (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession) &&
                     (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
