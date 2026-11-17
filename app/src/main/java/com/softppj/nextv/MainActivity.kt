@@ -781,18 +781,22 @@ class MainActivity: Activity() {
     // Only detached LibVLC native instances may be stopped on this worker.
     // Media3 and SurfaceView methods stay on the Android application looper.
     private val nativeVlcCleanup=NativeVlcCleanupQueue()
-    private fun enqueueDetachedVlcCleanup(probe:VlcPlayer?,core:LibVLC?){
-        if(probe==null && core==null)return
+    private fun enqueueDetachedVlcCleanup(
+        probe:VlcPlayer?,core:LibVLC?,onComplete:(()->Unit)?=null
+    ){
+        if(probe==null && core==null){onComplete?.invoke();return}
         val accepted=nativeVlcCleanup.submit{
-            try{probe?.stop()}catch(e:Throwable){
-                HomeTvDiagnostics.w("Playback","Detached LibVLC stop failed",e)
-            }
-            try{probe?.release()}catch(e:Throwable){
-                HomeTvDiagnostics.w("Playback","Detached LibVLC release failed",e)
-            }
-            try{core?.release()}catch(e:Throwable){
-                HomeTvDiagnostics.w("Playback","Detached LibVLC core release failed",e)
-            }
+            try{
+                try{probe?.stop()}catch(e:Throwable){
+                    HomeTvDiagnostics.w("Playback","Detached LibVLC stop failed",e)
+                }
+                try{probe?.release()}catch(e:Throwable){
+                    HomeTvDiagnostics.w("Playback","Detached LibVLC release failed",e)
+                }
+                try{core?.release()}catch(e:Throwable){
+                    HomeTvDiagnostics.w("Playback","Detached LibVLC core release failed",e)
+                }
+            }finally{if(onComplete!=null)handler.post(onComplete)}
         }
         if(!accepted)HomeTvDiagnostics.w("Playback",
             "Detached LibVLC cleanup queue was already closed")
@@ -4822,19 +4826,17 @@ class MainActivity: Activity() {
         }
         handler.postDelayed(periodicProbeTask!!,15*60*1000L)
     }
-    private fun stopVlcProbe(){
+    private fun stopVlcProbe(onComplete:(()->Unit)?=null){
         vlcProbeWatchdog?.let{handler.removeCallbacks(it)}
         vlcProbeWatchdog=null
-        // A native stop failure must never skip release: leaked LibVLC
-        // players can hold decoders and starve foreground playback.
-        vlcProbePlayer?.let{probe->
-            try{probe.stop()}catch(_:Exception){}
-            try{probe.release()}catch(_:Exception){}
-        }
+        val outgoing=vlcProbePlayer
+        val core=vlcProbeCore
         vlcProbePlayer=null
-        vlcProbeCore?.let{try{it.release()}catch(_:Exception){}}
         vlcProbeCore=null
         vlcProbeOwnerGeneration=-1
+        // No Surface is owned by a background probe. Native stop/release
+        // therefore can run on the serial worker, outside remote dispatch.
+        enqueueDetachedVlcCleanup(outgoing,core,onComplete)
     }
     private fun launchNextVlcProbe(generation:Int){
         // Queued entries belong to the playlist at scan creation, not the
@@ -4947,8 +4949,10 @@ class MainActivity: Activity() {
                 }
                 handler.post{
                     if(vlcProbePlayer===probe){
-                        stopVlcProbe()
-                        launchNextVlcProbe(generation)
+                        stopVlcProbe{
+                            if(generation==backgroundProbeGeneration && active<0 &&
+                                !playbackTeardownInProgress)launchNextVlcProbe(generation)
+                        }
                     }
                 }
             }
@@ -4992,8 +4996,10 @@ class MainActivity: Activity() {
                 vlcProbeReachable[channel.url]=false
                 vlcProbeObservedAt[channel.url]=android.os.SystemClock.elapsedRealtime()
             }
-            stopVlcProbe()
-            handler.post{launchNextVlcProbe(generation)}
+            stopVlcProbe{
+                if(generation==backgroundProbeGeneration && active<0 &&
+                    !playbackTeardownInProgress)launchNextVlcProbe(generation)
+            }
         }
     }
 
