@@ -18,6 +18,21 @@ class VideoQualityPolicyTest {
         assertTrue(VideoQualityPolicy.shouldRequestYoutubeWebQuality("1080p"))
     }
 
+    @Test fun idleScanNeverResumesDuringForegroundOrAfterLicenseLoss(){
+        fun allowed(active:Boolean=false,licensed:Boolean=true,
+            visible:Boolean=true,teardown:Boolean=false,
+            enabled:Boolean=true,safe:Boolean=false)=
+            VideoQualityPolicy.mayResumeIdleChecks(
+                visible,licensed,active,teardown,enabled,safe)
+        assertTrue(allowed())
+        assertFalse(allowed(active=true))
+        assertFalse(allowed(licensed=false))
+        assertFalse(allowed(visible=false))
+        assertFalse(allowed(teardown=true))
+        assertFalse(allowed(enabled=false))
+        assertFalse(allowed(safe=true))
+    }
+
     @Test fun foregroundAlwaysHasExclusiveDecoderPriority(){
         assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true))
         assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true,true))
