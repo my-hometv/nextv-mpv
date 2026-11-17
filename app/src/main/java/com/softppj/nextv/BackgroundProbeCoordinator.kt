@@ -29,7 +29,9 @@ internal class BackgroundProbeCoordinator<T>(
         }
     }
 
-    private val timedProbes = ConcurrentHashMap.newKeySet<TimedProbe<T>>()
+    // Collections.newSetFromMap works on API 23; ConcurrentHashMap.newKeySet requires 24.
+    private val timedProbes: MutableSet<TimedProbe<T>> =
+        java.util.Collections.newSetFromMap(ConcurrentHashMap<TimedProbe<T>, Boolean>())
 
     /** Returns true only if a probe was actually dispatched. */
     fun dispatch(check: (BackgroundRecoveryScan.Probe<T>, (Boolean) -> Unit) -> Unit): Boolean {
