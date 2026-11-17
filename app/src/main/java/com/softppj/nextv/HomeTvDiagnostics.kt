@@ -123,7 +123,9 @@ internal object HomeTvDiagnostics {
         try {
             val dir = File(context.filesDir, "diagnostics")
             if (!dir.exists() && !dir.mkdirs()) return
-            prune(dir)
+            // initialize()/readReport() prune expired logs. Avoid scanning
+            // the diagnostics directory for every playback-state message:
+            // this is called from Android's real-time playback UI looper.
             val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
             val file = File(dir, "hometv-$day.log")
             val detail = if (error == null) "" else {
