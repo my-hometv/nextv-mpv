@@ -3068,10 +3068,15 @@ class MainActivity: Activity() {
         val dialog=AlertDialog.Builder(this)
             .setTitle("Move "+selected.name+" • "+source)
             .setView(layout)
-            .setPositiveButton("Save Position"){_,_->
+            .setPositiveButton("Save Position",null).setNegativeButton("Cancel",null).create()
+        // Prevent invalid input from dismissing the dialog. Remote DPAD keys
+        // adjust position only; playback remains unchanged until Save.
+        dialog.setOnShowListener{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener{
                 val position=input.text.toString().toIntOrNull()
                 if(position==null || position !in 1..keys.size){
-                    Toast.makeText(this,"Enter 1–"+keys.size,Toast.LENGTH_LONG).show()
+                    input.error="Enter 1–"+keys.size
+                    input.requestFocus()
                 }else{
                     val ordered=ChannelOrderPolicy.move(keys,channelKey(selected),position)
                     prefs.edit().putString(channelOrderPreference(source),JSONArray(ordered).toString())
@@ -3079,11 +3084,13 @@ class MainActivity: Activity() {
                     channelIndexOwner=null
                     invalidateSurfingCache()
                     ensureChannelIndex()
+                    dialog.dismiss()
                     Toast.makeText(this,selected.name+" moved to "+position,Toast.LENGTH_SHORT).show()
                     onMoved()
                 }
-            }.setNegativeButton("Cancel",null).create()
-        dialog.setOnShowListener{up.requestFocus()}
+            }
+            up.requestFocus()
+        }
         showSideDialog(dialog,onNavigation={code->
             when(code){
                 KeyEvent.KEYCODE_DPAD_UP->{step(-1);true}
@@ -7024,11 +7031,19 @@ class MainActivity: Activity() {
             textSize=18f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(18,4,8,4)
+        },LinearLayout.LayoutParams(0,-2,1f))
+        // Family branding appears on the right without replacing the channel logo.
+        panel.addView(ImageView(this).apply{
+            setImageResource(R.drawable.tv_banner)
+            scaleType=ImageView.ScaleType.CENTER_CROP
+            contentDescription="MyView family app logo"
+        },LinearLayout.LayoutParams(tvDp(112),tvDp(63)).apply{
+            marginStart=tvDp(10)
         })
         banner=panel
         val isPreview=previewIndex==index && index!=active
         previewInfoPanel=if(isPreview)panel else null
-        screen.addView(panel,FrameLayout.LayoutParams((resources.displayMetrics.widthPixels*0.62f).toInt(),-2,Gravity.BOTTOM or Gravity.LEFT))
+        screen.addView(panel,FrameLayout.LayoutParams((resources.displayMetrics.widthPixels*0.78f).toInt(),-2,Gravity.BOTTOM or Gravity.LEFT))
         // A preview stays visible until OK, BACK, another channel preview, or
         // immediate CH+/CH- tuning. Ordinary channel information still fades.
         val task=Runnable{
