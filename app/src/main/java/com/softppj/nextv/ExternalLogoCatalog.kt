@@ -25,6 +25,11 @@ internal object ExternalLogoCatalog {
             instanceFollowRedirects=false
             setRequestProperty("Accept","application/json")
         }
+        val targetIds=targets.asSequence().map { it.epgId.trim().lowercase(java.util.Locale.ROOT) }
+            .filter { it.isNotBlank() }.toSet()
+        val targetNames=targets.asSequence()
+            .map { ExternalLogoMatchPolicy.canonical(it.channelName) }
+            .filter { it.isNotBlank() }.toSet()
         try {
             if (connection.responseCode != 200) return emptyMap()
             if (connection.contentLengthLong > MAX_RESPONSE_BYTES) return emptyMap()
@@ -66,7 +71,10 @@ internal object ExternalLogoCatalog {
                         }
                         json.endObject()
                         val entry=ExternalLogoMatchPolicy.Entry(channel,url,format,inUse)
-                        if(ExternalLogoMatchPolicy.matchesAny(entry,targets))matched.add(entry)
+                        if(ExternalLogoMatchPolicy.isSupported(entry) &&
+                            (channel.trim().lowercase(java.util.Locale.ROOT) in targetIds ||
+                                ExternalLogoMatchPolicy.canonical(channel.substringBeforeLast('.')) in targetNames))
+                            matched.add(entry)
                     }
                     json.endArray()
                 }
