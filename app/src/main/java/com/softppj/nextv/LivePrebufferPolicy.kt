@@ -6,6 +6,15 @@ package com.softppj.nextv
  * Never let a prebuffer fetch cross a PIN or playlist access boundary.
  */
 internal object LivePrebufferPolicy {
+    /** Adoption is allowed only after a fully prepared, access-checked match. */
+    fun mayAdopt(
+        licenseReady: Boolean,
+        correctIdentity: Boolean,
+        ready: Boolean,
+        engineIsMedia3: Boolean,
+        unlocked: Boolean
+    ): Boolean = licenseReady && correctIdentity && ready && engineIsMedia3 && unlocked
+
     fun mayStart(
         enabled: Boolean,
         licenseReady: Boolean,
