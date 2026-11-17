@@ -9718,12 +9718,30 @@ class MainActivity: Activity() {
         if(!prefs.getBoolean("nextv_stream_health_enabled",true))return
         val current=channels.getOrNull(active)
         val video=player?.videoFormat
+        val audio=player?.audioFormat
         val color=video?.colorInfo
         val videoDescription=video?.let{
             "${it.width}x${it.height} • ${it.frameRate} fps • ${it.sampleMimeType ?: "unknown codec"}"
         } ?: "No Media3 video format reported"
+        val counters=player?.videoDecoderCounters
+        counters?.ensureUpdated()
+        val rendered=counters?.renderedOutputBufferCount
+        val dropped=counters?.droppedBufferCount
+        val hdrMetadata=when(color?.colorTransfer){
+            androidx.media3.common.C.COLOR_TRANSFER_ST2084->"HDR10/PQ transfer signalled"
+            androidx.media3.common.C.COLOR_TRANSFER_HLG->"HLG transfer signalled"
+            else->"No recognized HDR transfer signalled"
+        }
         val lines=listOf(
             "Media3 video: "+videoDescription,
+            "Video bitrate: "+if(video!=null && video.bitrate>0)"${video.bitrate/1000} kbps" else "Not reported",
+            "Audio: "+(audio?.let{
+                "${it.sampleMimeType ?: "unknown codec"} • ${it.sampleRate} Hz • ${it.channelCount} channels"
+            } ?: "Not reported"),
+            "Frames: rendered="+(rendered?.toString() ?: "?")+
+                ", dropped="+(dropped?.toString() ?: "?"),
+            "HDR signal: "+hdrMetadata+
+                " (device tone mapping requires physical TV verification)",
             "Observed starts: "+(current?.let{startupRate(it)} ?: "No active channel"),
             "Direct VOD refresh match: "+if(prefs.getBoolean("myview_match_vod_refresh",false))"ON" else "OFF",
             "Direct VOD clock recovery: "+if(prefs.getBoolean("myview_vod_clock_recovery",false))"ON" else "OFF",
