@@ -62,7 +62,8 @@ def adb(serial, *args, timeout=25):
 def command_output(serial, *args, max_output=18000):
     out, err, status = adb(serial, *args)
     # Redact before truncation; allow longer tails for diagnostics when requested.
-    return {"ok": status == 0, "output": redact(out[-max_output:]), "error": redact(err)}
+    return {"ok": status == 0, "output": redact(out[-max_output:]), "error": redact(err),
+            "truncated": len(out) >= max_output}
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
@@ -116,7 +117,7 @@ def main():
     report["crash_indicators"] = [redact(line[:600]) for line in logs["output"].splitlines()
                                   if CRASH.search(line)][:100]
     report["logcat_collection_ok"] = logs["ok"]
-    report["logcat_truncated"] = len(logs["output"]) >= 250000
+    report["logcat_truncated"] = logs["truncated"]
     statuses = [v["status"] for v in report["checks"].values()]
     report["release_gate"] = ("CANDIDATE_FOR_REVIEW" if report["installed"] and
                              logs["ok"] and not report["logcat_truncated"] and
