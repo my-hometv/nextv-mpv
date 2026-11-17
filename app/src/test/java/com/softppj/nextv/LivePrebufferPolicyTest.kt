@@ -31,4 +31,12 @@ class LivePrebufferPolicyTest {
         assertFalse(allowed(anotherDecoderSessionActive = true))
     }
     @Test fun sameUrlNeverGetsTwoConnections() { assertFalse(allowed(sameStream = true)) }
+    @Test fun onlyMatchingPreparedUnlockedMedia3CanBePromoted() {
+        assertTrue(LivePrebufferPolicy.mayAdopt(true,true,true,true,true))
+        assertFalse(LivePrebufferPolicy.mayAdopt(false,true,true,true,true))
+        assertFalse(LivePrebufferPolicy.mayAdopt(true,false,true,true,true))
+        assertFalse(LivePrebufferPolicy.mayAdopt(true,true,false,true,true))
+        assertFalse(LivePrebufferPolicy.mayAdopt(true,true,true,false,true))
+        assertFalse(LivePrebufferPolicy.mayAdopt(true,true,true,true,false))
+    }
 }
