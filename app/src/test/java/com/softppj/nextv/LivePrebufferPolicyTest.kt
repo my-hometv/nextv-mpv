@@ -31,6 +31,34 @@ class LivePrebufferPolicyTest {
         assertFalse(allowed(anotherDecoderSessionActive = true))
     }
     @Test fun sameUrlNeverGetsTwoConnections() { assertFalse(allowed(sameStream = true)) }
+    @Test fun noSpeculativeDecoderIfAnyPreconditionFails() {
+        val conditions = listOf(
+            allowed(enabled = false),
+            allowed(licenseReady = false),
+            allowed(mainPlayerPlaying = false),
+            allowed(mainEngineIsMedia3 = false),
+            allowed(previewEngineIsMedia3 = false),
+            allowed(unlocked = false),
+            allowed(anotherDecoderSessionActive = true),
+            allowed(sameStream = true)
+        )
+        assertTrue("Every unsafe situation must reject a second decoder",
+            conditions.all { !it })
+    }
+
+    @Test fun validPreparationStillRequiresAnActualReadyPlayerForHandoff() {
+        // A request that was admitted is not automatically a usable handoff.
+        assertTrue(allowed())
+        assertFalse(LivePrebufferPolicy.mayAdopt(true, true, false, true, true))
+        assertTrue(LivePrebufferPolicy.mayAdopt(true, true, true, true, true))
+    }
+
+    @Test fun lockedOrMismatchedPreparedChannelCannotBeAdopted() {
+        assertFalse(LivePrebufferPolicy.mayAdopt(true, false, true, true, true))
+        assertFalse(LivePrebufferPolicy.mayAdopt(true, true, true, true, false))
+        assertFalse(LivePrebufferPolicy.mayAdopt(true, true, true, false, true))
+    }
+
     @Test fun onlyMatchingPreparedUnlockedMedia3CanBePromoted() {
         assertTrue(LivePrebufferPolicy.mayAdopt(true,true,true,true,true))
         assertFalse(LivePrebufferPolicy.mayAdopt(false,true,true,true,true))
