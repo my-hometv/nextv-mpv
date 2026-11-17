@@ -7270,6 +7270,21 @@ class MainActivity: Activity() {
         (row.getChildAt(1) as TextView).text=title
         return row
     }
+    private fun pageChannelDrawer(list:ListView,direction:Int){
+        if(list.count<=0)return
+        // Use the actual visible row count, not a hard-coded number of
+        // channels: different Android TVs show different page lengths.
+        val visibleRows=if(list.childCount>0)list.childCount
+            else (list.lastVisiblePosition-list.firstVisiblePosition+1).coerceAtLeast(1)
+        val current=list.selectedItemPosition.takeIf{it in 0 until list.count}
+            ?:list.checkedItemPosition.takeIf{it in 0 until list.count}
+            ?:list.firstVisiblePosition.coerceAtLeast(0)
+        val target=ChannelPagingPolicy.target(current,visibleRows,direction,list.count)
+        if(target>=0){
+            list.setSelectionFromTop(target,0)
+            list.requestFocus()
+        }
+    }
     private fun drawerList(drawer:View?):ListView?{
         if(drawer is ListView)return drawer
         if(drawer is android.view.ViewGroup){
@@ -7370,7 +7385,7 @@ class MainActivity: Activity() {
         }
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         val focusedInfo=TextView(this).apply{
-            text="▲ ▼ Choose channel  •  OK Play  •  LEFT Groups"
+            text="▲ ▼ Select  •  CH+/CH− Page  •  OK Play  •  LEFT Groups"
             textSize=14f
             setTextColor(0xFFE2F0FA.toInt())
             setBackgroundColor(0xE0183147.toInt())
@@ -7426,7 +7441,7 @@ class MainActivity: Activity() {
                     append(selected.name)
                     current?.let{append("\nNOW  ").append(it.title)}
                     next?.let{append("\nNEXT  ").append(it.title)}
-                    append("\nOK to play  •  LEFT for groups")
+                    append("\nCH+/CH− page  •  OK to play  •  LEFT groups")
                 }
             }
             override fun onNothingSelected(parent:AdapterView<*>?){
@@ -10406,6 +10421,17 @@ class MainActivity: Activity() {
             val openNavigationDrawer=currentScreen?.findViewWithTag<View>("left_navigation")
             val openDrawer=openChannelDrawer ?: openSettingsDrawer ?: openNavigationDrawer
             if(openDrawer!=null){
+                // CH+/CH- page only while the left channel list is open.
+                // Elsewhere those buttons retain their original channel-skip role.
+                if(openChannelDrawer!=null &&
+                    event.keyCode in setOf(KeyEvent.KEYCODE_CHANNEL_UP,KeyEvent.KEYCODE_CHANNEL_DOWN)){
+                    if(event.action==KeyEvent.ACTION_DOWN && event.repeatCount==0){
+                        drawerList(openChannelDrawer)?.let{
+                            pageChannelDrawer(it,if(event.keyCode==KeyEvent.KEYCODE_CHANNEL_UP)1 else -1)
+                        }
+                    }
+                    return true
+                }
                 when{
                     HomeTvPolicies.isRemoteSelectKey(event.keyCode)->{
                         // Route every supported OK mapping through the focused ListView.
