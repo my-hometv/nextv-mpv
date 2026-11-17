@@ -18,6 +18,10 @@ class MultiViewAccessPolicyTest {
         playlistLocked,playlistUnlocked,groupLocked,groupUnlocked,manuallyHidden
     )
 
+    @Test fun licenseRevocationRequiresMultiViewTeardown(){
+        assertTrue(MultiViewAccessPolicy.mustReleaseSession(false))
+        assertFalse(MultiViewAccessPolicy.mustReleaseSession(true))
+    }
     @Test fun normalChannelMayBeUsed(){assertTrue(permitted())}
     @Test fun expiredLicenseAndHiddenChannelsCannotBeUsed(){
         assertFalse(permitted(licensed=false))
