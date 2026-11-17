@@ -113,6 +113,29 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("ApplicationExitInfo.REASON_CRASH_NATIVE", diagnostics)
         self.assertIn("val report = all +", diagnostics)
 
+    def test_isolated_vlc_event_callbacks_never_take_native_teardown_lock(self):
+        service = (ROOT / "app/src/main/java/com/softppj/nextv/IsolatedVlcPlaybackService.kt").read_text(encoding="utf-8")
+        callback = service.split("candidate.setEventListener { event ->", 1)[1]
+        before_post = callback.split("eventHandler.post {", 1)[0]
+        self.assertNotIn("synchronized(lock)", before_post)
+        self.assertIn("if (player !== candidate || activeGeneration != requestGeneration)", callback)
+
+    def test_best_available_vlc_keeps_adaptive_bitrate(self):
+        self.assertIn("HomeTvPolicies.libVlcAdaptiveOptions(qualityMode(index))", self.activity)
+        self.assertNotIn('else if(quality=="Best Available")', self.activity)
+        policy = (ROOT / "app/src/main/java/com/softppj/nextv/HomeTvPolicies.kt").read_text(encoding="utf-8")
+        self.assertIn('"Auto", "Best Available" -> emptyList()', policy)
+
+    def test_channel_switch_startup_latency_is_measured(self):
+        for marker in (
+            "tuneRequestedAtMs=tuneRequestTime",
+            "logFirstPlaybackProgress(index,screen,\"Media3\",\"first video frame\")",
+            "logFirstPlaybackProgress(index,screen,\"LibVLC\",\"media progress\")",
+            "logFirstPlaybackProgress(index,screen,\"Isolated LibVLC\",\"native progress\")",
+            "Channel tune blocked during teardown",
+        ):
+            self.assertIn(marker, self.activity)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
