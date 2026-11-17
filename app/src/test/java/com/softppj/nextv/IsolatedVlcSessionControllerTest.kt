@@ -16,6 +16,67 @@ class IsolatedVlcSessionControllerTest {
         override fun release() { releases++ }
     }
 
+    @Test fun detachedBinderStopCannotOverrideNewerGeneration(){
+        val runtime=object:IsolatedVlcRuntime {
+            override val version="3.5.1"
+            override val engineId="LibVLC-3.5.1"
+            var ownedGeneration=Long.MIN_VALUE
+            override fun isAvailable()=true
+            override fun start(url:String,generation:Long):Boolean {
+                ownedGeneration=generation;return true
+            }
+            override fun stop(generation:Long){
+                if(ownedGeneration==generation)ownedGeneration=Long.MIN_VALUE
+            }
+            override fun release()=Unit
+        }
+        val controller=IsolatedVlcSessionController(IsolatedVlcRegistry(listOf(runtime)))
+        assertTrue(controller.start(runtime.engineId,"https://example.invalid/first",100))
+        val oldStop=controller.detachActiveStop()
+        assertNull(controller.activeEngineId())
+        // The viewer presses CH+ before the old native stop finishes.
+        assertTrue(controller.start(runtime.engineId,"https://example.invalid/second",101))
+        oldStop?.invoke()
+        assertEquals(101L,runtime.ownedGeneration)
+        assertEquals(runtime.engineId,controller.activeEngineId())
+        assertEquals(101L,controller.latestRequestGeneration())
+    }
+
+    @Test fun blockedDetachedBinderStopDoesNotHoldControllerLock(){
+        val entered=java.util.concurrent.CountDownLatch(1)
+        val unblock=java.util.concurrent.CountDownLatch(1)
+        val runtime=object:IsolatedVlcRuntime {
+            override val version="3.5.1"
+            override val engineId="LibVLC-3.5.1"
+            override fun isAvailable()=true
+            override fun start(url:String,generation:Long)=true
+            override fun stop(generation:Long) {
+                entered.countDown()
+                unblock.await(3,java.util.concurrent.TimeUnit.SECONDS)
+            }
+            override fun release()=Unit
+        }
+        val controller=IsolatedVlcSessionController(IsolatedVlcRegistry(listOf(runtime)))
+        assertTrue(controller.start(runtime.engineId,"https://example.invalid/a",1))
+        val old=controller.detachActiveStop()!!
+        val worker=Thread{old.invoke()}
+        worker.start()
+        try{
+            assertTrue(entered.await(2,java.util.concurrent.TimeUnit.SECONDS))
+            // This is the remote action while the native Binder stop is stuck.
+            val pool=java.util.concurrent.Executors.newSingleThreadExecutor()
+            try{
+                val result=pool.submit<Boolean> {
+                    controller.start(runtime.engineId,"https://example.invalid/b",2)
+                }
+                assertTrue(result.get(1,java.util.concurrent.TimeUnit.SECONDS))
+            }finally{pool.shutdownNow()}
+        }finally{
+            unblock.countDown()
+            worker.join(3000)
+        }
+    }
+
     @Test fun activeEngineReflectsSuccessfulStartsAndStopsOnly() {
         val first=Fake("3.5.1")
         val second=Fake("3.7.7")
