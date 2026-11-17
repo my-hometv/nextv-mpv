@@ -303,7 +303,7 @@ class MainActivity: Activity() {
                 if(channels.isNotEmpty()){
                     openStartupDestination()
                     // Automatic playlist checks are optional and never delay first picture.
-                    if(!safeStartupMode && prefs.getBoolean("auto_playlist_check",true))
+                    if(!safeStartupMode && prefs.getBoolean("auto_playlist_check",FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH))
                         refresh({},activeOnly=true,automatic=true)
                 } else {
                     // A changed playlist URL has a new cache key. Fetch it on first
@@ -360,7 +360,7 @@ class MainActivity: Activity() {
     // existing manual "Check hidden channels" action.
     private fun scheduleStartupHiddenChannelScan(){
         if(startupHiddenScanScheduled || safeStartupMode || !licenseReady ||
-            !prefs.getBoolean("auto_hidden_channel_check",true))return
+            !prefs.getBoolean("auto_hidden_channel_check",FeatureTogglePolicy.DEFAULT_AUTO_HIDDEN_CHANNEL_CHECK))return
         startupHiddenScanScheduled=true
         val startupSession=licenseOperationGeneration
         handler.postDelayed({
@@ -369,7 +369,7 @@ class MainActivity: Activity() {
             startupHiddenScanScheduled=false
             if(isFinishing || isDestroyed || startupSession!=licenseOperationGeneration)return@postDelayed
             if(!appInForeground || channels.isEmpty() ||
-                !prefs.getBoolean("auto_hidden_channel_check",true))return@postDelayed
+                !prefs.getBoolean("auto_hidden_channel_check",FeatureTogglePolicy.DEFAULT_AUTO_HIDDEN_CHANNEL_CHECK))return@postDelayed
             if(licenseReady && !safeStartupMode)checkHiddenChannelsNow(showResults=false)
         },30_000L)
     }
@@ -2524,7 +2524,7 @@ class MainActivity: Activity() {
     private var hiddenScanIsAutomatic=false
     private fun checkHiddenChannelsNow(showResults:Boolean=true){
         val scanGeneration=hiddenScanGeneration
-        if(!showResults && !prefs.getBoolean("auto_hidden_channel_check",true))return
+        if(!showResults && !prefs.getBoolean("auto_hidden_channel_check",FeatureTogglePolicy.DEFAULT_AUTO_HIDDEN_CHANNEL_CHECK))return
         // Capture stable channel identities before leaving the UI thread. A
         // playlist refresh can replace the live channel list while checks run.
         val snapshot=channels.toList()
@@ -3573,8 +3573,8 @@ class MainActivity: Activity() {
             // A low-priority hidden-channel scan may continue on its worker
             // while the app is backgrounded; it never controls playback.
             if(licenseReady && !safeStartupMode &&
-                prefs.getBoolean("auto_hidden_channel_check",true) &&
-                prefs.getBoolean("background_hidden_channel_check",true) &&
+                prefs.getBoolean("auto_hidden_channel_check",FeatureTogglePolicy.DEFAULT_AUTO_HIDDEN_CHANNEL_CHECK) &&
+                prefs.getBoolean("background_hidden_channel_check",FeatureTogglePolicy.DEFAULT_BACKGROUND_HIDDEN_CHANNEL_CHECK) &&
                 !hiddenChannelCheckRunning)checkHiddenChannelsNow(showResults=false)
             // stopPlayback saves VOD progress and releases Media3, LibVLC and WebView.
             stopPlayback()
@@ -4404,7 +4404,7 @@ class MainActivity: Activity() {
     }
     private var automaticRefreshGeneration:Int?=null
     private fun refresh(done:()->Unit,forceRebuild:Boolean=false,activeOnly:Boolean=false,automatic:Boolean=false){
-        if(!FeatureTogglePolicy.shouldRunAutomaticRefresh(automatic,prefs.getBoolean("auto_playlist_check",true)))return
+        if(!FeatureTogglePolicy.shouldRunAutomaticRefresh(automatic,prefs.getBoolean("auto_playlist_check",FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH)))return
         if(!licenseReady){showLicenseScreen("Please activate your license");return}
         val configured=playlists().filter{it.enabled}
         val activeSource=selectedPlaylistSource()
@@ -4542,7 +4542,7 @@ class MainActivity: Activity() {
             }.toMutableList()
             runOnUiThread{
                 if(generation!=refreshGeneration || !licenseReady || isFinishing || isDestroyed ||
-                    !FeatureTogglePolicy.shouldRunAutomaticRefresh(automatic,prefs.getBoolean("auto_playlist_check",true)))return@runOnUiThread
+                    !FeatureTogglePolicy.shouldRunAutomaticRefresh(automatic,prefs.getBoolean("auto_playlist_check",FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH)))return@runOnUiThread
                 if(automaticRefreshGeneration==generation)automaticRefreshGeneration=null
                 Toast.makeText(this,"Playlist check complete: "+updated+" updated • "+
                     (checkedCount-updated).coerceAtLeast(0)+" unchanged • "+
@@ -9962,7 +9962,7 @@ class MainActivity: Activity() {
         root.addView(tvSection("ACCOUNT & PLAYLISTS"))
         root.addView(button("Manage device activation"){surrenderLicense()})
         root.addView(button("Playlist manager"){managePlaylists()})
-        root.addView(settingsToggle("Automatic playlist refresh","auto_playlist_check",true))
+        root.addView(settingsToggle("Automatic playlist refresh","auto_playlist_check",FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH))
         root.addView(label("Checks the selected active playlist in the background after startup. Cached channels open first; unchanged playlists are not reparsed."))
         root.addView(button("Clear app cache"){confirmClearCache()})
         if(prefs.getBoolean("nextv_backup_enabled",true))root.addView(button("Back up settings"){exportSettings()})
@@ -9977,9 +9977,9 @@ class MainActivity: Activity() {
         root.addView(button("Sleep timer"){sleepTimer()})
         root.addView(button("Favorites"){favorites()})
         root.addView(button("Hidden channels"){hiddenChannels()})
-        root.addView(settingsToggle("Check hidden channels automatically","auto_hidden_channel_check",true))
+        root.addView(settingsToggle("Check hidden channels automatically","auto_hidden_channel_check",FeatureTogglePolicy.DEFAULT_AUTO_HIDDEN_CHANNEL_CHECK))
         root.addView(label("Checks hidden channels after startup without delaying playback."))
-        root.addView(settingsToggle("Check hidden channels in background","background_hidden_channel_check",true))
+        root.addView(settingsToggle("Check hidden channels in background","background_hidden_channel_check",FeatureTogglePolicy.DEFAULT_BACKGROUND_HIDDEN_CHANNEL_CHECK))
         root.addView(label("When you leave MyView after playback, a low-priority check continues while the app process remains alive. Results are saved and shown when you return. Android may stop background work if it kills the app."))
         root.addView(settingsToggle("Automatically restore working channels","auto_unhide_working_channels",false))
         root.addView(label("OFF by default. When ON, a channel is restored only after actual playback succeeds. URL checks alone never unhide channels."))
