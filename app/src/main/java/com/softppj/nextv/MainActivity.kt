@@ -93,33 +93,35 @@ class MainActivity: Activity() {
     }
     private fun licensePayload():JSONObject=JSONObject().put("device",installationId()).put("token",prefs.getString("license_token",""))
     private fun showLicenseCheckingScreen(){
-        // License checks must not leave a previous video or its audio running.
+        // Only the presentation is changed: license verification and startup
+        // continue immediately without a splash timer or an extra wait.
         stopPlayback()
-        val screen=LinearLayout(this).apply{
-            orientation=LinearLayout.VERTICAL
-            gravity=Gravity.CENTER
-            setPadding(32,32,32,32)
-            setBackgroundColor(0xFF101E31.toInt())
+        val screen=FrameLayout(this).apply{
+            setBackgroundColor(android.graphics.Color.BLACK)
         }
         screen.addView(ImageView(this).apply{
-            setImageResource(R.drawable.nextv_launcher)
-            scaleType=ImageView.ScaleType.FIT_CENTER
-        },LinearLayout.LayoutParams((160*resources.displayMetrics.density).toInt(),(160*resources.displayMetrics.density).toInt()))
-        screen.addView(TextView(this).apply{
-            text="MyView"
-            textSize=32f
+            // The supplied family artwork is 16:9: fill the entire TV,
+            // preserving aspect ratio rather than cropping to a tiny icon.
+            setImageResource(R.drawable.tv_banner)
+            scaleType=ImageView.ScaleType.CENTER_CROP
+            contentDescription="MyView family TV artwork"
+        },FrameLayout.LayoutParams(-1,-1))
+        val status=LinearLayout(this).apply{
+            orientation=LinearLayout.HORIZONTAL
             gravity=Gravity.CENTER
-            setTextColor(android.graphics.Color.WHITE)
-            setPadding(0,20,0,12)
-        })
-        screen.addView(ProgressBar(this))
-        screen.addView(TextView(this).apply{
-            text="Checking license…"
-            textSize=17f
-            gravity=Gravity.CENTER
-            setTextColor(0xFFB6C9DD.toInt())
-            setPadding(0,20,0,0)
-        })
+            setPadding(tvDp(20),tvDp(12),tvDp(20),tvDp(12))
+            setBackgroundColor(0xB9001024.toInt())
+            addView(ProgressBar(this@MainActivity).apply{isIndeterminate=true},
+                LinearLayout.LayoutParams(tvDp(30),tvDp(30)))
+            addView(TextView(this@MainActivity).apply{
+                text="Checking license…"
+                textSize=17f
+                setTextColor(android.graphics.Color.WHITE)
+                setPadding(tvDp(12),0,0,0)
+                gravity=Gravity.CENTER_VERTICAL
+            },LinearLayout.LayoutParams(-2,-2))
+        }
+        screen.addView(status,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM))
         setContentView(screen)
     }
     private fun signedLicenseCache(token:String)=SignedLicenseCache(prefs,installationId(),token)
