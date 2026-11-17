@@ -10351,7 +10351,7 @@ class MainActivity: Activity() {
     }
     private fun exportDiagnosticReport(){
         thread(name="MyView-diagnostic-export"){
-            val report=HomeTvDiagnostics.readReport()
+            val report=HomeTvDiagnostics.readReport(includeAnrTraces=true)
             if(report.isBlank()){
                 runOnUiThread{
                     if(!isFinishing && !isDestroyed)
