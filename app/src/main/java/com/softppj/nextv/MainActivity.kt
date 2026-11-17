@@ -1931,18 +1931,21 @@ class MainActivity: Activity() {
             // channel that has since confirmed playback.
             if(unavailableChannels.remove(key) || temporaryFailureHidden.remove(key))
                 invalidateSurfingCache()
-            // Per-channel automatic alternative mode takes precedence over
-            // retrying a known-failing URL. Only a foreground playback success
-            // clears the attempted URLs, so a broken playlist cannot loop.
+            // A manual, one-shot alternative request still wins immediately.
+            // Automatic discovery waits until two same-URL reconnect attempts
+            // have failed, avoiding disruptive prompts on short signal losses.
             if(oneShotAlternativeKey==key && tryNextAlternative(index))return true
-            recoveryPending.add(key)
-            // Only a confirmed failure initiates a background alternative search.
-            // It must not change the active playback or saved preferences.
-            checkFailedChannelAlternatives(index,screen)
-            if(!prefs.getBoolean("auto_reconnect",true))return true
-            val fixedEngine=pinnedEngine?.takeIf(::engineEnabled) ?:current
+            val autoReconnect=prefs.getBoolean("auto_reconnect",true)
             val count=((recoveryAttempts[key] ?:0)+1).coerceAtMost(10)
             recoveryAttempts[key]=count
+            if(ChannelFailurePolicy.shouldSearchAlternatives(count,autoReconnect)){
+                recoveryPending.add(key)
+                // Discovery is non-interrupting: only a viewer-confirmed switch
+                // may change the established URL or engine.
+                checkFailedChannelAlternatives(index,screen)
+            }
+            if(!autoReconnect)return true
+            val fixedEngine=pinnedEngine?.takeIf(::engineEnabled) ?:current
             // Both manually pinned and automatically confirmed playback are
             // established settings. Never silently rotate their saved engine.
             // Keep retrying with bounded backoff until playback recovers,
