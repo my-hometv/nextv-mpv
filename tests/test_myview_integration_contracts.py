@@ -150,6 +150,11 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("if(hasSelectedAudio && !hasVideo)", self.activity)
         self.assertIn("exo.playbackState==Player.STATE_READY", self.activity)
 
+    def test_libvlc_missing_native_library_is_a_recoverable_engine_failure(self):
+        self.assertIn('failedEngine:String?=null', self.activity)
+        self.assertIn('}catch(e:LinkageError){', self.activity)
+        self.assertIn('handleEngineFailure(index,screen,failedEngine="LibVLC")', self.activity)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
