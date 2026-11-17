@@ -4717,8 +4717,17 @@ class MainActivity: Activity() {
         val abandoned=probePlayers.toList()
         probePlayers.clear()
         probeInFlight=0
-        // Existing asynchronous callbacks see the incremented generation and
-        // must not publish results or schedule further work.
+        // Detach the OLD native probe before dispatching the key. Never call
+        // stopVlcProbe() later: that could accidentally close a NEW session
+        // started by the remote action we are protecting.
+        vlcProbeWatchdog?.let{handler.removeCallbacks(it)}
+        vlcProbeWatchdog=null
+        val oldVlcProbe=vlcProbePlayer
+        val oldVlcCore=vlcProbeCore
+        vlcProbePlayer=null
+        vlcProbeCore=null
+        vlcProbeOwnerGeneration=-1
+        // Existing callbacks see the new generation and must not publish data.
         val playbackAtKey=playbackGeneration
         handler.post{
             abandoned.forEach{probe->
@@ -4730,7 +4739,16 @@ class MainActivity: Activity() {
                     }
                 }
             }
-            stopVlcProbe()
+            try{oldVlcProbe?.stop()}catch(e:Exception){
+                HomeTvDiagnostics.w("RemoteInput","Native probe stop",e)
+            }finally{
+                try{oldVlcProbe?.release()}catch(e:Exception){
+                    HomeTvDiagnostics.w("RemoteInput","Native probe release",e)
+                }
+                try{oldVlcCore?.release()}catch(e:Exception){
+                    HomeTvDiagnostics.w("RemoteInput","Native core release",e)
+                }
+            }
             if(playbackAtKey==playbackGeneration)cancelAlternativeBackgroundChecks()
         }
     }
