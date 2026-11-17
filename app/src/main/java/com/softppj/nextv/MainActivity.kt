@@ -782,6 +782,9 @@ class MainActivity: Activity() {
     private var playbackTeardownInProgress=false
     // Preserve the latest remote recovery command during reentrant native teardown.
     private var pendingTeardownRemoteKey:Int?=null
+    // A remote command arriving from a re-entrant native callback must retain
+    // the outgoing logical channel, not an index that teardown resets to -1.
+    private var pendingTeardownChannelKey:String?=null
     private fun isTeardownRecoveryKey(key:Int):Boolean =
         RemotePreemptionPolicy.isNavigationKey(key)
     private var banner:View?=null
@@ -4661,6 +4664,11 @@ class MainActivity: Activity() {
                 Toast.makeText(this,"Playlist check complete: "+updated+" updated • "+
                     (checkedCount-updated).coerceAtLeast(0)+" unchanged • "+
                     (sources.size-checkedCount).coerceAtLeast(0)+" failed",Toast.LENGTH_LONG).show()
+                // Capture the current foreground selection at apply-time.
+                val foregroundBeforeReplace=channels.getOrNull(active)
+                val foregroundKey=foregroundBeforeReplace?.let(::channelKey)
+                val foregroundUrl=foregroundBeforeReplace?.url
+                val foregroundSource=foregroundBeforeReplace?.source
                 if(updated==0 && nextChannels.isEmpty()){
                     Toast.makeText(this,"Refresh failed. Existing channels preserved.",Toast.LENGTH_LONG).show()
                 }else{
@@ -4678,11 +4686,10 @@ class MainActivity: Activity() {
                 // not whichever channel happened to be playing when the network
                 // request began. The viewer may have changed channels meanwhile.
                 if(active>=0){
-                    val currentBeforeApply=previousChannels.getOrNull(active)
-                    val currentUrl=currentBeforeApply?.url
-                    val currentSource=currentBeforeApply?.source
-                    val relocated=channels.indexOfFirst{it.url==currentUrl &&
-                        (currentSource==null || it.source==currentSource)}
+                    val relocated=ActiveChannelRefreshPolicy.findRelocated(
+                        channels,foregroundKey,foregroundUrl,foregroundSource,
+                        ::channelKey,{it.url},{it.source}
+                    )
                     if(relocated>=0){
                         val indexChanged=relocated!=active
                         active=relocated
@@ -4728,9 +4735,12 @@ class MainActivity: Activity() {
         vlcProbeCore=null
         vlcProbeOwnerGeneration=-1
         // Existing callbacks see the new generation and must not publish data.
-        val playbackAtKey=playbackGeneration
-        handler.post{
-            abandoned.forEach{probe->
+        // Release on the same playback looper, but do not put all native
+        // releases into one main-thread event immediately behind the remote key.
+        // Media3's Player API must not be called from a different application
+        // looper. Splitting disposal across frames avoids a release storm.
+        abandoned.forEachIndexed{position,probe->
+            handler.postDelayed({
                 try{probe.stop()}catch(e:Exception){
                     HomeTvDiagnostics.w("RemoteInput","Background probe stop",e)
                 }finally{
@@ -4738,7 +4748,9 @@ class MainActivity: Activity() {
                         HomeTvDiagnostics.w("RemoteInput","Background probe release",e)
                     }
                 }
-            }
+            },350L+position*50L)
+        }
+        handler.postDelayed({
             try{oldVlcProbe?.stop()}catch(e:Exception){
                 HomeTvDiagnostics.w("RemoteInput","Native probe stop",e)
             }finally{
@@ -4749,8 +4761,9 @@ class MainActivity: Activity() {
                     HomeTvDiagnostics.w("RemoteInput","Native core release",e)
                 }
             }
-            if(playbackAtKey==playbackGeneration)cancelAlternativeBackgroundChecks()
-        }
+        },500L)
+        // Do not blindly cancel a different engine's newer recovery scan.
+        // Foreground retuning/teardown owns cancellation of its recovery work.
     }
     private var backgroundProbePlaylist:MutableList<Channel>?=null
     private val probeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
@@ -4816,7 +4829,7 @@ class MainActivity: Activity() {
             return
         }
         if(generation!=backgroundProbeGeneration || !appInForeground ||
-            !licenseReady || safeStartupMode ||
+            !licenseReady || safeStartupMode || active>=0 || playbackTeardownInProgress ||
             !prefs.getBoolean("background_url_checks",false) || vlcProbePlayer!=null)return
         // Media3-only configurations still need the next rotating window.
         // Previously this early return stopped background checks permanently.
@@ -4991,8 +5004,11 @@ class MainActivity: Activity() {
         vlcProbeQueue.clear()
         media3ProbeAttempted.clear()
         vlcProbeAttempted.clear()
+        // Foreground playback always has exclusive decoder priority. Optional
+        // scans resume only when the viewer returns to an idle/home screen.
         // An OFF toggle must not build and sort a huge probe queue.
         if(!appInForeground || !licenseReady || safeStartupMode ||
+            active>=0 || playbackTeardownInProgress ||
             !prefs.getBoolean("background_url_checks",false) ||
             (!engineEnabled("Media3") && !engineEnabled("LibVLC")))return
         // An empty playlist must not spin or allocate decoders. It can be
@@ -5066,7 +5082,7 @@ class MainActivity: Activity() {
             return
         }
         if(generation!=backgroundProbeGeneration || !appInForeground ||
-            !licenseReady || safeStartupMode ||
+            !licenseReady || safeStartupMode || active>=0 || playbackTeardownInProgress ||
             !prefs.getBoolean("background_url_checks",false))return
         // Engine disable is a control-plane change, not a decoder-capacity
         // decision. Handle it before network/buffering gates: otherwise an
@@ -10415,15 +10431,19 @@ class MainActivity: Activity() {
         // newest eligible key is replayed when teardown relinquishes control.
         if(playbackTeardownInProgress){
             if(event.action==KeyEvent.ACTION_DOWN &&
-                event.repeatCount==0 && isTeardownRecoveryKey(event.keyCode))
+                event.repeatCount==0 && isTeardownRecoveryKey(event.keyCode)){
                 pendingTeardownRemoteKey=event.keyCode
+                pendingTeardownChannelKey=channels.getOrNull(active)?.let(::channelKey)
+                    ?:pendingTeardownChannelKey
+            }
             return true
         }
         // Invalidate obsolete background scans synchronously, then honor the
         // remote command before the potentially slow native probe cleanup.
-        if(active>=0 && event.action==KeyEvent.ACTION_DOWN &&
-            event.repeatCount==0 &&
-            RemotePreemptionPolicy.isNavigationKey(event.keyCode))
+        if(event.action==KeyEvent.ACTION_DOWN && event.repeatCount==0 &&
+            RemotePreemptionPolicy.isNavigationKey(event.keyCode) &&
+            (probePlayers.isNotEmpty() || vlcProbePlayer!=null ||
+                probeQueue.isNotEmpty() || vlcProbeQueue.isNotEmpty()))
             preemptBackgroundChecksForRemote()
         // Detailed remote diagnostics are opt-in to avoid unnecessary per-key log writes.
         // Capture every key event before any Activity-level early return. Android TV
@@ -10817,11 +10837,25 @@ class MainActivity: Activity() {
         }finally{
             playbackTeardownInProgress=false
             val recoveryKey=pendingTeardownRemoteKey
+            val recoveryChannelKey=pendingTeardownChannelKey
             pendingTeardownRemoteKey=null
+            pendingTeardownChannelKey=null
             if(recoveryKey!=null){
-                handler.post {
-                    if(!isFinishing && !isDestroyed){
-                        // Replay through normal navigation, licence and PIN gates.
+                handler.post{
+                    if(isFinishing || isDestroyed || !licenseReady)return@post
+                    if(active<0 && recoveryChannelKey!=null &&
+                        recoveryKey in setOf(KeyEvent.KEYCODE_CHANNEL_UP,KeyEvent.KEYCODE_CHANNEL_DOWN,
+                            KeyEvent.KEYCODE_MEDIA_NEXT,KeyEvent.KEYCODE_MEDIA_PREVIOUS)){
+                        val previous=channels.indexOfFirst{channelKey(it)==recoveryChannelKey}
+                        val available=surfingIndices()
+                        if(previous>=0 && available.isNotEmpty()){
+                            val direction=if(recoveryKey==KeyEvent.KEYCODE_CHANNEL_UP ||
+                                recoveryKey==KeyEvent.KEYCODE_MEDIA_NEXT)1 else -1
+                            val next=nextSurfingIndex(previous,direction,available)
+                            if(next in channels.indices)playIndex(next)
+                        }
+                    }else{
+                        // Preserve normal remote routing and the access-control gates.
                         dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN,recoveryKey))
                     }
                 }
