@@ -72,5 +72,9 @@ jobs:
           path: |
             app/build/reports/tests/
             app/build/test-results/
+            app/build/reports/lint-results-*.txt
+            app/build/reports/lint-results-*.xml
+            app/build/reports/lint-results-*.html
+            app/build/intermediates/lint_intermediate_text_report/
           if-no-files-found: ignore
           retention-days: 7
