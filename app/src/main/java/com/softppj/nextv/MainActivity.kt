@@ -2072,7 +2072,9 @@ class MainActivity: Activity() {
             .put("mode",mode).put("channel_key",channelKey(channel)))
         prefs.edit().putString("epg_tune_schedules",saved.toString()).apply()
         armEpgTune()
-        Toast.makeText(this,(if(mode=="auto")"Auto-switch" else "Reminder")+" scheduled for "+programmeTime(programme.start)+" • "+programme.title,Toast.LENGTH_LONG).show()
+        Toast.makeText(this,(if(mode=="auto")"Auto-switch" else "Reminder")+
+            " saved for "+programmeTime(programme.start)+" • "+programme.title+
+            ". MyView must be open at the programme start time.",Toast.LENGTH_LONG).show()
     }
     private fun armEpgTune(){
         epgTuneTask?.let{handler.removeCallbacks(it)}
@@ -2143,6 +2145,7 @@ class MainActivity: Activity() {
             return
         }
         showSideDialog(AlertDialog.Builder(this).setTitle("Scheduled programmes • Select to cancel")
+            .setMessage("Reminders and auto-switch operate while MyView is open. They are not guaranteed when the TV or app is stopped.")
             .setItems(items.map{programmeTime(it.optLong("start"))+"  "+it.optString("title")+"  ["+
                 (if(it.optString("mode","reminder")=="auto")"Auto-switch]" else "Reminder]")}.toTypedArray()){_,position->
                 val key=items[position].optString("key")
