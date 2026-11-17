@@ -94,6 +94,57 @@ class IsolatedVlcSessionControllerTest {
         }
     }
 
+    @Test fun terminalReleaseDetachesOwnershipBeforeBlockingNativeWork(){
+        val entered=java.util.concurrent.CountDownLatch(1)
+        val unblock=java.util.concurrent.CountDownLatch(1)
+        val runtime=object:IsolatedVlcRuntime {
+            override val version="3.5.1"
+            override val engineId="LibVLC-3.5.1"
+            var releases=0
+            override fun isAvailable()=true
+            override fun start(url:String,generation:Long)=true
+            override fun stop(generation:Long) {
+                entered.countDown()
+                unblock.await(3,java.util.concurrent.TimeUnit.SECONDS)
+            }
+            override fun release(){releases++}
+        }
+        val controller=IsolatedVlcSessionController(IsolatedVlcRegistry(listOf(runtime)))
+        assertTrue(controller.start(runtime.engineId,"https://example.invalid/live",41))
+        val delayed=controller.detachRelease()
+        assertNotNull(delayed)
+        assertNull(controller.detachRelease())
+        assertNull(controller.activeEngineId())
+        assertFalse(controller.start(runtime.engineId,"https://example.invalid/stale",42))
+        val worker=Thread{delayed!!.invoke()}
+        worker.start()
+        try {
+            assertTrue(entered.await(2,java.util.concurrent.TimeUnit.SECONDS))
+            // Native stop is still waiting; the controller lock is available.
+            val pool=java.util.concurrent.Executors.newSingleThreadExecutor()
+            try {
+                assertNull(pool.submit<String?>{controller.activeEngineId()}
+                    .get(1,java.util.concurrent.TimeUnit.SECONDS))
+            }finally{pool.shutdownNow()}
+        }finally{
+            unblock.countDown()
+            worker.join(3000)
+        }
+        assertFalse(worker.isAlive)
+        assertEquals(1,runtime.releases)
+    }
+
+    @Test fun terminalDetachReleasesIdleRegistryExactlyOnce(){
+        val runtime=Fake("3.5.1")
+        val controller=IsolatedVlcSessionController(IsolatedVlcRegistry(listOf(runtime)))
+        val cleanup=controller.detachRelease()
+        assertNotNull(cleanup)
+        assertNull(controller.detachRelease())
+        cleanup!!.invoke()
+        assertEquals(1,runtime.releases)
+        assertFalse(controller.start(runtime.engineId,"https://example.invalid/a",1))
+    }
+
     @Test fun activeEngineReflectsSuccessfulStartsAndStopsOnly() {
         val first=Fake("3.5.1")
         val second=Fake("3.7.7")

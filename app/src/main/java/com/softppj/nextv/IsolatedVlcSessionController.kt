@@ -113,13 +113,27 @@ internal class IsolatedVlcSessionController(private val registry: IsolatedVlcReg
         detachActiveStop()?.invoke()
     }
 
+    /**
+     * Claim shutdown ownership immediately without executing potentially
+     * blocking native/Binder stop or release under the controller monitor.
+     * The returned task owns the old generation and must run exactly once
+     * on the isolated-service cleanup worker.
+     */
     @Synchronized
-    fun release() {
-        if (released) return
+    fun detachRelease(): (() -> Unit)? {
+        if (released) return null
         released = true
         val previous = active
+        val previousGeneration = generation
         active = null
-        try { previous?.stop(generation) } catch (_: Exception) { }
-        registry.releaseAll()
+        return {
+            try { previous?.stop(previousGeneration) } catch (_: Exception) { }
+            registry.releaseAll()
+        }
+    }
+
+    /** Compatibility for unit tests and synchronous non-UI callers. */
+    fun release() {
+        detachRelease()?.invoke()
     }
 }

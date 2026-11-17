@@ -11,7 +11,8 @@ internal object BackupSafety {
     const val MAX_BACKUP_BYTES = 2_000_000
 
     private val nonPortableKeys = setOf(
-        "pin", "last_url", "last_channel_identity", "startup_in_progress",
+        "pin", "last_url", "last_channel_identity",
+        "last_working_url", "last_working_channel_identity", "startup_in_progress",
         "startup_crash_count", "safe_startup_mode", "last_processed_exit_timestamp"
     )
     private val secretKeyParts = listOf(

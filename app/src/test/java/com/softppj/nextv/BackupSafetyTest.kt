@@ -9,6 +9,7 @@ class BackupSafetyTest {
         listOf(
             "pin", "PIN", "pin_failures_group:News", "last_url",
             "last_url_HomeTV Live", "last_channel_identity",
+            "last_working_url", "last_working_channel_identity",
             "startup_in_progress", "startup_crash_count", "safe_startup_mode",
             "last_processed_exit_timestamp", "license_token",
             "License_Expiry", "signed_license_cache", "custom_password",

@@ -832,10 +832,11 @@ class MainActivity: Activity() {
         val closing=multiViewPlayers.toList()
         multiViewPlayers.clear()
         closing.forEach{exo->
-            try{exo.stop()}catch(e:Exception){
+            try{exo.stop()}catch(e:Throwable){
                 HomeTvDiagnostics.w("MyView","MultiView stop",e)
             }finally{
-                try{exo.release()}catch(e:Exception){
+                // Decoder/linkage errors must not leak the remaining decoders.
+                try{exo.release()}catch(e:Throwable){
                     HomeTvDiagnostics.w("MyView","MultiView release",e)
                 }
             }
@@ -11135,7 +11136,13 @@ class MainActivity: Activity() {
         alternativeAttempted.clear()
         if(isFinishing)HomeTvDiagnostics.markCleanExit(this)
         unregisterLicenseNetworkCallback()
-        isolatedVlcSessions.release()
+        // Mark the controller terminal on the UI thread, but defer its
+        // native/Binder cleanup to the serial isolated worker. Queued older
+        // generation stops finish before the release task.
+        isolatedVlcSessions.detachRelease()?.let{releaseTask->
+            if(!isolatedVlcOps.submit(releaseTask))
+                HomeTvDiagnostics.w("Playback","Isolated VLC release worker unavailable")
+        }
         val oldIsolatedClient=isolatedVlcClient
         isolatedVlcClient=null
         // Binder release/close may block if the isolated process is stalled.

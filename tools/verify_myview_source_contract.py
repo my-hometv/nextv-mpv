@@ -34,8 +34,11 @@ def check(root: Path = ROOT) -> list[str]:
     startup = section("private fun openStartupDestination()", "private fun scheduleStartupHiddenChannelScan()")
     resume = section("private fun resumeLast()", "private fun liveSettings()")
     home = section("private fun showHome()", "private val importPlaylistRequest")
-    checking = section("private fun showLicenseCheckingScreen()", "private fun ") if False else activity
+    controller = (root / "app/src/main/java/com/softppj/nextv/IsolatedVlcSessionController.kt").read_text()
 
+    require("detachRelease()" in controller and
+            "isolatedVlcSessions.detachRelease()" in activity,
+            "Isolated LibVLC shutdown must detach before queued Binder release")
     require("resumeLast()" in startup, "Normal licensed startup must resume television")
     require('safe_startup_channel_one_attempted' in startup,
             "Crash loop recovery must attempt the first permitted channel only once")
