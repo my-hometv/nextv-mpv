@@ -7,6 +7,15 @@ import android.view.KeyEvent
  * Volume and unrelated keys do not cause decoder churn.
  */
 internal object RemotePreemptionPolicy {
+    fun shouldReplaySavedChannelSkip(activeChannelAvailable:Boolean,
+        savedChannelKey:String?,key:Int):Boolean =
+        !activeChannelAvailable && !savedChannelKey.isNullOrBlank() &&
+        key in setOf(KeyEvent.KEYCODE_CHANNEL_UP,KeyEvent.KEYCODE_CHANNEL_DOWN,
+            KeyEvent.KEYCODE_MEDIA_NEXT,KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+
+    fun skipDirection(key:Int):Int =
+        if(key==KeyEvent.KEYCODE_CHANNEL_UP || key==KeyEvent.KEYCODE_MEDIA_NEXT)1 else -1
+
     fun isNavigationKey(key:Int):Boolean =
         key in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 ||
         key in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 ||
