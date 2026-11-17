@@ -4200,6 +4200,19 @@ class MainActivity: Activity() {
             clipToOutline=true
             minimumHeight=tvDp(196)
         }
+        // Reuse the owner's original approved TV-banner artwork; do not substitute
+        // a generated family scene. Keep it behind accessible text and remote focus.
+        hero.addView(ImageView(this).apply{
+            setImageResource(R.drawable.tv_banner)
+            scaleType=ImageView.ScaleType.CENTER_CROP
+            contentDescription="MyView family artwork"
+        },android.widget.FrameLayout.LayoutParams(-1,-1))
+        hero.addView(android.view.View(this).apply{
+            background=android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0xE6091421.toInt(),0xA6091421.toInt(),0x00091421)
+            )
+        },android.widget.FrameLayout.LayoutParams(-1,-1))
         val brand=LinearLayout(this).apply{
             orientation=LinearLayout.VERTICAL
             setPadding(tvDp(25),tvDp(25),tvDp(16),tvDp(20))
