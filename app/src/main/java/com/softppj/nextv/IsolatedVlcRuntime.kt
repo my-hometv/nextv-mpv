@@ -43,7 +43,7 @@ internal class IsolatedVlcRegistry(runtimes: List<IsolatedVlcRuntime>) {
     }
 
     private fun safeReady(runtime: IsolatedVlcRuntime): Boolean =
-        try { runtime.isAvailable() } catch (_: Exception) { false }
+        try { runtime.isAvailable() } catch (_: Throwable) { false }
 
     fun verifiedIds(): Set<String> =
         if (released) emptySet() else entries.filterValues(::safeReady).keys
