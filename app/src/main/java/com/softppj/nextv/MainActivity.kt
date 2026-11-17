@@ -11105,6 +11105,7 @@ class MainActivity: Activity() {
         stopVlcProbe()
         backgroundProbeGeneration++
         refreshGeneration++
+        epgLoadGeneration++
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         probePlayers.toList().forEach{try{it.release()}catch(_:Exception){}}
         probePlayers.clear()
