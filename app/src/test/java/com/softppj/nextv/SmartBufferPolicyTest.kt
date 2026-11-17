@@ -5,8 +5,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class SmartBufferPolicyTest {
-    @Test fun defaultsToBalancedAndClampsCorruptLevels() {
-        assertEquals(1, SmartBufferPolicy.DEFAULT_LEVEL)
+    @Test fun defaultsToResponsiveAndClampsCorruptLevels() {
+        assertEquals(0, SmartBufferPolicy.DEFAULT_LEVEL)
+        assertArrayEquals(intArrayOf(2000, 15000, 1000, 2000), SmartBufferPolicy.durations(SmartBufferPolicy.DEFAULT_LEVEL))
         assertEquals(0, SmartBufferPolicy.normalize(-99))
         assertEquals(3, SmartBufferPolicy.normalize(99))
         assertArrayEquals(intArrayOf(4000, 25000, 1500, 3500), SmartBufferPolicy.durations(1))
