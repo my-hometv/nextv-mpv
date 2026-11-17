@@ -1,0 +1,61 @@
+name: MyView Source Verification (NO APK)
+on:
+  push:
+    branches: [myview-full-app]
+    paths:
+      - 'app/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - '.github/workflows/myview-source-verification.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: myview-source-only-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify-source-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Android SDK for source verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Compile Kotlin and run unit tests (never assemble an APK)
+        run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Verify no APK was assembled
+        shell: bash
+        run: |
+          if find app/build/outputs/apk -name '*.apk' -print -quit 2>/dev/null | grep -q .; then
+            echo "::error::Source-only verification must never produce APK files."
+            exit 1
+          fi
+      - name: Upload unit test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-Source-Only-Test-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
