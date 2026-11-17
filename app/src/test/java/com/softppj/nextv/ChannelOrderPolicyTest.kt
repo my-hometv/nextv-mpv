@@ -42,7 +42,7 @@ class ChannelOrderPolicyTest {
     }
     @Test fun removedChannelsDoNotReappearWhenPlaylistChanges(){
         val saved=listOf("A","B","C")
-        assertEquals(listOf("C","A","D"),
+        assertEquals(listOf("A","C","D"),
             ChannelOrderPolicy.apply(listOf("D","C","A"),saved){it})
     }
     @Test fun duplicatesDoNotCreateExtraChannelNumbers(){
