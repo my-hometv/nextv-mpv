@@ -12,8 +12,10 @@ internal object LivePrebufferPolicy {
         correctIdentity: Boolean,
         ready: Boolean,
         engineIsMedia3: Boolean,
-        unlocked: Boolean
-    ): Boolean = licenseReady && correctIdentity && ready && engineIsMedia3 && unlocked
+        unlocked: Boolean,
+        picturePresetIsStandard: Boolean = true
+    ): Boolean = licenseReady && correctIdentity && ready && engineIsMedia3 &&
+        unlocked && picturePresetIsStandard
 
     fun mayStart(
         enabled: Boolean,
