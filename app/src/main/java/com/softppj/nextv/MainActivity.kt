@@ -931,8 +931,23 @@ class MainActivity: Activity() {
                         }
                     })
                     exo.setMediaItem(mediaItemForStream(channel.url))
-                    exo.prepare()
-                    exo.play()
+                    // Avoid preparing 2/4 decoders in the same remote/UI event.
+                    // Even supported hardware may block when multiple codec
+                    // instances are initialized together. Launch incrementally,
+                    // and never resurrect a decoder after the dialog is closed.
+                    val startDelayMs=(multiViewPlayers.size-1)*450L
+                    handler.postDelayed({
+                        if(exo in multiViewPlayers && multiViewDialog?.isShowing==true &&
+                            licenseReady && appInForeground && !isFinishing && !isDestroyed){
+                            try{exo.prepare();exo.play()}
+                            catch(e:Exception){
+                                multiViewPlayers.remove(exo)
+                                try{exo.release()}catch(_:Exception){}
+                                title.text=channel.name.take(30)+" • unavailable"
+                                HomeTvDiagnostics.w("MyView","MultiView decoder startup failed",e)
+                            }
+                        }
+                    },startDelayMs)
                 }catch(e:Exception){
                     cellPlayer?.let { failed ->
                         multiViewPlayers.remove(failed)
