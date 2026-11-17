@@ -10117,20 +10117,8 @@ class MainActivity: Activity() {
                 launchTextExport("MyView-settings-backup.json","application/json",payload,exportBackupRequest)
             }.setNegativeButton("Cancel",null).show()
     }
-    private fun mergePlaylistBackup(incoming:String):String{
-        val merged=linkedMapOf<String,JSONObject>()
-        fun add(array:JSONArray){
-            for(i in 0 until array.length()){
-                val item=array.optJSONObject(i) ?: continue
-                val url=item.optString("url").trim()
-                if(url.isBlank())continue
-                merged[url.lowercase(java.util.Locale.ROOT)]=JSONObject(item.toString())
-            }
-        }
-        add(JSONArray(prefs.getString("playlists","[]")))
-        add(JSONArray(incoming))
-        return JSONArray().apply{merged.values.forEach{put(it)}}.toString()
-    }
+    private fun mergePlaylistBackup(incoming:String):String =
+        PlaylistBackupMergePolicy.merge(prefs.getString("playlists","[]") ?: "[]",incoming)
     private fun mergeStringArrayBackup(key:String,incoming:String):String{
         val values=linkedSetOf<String>()
         fun add(raw:String){
