@@ -176,6 +176,24 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('@Synchronized private fun persist(', diagnostics)
         self.assertIn('persist("ERROR", "HomeTV", "Uncaught crash on thread "', diagnostics)
 
+    def test_anr_channel_order_is_loaded_once_per_source(self):
+        # Real device ANR: dispatchKeyEvent -> surfingIndices ->
+        # orderedChannelIndices -> savedChannelOrder -> SHA-256 hash.
+        # Never reintroduce SHA/prefs/JSON parsing once PER CHANNEL.
+        self.assertNotIn(
+            "distinct.any{savedChannelOrder(channels[it].source).isNotEmpty()}",
+            self.activity,
+        )
+        self.assertIn(
+            ".distinct().associateWith(::savedChannelOrder)", self.activity
+        )
+        self.assertIn(
+            "return applySavedChannelOrder(distinct,ordersBySource)", self.activity
+        )
+        self.assertIn(
+            "preloadedOrders:Map<String,List<String>>?=null", self.activity
+        )
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
