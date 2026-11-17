@@ -4981,29 +4981,25 @@ class MainActivity: Activity() {
     }
 
     private fun startBackgroundChannelChecks(){
+        // Never synchronously stop a decoder from a refresh or settings click.
+        // Cancel the old generation first, then allow its native resources to
+        // drain on their owning looper before opening the next scan window.
+        val oldDecodersActive=probePlayers.isNotEmpty() || vlcProbePlayer!=null
+        preemptBackgroundChecksForRemote()
         backgroundProbePlaylist=channels
-        backgroundProbeGeneration++
         val generation=backgroundProbeGeneration
-        periodicProbeTask?.let{handler.removeCallbacks(it)}
-        periodicProbeTask=null
-        // Background probes are nonessential. Avoid tearing down decoders
-        // while a foreground channel is playing; old HTTP checks are ignored
-        // by the generation guard.
-        probeQueue.clear()
-        probePositionByUrl=emptyMap()
-        // Cancel probes from the previous generation before resetting counters.
-        probeWatchdogs.values.forEach{handler.removeCallbacks(it)}
-        probeWatchdogs.clear()
-        probePlayers.toList().forEach{probe->
-            try{probe.stop()}catch(_:Exception){}
-            try{probe.release()}catch(_:Exception){}
-        }
-        probePlayers.clear()
-        probeInFlight=0
-        stopVlcProbe()
-        vlcProbeQueue.clear()
         media3ProbeAttempted.clear()
         vlcProbeAttempted.clear()
+        if(oldDecodersActive){
+            if(appInForeground && licenseReady && !safeStartupMode && active<0 &&
+                prefs.getBoolean("background_url_checks",false)){
+                handler.postDelayed({
+                    if(generation==backgroundProbeGeneration && active<0 &&
+                        !playbackTeardownInProgress)startBackgroundChannelChecks()
+                },900L)
+            }
+            return
+        }
         // Foreground playback always has exclusive decoder priority. Optional
         // scans resume only when the viewer returns to an idle/home screen.
         // An OFF toggle must not build and sort a huge probe queue.
@@ -8706,6 +8702,11 @@ class MainActivity: Activity() {
                 .setPositiveButton("OK",null).show()
             return
         }
+        // Foreground selection always supersedes optional decoder-backed scans,
+        // including when the channel was selected by an on-screen button.
+        if(probePlayers.isNotEmpty() || vlcProbePlayer!=null ||
+            probeQueue.isNotEmpty() || vlcProbeQueue.isNotEmpty())
+            preemptBackgroundChecksForRemote()
         // Invalidate outstanding classification when a channel actually starts.
         httpRouteGeneration++
         // Keep channel changes independent of optional background probes.
