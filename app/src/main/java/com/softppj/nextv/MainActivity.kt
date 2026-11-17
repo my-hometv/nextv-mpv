@@ -509,6 +509,9 @@ class MainActivity: Activity() {
     // Uses a process-wide atomic high-water mark, surviving Activity recreation.
     private val nativeGenerationAllocator = NativePlaybackGenerationAllocator()
     private var startupWatchdog:Runnable?=null
+    // Separate from URL/engine failure bookkeeping: a decoder freeze receives
+    // one bounded same-source recovery before alternate streams are considered.
+    private val liveFreezeRetryAt=mutableMapOf<String,Long>()
     private var channelIndexOwner:MutableList<Channel>?=null
     private var channelIndexSize=-1
     private var channelRepresentatives=emptyList<Int>()
@@ -8796,6 +8799,8 @@ class MainActivity: Activity() {
             var lastVideoFrameProgressAt=0L
             var videoFreezeHandled=false
             var pictureEffectRecoveryAttempted=false
+            var underrunWindowStartedAt=0L
+            var audioUnderrunCount=0
             val playbackClockGuard=PlaybackClockGuard()
             var clockRecoveredOnce=false
             fun recoverNativeMedia3Video(now:Long):Boolean{
@@ -8878,7 +8883,25 @@ class MainActivity: Activity() {
                                 return
                             }
                             videoFreezeHandled=true
-                            handleEngineFailure(index,screen)
+                            // In Live TV a decoder can freeze while the audio/media clock
+                            // advances. First restart this SAME channel/URL, rather than
+                            // selecting a different provider or stream unnecessarily.
+                            val retryKey=channelKey(c)+"|"+c.url
+                            val retryAt=liveFreezeRetryAt[retryKey]
+                            val retrySame=LiveContinuityPolicy.shouldRetrySameChannel(
+                                isLive=!isDirectVod(c),
+                                decoderFrozen=true,
+                                currentSession=player===exo && active==index &&
+                                    videoScreen===screen && !playbackTeardownInProgress,
+                                autoReconnect=prefs.getBoolean("auto_reconnect",true),
+                                nowMs=now,
+                                previousRecoveryMs=retryAt)
+                            if(retrySame){
+                                liveFreezeRetryAt[retryKey]=now
+                                HomeTvDiagnostics.w("MyView",
+                                    "Frozen live decoder: retrying same channel and URL once before fallback")
+                                playIndex(index)
+                            }else handleEngineFailure(index,screen)
                             return
                         }
                     }
@@ -8892,6 +8915,28 @@ class MainActivity: Activity() {
             }
             handler.postDelayed(videoFrameWatchdog,5000L)
             exo.addAnalyticsListener(object:AnalyticsListener{
+                override fun onAudioUnderrun(
+                    eventTime:AnalyticsListener.EventTime,
+                    bufferSize:Int,
+                    bufferSizeMs:Long,
+                    elapsedSinceLastFeedMs:Long
+                ){
+                    if(player!==exo || active!=index || videoScreen!==screen)return
+                    val now=android.os.SystemClock.elapsedRealtime()
+                    if(underrunWindowStartedAt==0L || now-underrunWindowStartedAt>60_000L){
+                        underrunWindowStartedAt=now
+                        audioUnderrunCount=0
+                    }
+                    audioUnderrunCount++
+                    if(audioUnderrunCount==3 && LiveContinuityPolicy.audioUnderrunConcern(
+                            audioUnderrunCount,now-underrunWindowStartedAt)){
+                        // Audio underruns indicate output starvation, NOT measured
+                        // A/V offset. Never jump the Live TV timeline to correct them.
+                        HomeTvDiagnostics.w("MyView",
+                            "Repeated audio underruns on "+c.name+
+                            " (3 within 60s); retaining engine's timestamp-based sync")
+                    }
+                }
                 override fun onRenderedFirstFrame(
                     eventTime:AnalyticsListener.EventTime,
                     output:Any,
