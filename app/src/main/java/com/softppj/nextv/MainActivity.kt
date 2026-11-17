@@ -8872,8 +8872,12 @@ class MainActivity: Activity() {
                         }
                         val noVideoFrameYet=lastVideoFrameProgressAt==0L &&
                             now-media3PlayStartedAt>=20000L
+                        // A previously rendering live picture must not sit frozen
+                        // for 20 seconds while sound advances; the initial frame
+                        // retains the full 20-second startup grace period.
+                        val stoppedThreshold=if(!isDirectVod(c))12_000L else 20_000L
                         val videoFramesStopped=lastVideoFrameProgressAt>0L &&
-                            now-lastVideoFrameProgressAt>=20000L
+                            now-lastVideoFrameProgressAt>=stoppedThreshold
                         if((noVideoFrameYet || videoFramesStopped) && !videoFreezeHandled){
                             HomeTvDiagnostics.e("HomeTV","Media3 video frame output stalled while playback continued: "+c.name+
                                 " renderedFrames="+(counters?.renderedOutputBufferCount ?: -1)+
