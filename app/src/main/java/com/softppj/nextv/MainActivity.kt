@@ -9910,23 +9910,11 @@ class MainActivity: Activity() {
                     media.addOption(":saturation="+picture.saturation.coerceIn(0.5f,1.5f).toString())
                 }
                 media.addOption(":network-caching="+cache)
-                // LibVLC adaptive HLS/DASH quality: do not cap Auto/Best
-                // Available at a low resolution. Fixed presets provide an upper
-                // resolution preference when the stream exposes variants.
-                val quality=qualityMode(index)
-                val height=when(quality){
-                    "Data Saver (360p)"->360
-                    "Standard (480p)"->480
-                    "HD (720p)"->720
-                    "Full HD (1080p)"->1080
-                    else->0
-                }
-                if(height>0){
-                    media.addOption(":adaptive-maxheight="+height)
-                    media.addOption(":adaptive-logic=highest")
-                }else if(quality=="Best Available"){
-                    media.addOption(":adaptive-logic=highest")
-                }
+                // Use the shared quality policy: Best Available allows the
+                // decoder to adapt up to full resolution, but forcing the peak
+                // bitrate before network capacity is known causes long stalls.
+                HomeTvPolicies.libVlcAdaptiveOptions(qualityMode(index))
+                    .forEach(media::addOption)
                 vlc.media=media
             }finally{
                 // Native media must be released even when an option or
