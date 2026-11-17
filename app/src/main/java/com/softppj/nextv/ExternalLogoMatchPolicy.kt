@@ -10,11 +10,11 @@ internal object ExternalLogoMatchPolicy {
     data class Target(val channelName: String, val epgId: String)
 
     private val bracketedQuality = Regex(
-        """\\s*[\\[(](?:sd|hd|fhd|uhd|4k|1080p|720p)[\\])]\\s*$""",
+        """\s*[\[(](?:sd|hd|fhd|uhd|4k|1080p|720p)[\])]\s*$""",
         RegexOption.IGNORE_CASE
     )
     private val spacedQuality = Regex(
-        """(?:\\s+|_)(?:sd|hd|fhd|uhd|4k|1080p|720p)$""",
+        """(?:\s+|_)(?:sd|hd|fhd|uhd|4k|1080p|720p)$""",
         RegexOption.IGNORE_CASE
     )
 
