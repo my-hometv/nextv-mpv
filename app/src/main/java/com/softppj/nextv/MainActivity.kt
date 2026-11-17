@@ -1807,19 +1807,19 @@ class MainActivity: Activity() {
             // the cancellation handle of a newer LibVLC recovery probe.
             if(alternativeProbeStops["LibVLC"]===stopThisProbe)
                 alternativeProbeStops.remove("LibVLC")
-            // Stop and release independently: a native stop exception must not
-            // strand the player or its LibVLC core during recovery handoff.
-            try{probe?.stop()}catch(_:Exception){}
-            try{probe?.release()}catch(_:Exception){}
-            try{core?.release()}catch(_:Exception){}
+            // Invalidate ownership immediately. Never synchronously stop
+            // LibVLC in the remote/navigation event. Wait until native
+            // cleanup finishes before launching another alternative decoder.
+            val oldProbe=probe
+            val oldCore=core
             probe=null
             core=null
-            // A positive native callback is not necessarily an actionable
-            // alternative: playlist refresh or engine settings may invalidate
-            // the candidate before the offer is displayed. Continue scanning.
             val offered=working && engineEnabled("LibVLC") && licenseReady &&
                 !isFinishing && !isDestroyed && offer(candidate,"LibVLC")
-            if(!offered)handler.post{next()}
+            enqueueDetachedVlcCleanup(oldProbe,oldCore){
+                if(!offered && licenseReady && !isFinishing && !isDestroyed)
+                    next()
+            }
         }
         stopThisProbe={finish(false)}
         alternativeProbeStops["LibVLC"]=stopThisProbe!!
