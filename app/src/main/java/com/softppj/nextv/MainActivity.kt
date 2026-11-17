@@ -4191,19 +4191,51 @@ class MainActivity: Activity() {
         homeLayout.addView(contentScroll,LinearLayout.LayoutParams(0,-1,1f))
         setContentView(homeLayout)
 
-        val hero=LinearLayout(this).apply{
-            orientation=LinearLayout.VERTICAL
-            setPadding(tvDp(24),tvDp(20),tvDp(24),tvDp(20))
+        // Cinematic header: preserve every existing Home destination and remote action.
+        val hero=android.widget.FrameLayout(this).apply{
             background=android.graphics.drawable.GradientDrawable(
                 android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-                intArrayOf(0xFF16466C.toInt(),0xFF0A1728.toInt())
+                intArrayOf(0xFF16466C.toInt(),0xFF081521.toInt())
             ).apply{cornerRadius=tvDp(19).toFloat()}
-            addView(tvText("⌂  MYVIEW",32f,0xFF92E9FF.toInt()))
-            addView(tvText("Your entertainment. Your way.",16f,0xFFB7C8D8.toInt()))
-            addView(tvText(actualChannelCount().toString()+" LIVE CHANNELS   •   "+viewerId().uppercase(),14f,0xFF5FE6CC.toInt()))
-            addView(tvText("BY PPJSoft",12f,0xFFB7C8D8.toInt()).apply{gravity=Gravity.RIGHT})
+            clipToOutline=true
+            minimumHeight=tvDp(196)
         }
-        homeContent.addView(hero)
+        val brand=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(tvDp(25),tvDp(25),tvDp(16),tvDp(20))
+            addView(tvText("MYVIEW",38f,0xFF92E9FF.toInt()))
+            addView(tvText("Your entertainment. Your way.",18f,0xFFE0F2FF.toInt()))
+            addView(tvText(actualChannelCount().toString()+" LIVE CHANNELS  •  "+viewerId().uppercase(),13f,0xFF5FE6CC.toInt()).apply{
+                setPadding(0,tvDp(10),0,0)
+            })
+            addView(tvText("BY PPJSoft",11f,0xFFB7C8D8.toInt()).apply{setPadding(0,tvDp(8),0,0)})
+        }
+        hero.addView(brand,android.widget.FrameLayout.LayoutParams(-1,-2,Gravity.CENTER_VERTICAL))
+        homeContent.addView(hero,LinearLayout.LayoutParams(-1,tvDp(196)))
+
+        val continueBanner=LinearLayout(this).apply{
+            orientation=LinearLayout.HORIZONTAL
+            gravity=Gravity.CENTER_VERTICAL
+            setPadding(tvDp(22),tvDp(10),tvDp(18),tvDp(10))
+            background=tvBg(0xFF0C3557.toInt())
+            isFocusable=true
+            isClickable=true
+            addView(tvText("▶",32f,0xFF6CE4FF.toInt()),LinearLayout.LayoutParams(tvDp(64),-2))
+            addView(LinearLayout(this@MainActivity).apply{
+                orientation=LinearLayout.VERTICAL
+                addView(tvText("Continue TV",23f))
+                addView(tvText("Resume your last channel",14f,0xFFB0C6D9.toInt()))
+            })
+            setOnFocusChangeListener{v,focused->
+                v.background=tvBg(if(focused)0xFF18628C.toInt() else 0xFF0C3557.toInt())
+                v.scaleX=if(focused)1.02f else 1f
+                v.scaleY=if(focused)1.02f else 1f
+            }
+            setOnClickListener{if(channels.isEmpty())refresh({resumeLast()}) else resumeLast()}
+        }
+        homeContent.addView(continueBanner,LinearLayout.LayoutParams(-1,tvDp(82)).apply{
+            topMargin=tvDp(12)
+        })
         homeContent.addView(tvSection("WATCH NOW"))
         homeContent.addView(tvRow(
             tvCard("▶","Continue TV","Resume last channel"){if(channels.isEmpty())refresh({resumeLast()})else resumeLast()},
@@ -4211,6 +4243,39 @@ class MainActivity: Activity() {
             tvCard("★","Favorites","Your saved channels"){favorites()},
             tvCard("▤","TV guide","Programmes and reminders"){if(prefs.getBoolean("nextv_epg_enabled",true))showEpg() else settings()}
         ))
+        // Source-owned channel logos and already loaded EPG; never request EPG on the UI thread.
+        // The underlying playlist, hidden/locked filtering and tune flow remain unchanged.
+        val featured=surfingIndices().take(5)
+        if(featured.isNotEmpty()){
+            homeContent.addView(tvSection("LIVE CHANNELS  •  NOW & NEXT"))
+            val liveRow=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
+            val now=System.currentTimeMillis()
+            featured.forEach{index->
+                val channel=channels[index]
+                val programmes=if(prefs.getBoolean("nextv_epg_enabled",true))programmeList(channel) else emptyList()
+                val current=programmes.firstOrNull{it.start<=now && it.end>now}
+                val upcoming=programmes.firstOrNull{it.start>now}
+                val item=LinearLayout(this).apply{
+                    orientation=LinearLayout.VERTICAL
+                    setPadding(tvDp(10),tvDp(9),tvDp(10),tvDp(9))
+                    background=tvBg()
+                    isFocusable=true
+                    isClickable=true
+                    addView(logoView(channel,44))
+                    addView(tvText(channel.name,15f).apply{maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END})
+                    addView(tvText("Now: "+(current?.title ?: "Guide unavailable"),12f,0xFF6CE4FF.toInt()).apply{maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END})
+                    addView(tvText("Next: "+(upcoming?.title ?: "Not scheduled"),11f,0xFFB0C6D9.toInt()).apply{maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END})
+                    setOnFocusChangeListener{v,focus->
+                        v.background=tvBg(if(focus)0xFF18628C.toInt() else 0xFF152A43.toInt())
+                        v.scaleX=if(focus)1.03f else 1f
+                        v.scaleY=if(focus)1.03f else 1f
+                    }
+                    setOnClickListener{playIndex(preferredChannel(index))}
+                }
+                liveRow.addView(item,LinearLayout.LayoutParams(0,tvDp(155),1f).apply{marginEnd=tvDp(10)})
+            }
+            homeContent.addView(liveRow)
+        }
         homeContent.addView(tvSection("EXPLORE"))
         homeContent.addView(tvRow(
             tvCard("▣","Movies","Movie library"){mediaLibrary("movie")},
