@@ -3068,13 +3068,6 @@ class MainActivity: Activity() {
         val dialog=AlertDialog.Builder(this)
             .setTitle("Move "+selected.name+" • "+source)
             .setView(layout)
-            .setOnKeyListener{_,code,event->
-                if(event.action==KeyEvent.ACTION_DOWN &&
-                    code in setOf(KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_DPAD_DOWN)){
-                    if(event.repeatCount==0)step(if(code==KeyEvent.KEYCODE_DPAD_UP)-1 else 1)
-                    true
-                }else false
-            }
             .setPositiveButton("Save Position"){_,_->
                 val position=input.text.toString().toIntOrNull()
                 if(position==null || position !in 1..keys.size){
@@ -3091,7 +3084,13 @@ class MainActivity: Activity() {
                 }
             }.setNegativeButton("Cancel",null).create()
         dialog.setOnShowListener{up.requestFocus()}
-        showSideDialog(dialog)
+        showSideDialog(dialog,onNavigation={code->
+            when(code){
+                KeyEvent.KEYCODE_DPAD_UP->{step(-1);true}
+                KeyEvent.KEYCODE_DPAD_DOWN->{step(1);true}
+                else->false
+            }
+        })
     }
     // Long press in channel lists: quick actions only. Never open the right-key settings.
     private fun showChannelListQuickActions(index:Int,refresh:()->Unit,onMoved:()->Unit=refresh){
@@ -5593,11 +5592,14 @@ class MainActivity: Activity() {
             handler.postDelayed(task,2500)
         }
     }
-    private fun showSideDialog(dialog:AlertDialog,side:Int=Gravity.RIGHT){
+    private fun showSideDialog(dialog:AlertDialog,side:Int=Gravity.RIGHT,
+        onNavigation:((Int)->Boolean)?=null){
         // Some TV remotes report OK as BUTTON_A/BUTTON_SELECT rather than DPAD_CENTER.
         // Also commit single-choice settings on the first OK press instead of merely
         // previewing the highlighted row and leaving the user on an unfocused OK button.
         dialog.setOnKeyListener{_,keyCode,event->
+            if(event.action==KeyEvent.ACTION_DOWN && event.repeatCount==0 &&
+                onNavigation?.invoke(keyCode)==true)return@setOnKeyListener true
             if(event.action!=KeyEvent.ACTION_DOWN || event.repeatCount!=0 ||
                 !HomeTvPolicies.isRemoteSelectKey(keyCode))return@setOnKeyListener false
             val list=dialog.listView
