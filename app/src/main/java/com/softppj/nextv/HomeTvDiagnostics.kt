@@ -29,6 +29,17 @@ internal object HomeTvDiagnostics {
 
     @Volatile private var appContext: Context? = null
     @Volatile private var crashHandlerInstalled = false
+    // Playback-state callbacks run on the UI looper. Never perform file I/O
+    // there: slow flash storage can block remote KeyEvents long enough for ANR.
+    // Bound the queue so a noisy stream cannot exhaust TV memory.
+    private val logWriter = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.ArrayBlockingQueue<Runnable>(256),
+        java.util.concurrent.ThreadFactory { task ->
+            Thread(task, "MyView-diagnostic-writer").apply { isDaemon = true }
+        },
+        java.util.concurrent.ThreadPoolExecutor.DiscardPolicy()
+    )
 
     @Synchronized fun initialize(context: Context): Boolean {
         appContext = context.applicationContext
@@ -82,7 +93,10 @@ internal object HomeTvDiagnostics {
                         }
                     }
                 } catch (_: Exception) { }
-                e("HomeTV", "Uncaught crash on thread " + thread.name, error)
+                // A dying process cannot rely on an asynchronous log queue.
+                // Preserve the fatal trace synchronously before delegation.
+                persist("ERROR", "HomeTV", "Uncaught crash on thread " + thread.name, error)
+                android.util.Log.e("HomeTV", "Uncaught crash on thread " + thread.name)
                 if (previous != null) previous.uncaughtException(thread, error)
                 else {
                     android.os.Process.killProcess(android.os.Process.myPid())
@@ -118,7 +132,12 @@ internal object HomeTvDiagnostics {
         android.util.Log.i(tag, redact(message))
     }
 
-    @Synchronized private fun record(level: String, tag: String, message: String, error: Throwable?) {
+    private fun record(level: String, tag: String, message: String, error: Throwable?) {
+        if (appContext == null) return
+        logWriter.execute { persist(level, tag, message, error) }
+    }
+
+    @Synchronized private fun persist(level: String, tag: String, message: String, error: Throwable?) {
         val context = appContext ?: return
         try {
             val dir = File(context.filesDir, "diagnostics")
