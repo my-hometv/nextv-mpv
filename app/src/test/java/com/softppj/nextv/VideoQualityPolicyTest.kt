@@ -18,21 +18,18 @@ class VideoQualityPolicyTest {
         assertTrue(VideoQualityPolicy.shouldRequestYoutubeWebQuality("1080p"))
     }
 
-    @Test fun foregroundPlaybackLimitsConcurrentBackgroundDecoders() {
-        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(true))
-        assertEquals(2, VideoQualityPolicy.backgroundProbeLimit(false))
-        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true, true))
-        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(true, false))
-        assertEquals(2, VideoQualityPolicy.backgroundProbeLimit(false, true))
-        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true, false, true))
-        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true, true, true))
-        assertEquals(2, VideoQualityPolicy.backgroundProbeLimit(false, false, true))
-        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true, false, false, true))
-        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(true, false, false, false))
-        assertEquals(2, VideoQualityPolicy.backgroundProbeLimit(false, false, false, true))
-        // Foreground startup must suppress optional background decoders.
-        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true, false, false, true))
-        // A settled foreground player can coexist with one background check.
-        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(true, false, false, false))
+    @Test fun foregroundAlwaysHasExclusiveDecoderPriority(){
+        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true))
+        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true,true))
+        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true,false,true))
+        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true,false,false,true))
+        assertEquals(0, VideoQualityPolicy.backgroundProbeLimit(true,false,false,false))
+    }
+
+    @Test fun idleBackgroundChecksNeverAllocateMoreThanOneDecoder(){
+        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(false))
+        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(false,true))
+        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(false,false,true))
+        assertEquals(1, VideoQualityPolicy.backgroundProbeLimit(false,false,false,true))
     }
 }
