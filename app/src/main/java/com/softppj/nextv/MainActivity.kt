@@ -10338,6 +10338,28 @@ class MainActivity: Activity() {
             if(HomeTvPolicies.isFreshRemotePress(event.action,event.repeatCount,event.isLongPress))onBackPressed()
             return true
         }
+        // Physical Android TV remotes send a long-press as a repeated OK DOWN.
+        // The regular duplicate-key guard must not swallow that channel action.
+        if(HomeTvPolicies.isRemoteSelectKey(event.keyCode) &&
+            event.action==KeyEvent.ACTION_DOWN && event.isLongPress){
+            val screen=videoScreen
+            val drawer=screen?.findViewWithTag<View>("channel_drawer")
+            val list=drawerList(drawer)
+            val position=list?.selectedItemPosition ?: -1
+            if(drawer!=null && list!=null && position in 0 until list.count){
+                val channelIndex=list.adapter.getItemId(position).toInt()
+                if(channelIndex in channels.indices){
+                    showChannelListQuickActions(channelIndex,{
+                        (list.adapter as? android.widget.BaseAdapter)?.notifyDataSetChanged()
+                        list.requestFocus()
+                    },{
+                        if(drawer.parent===screen)screen.removeView(drawer)
+                        showOverlayList()
+                    })
+                    return true
+                }
+            }
+        }
         if(HomeTvPolicies.isRemoteSelectKey(event.keyCode) &&
             event.action==KeyEvent.ACTION_DOWN &&
             !HomeTvPolicies.isFreshRemotePress(event.action,event.repeatCount,event.isLongPress))return true
