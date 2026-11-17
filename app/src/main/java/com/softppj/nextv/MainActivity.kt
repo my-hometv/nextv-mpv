@@ -5288,12 +5288,11 @@ class MainActivity: Activity() {
                 list.setSelection(position)
                 list.requestFocus()
             },{
-                if(drawer.parent===screen)screen.removeView(drawer)
-                showOverlayList()
+                showGroupContents(group)
             })
             true
         }
-        root.addView(label("Long press: Hide / Unhide · Favourite · Lock / Unlock"))
+        root.addView(label("Long press: Move · Hide / Unhide · Favourite · Lock / Unlock"))
         root.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         root.addView(button("All channel groups"){showChannels()})
     }
