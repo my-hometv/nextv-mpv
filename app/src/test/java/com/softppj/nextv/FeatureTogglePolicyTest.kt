@@ -16,6 +16,7 @@ class FeatureTogglePolicyTest {
         val toggles=FeatureTogglePolicy.runtimeToggles
         assertEquals(false,toggles["background_url_checks"])
         assertEquals(false,toggles["live_channel_preview"])
+        assertEquals(false,toggles["myview_instant_preload_enabled"])
         assertEquals(true,toggles["nextv_epg_enabled"])
         assertEquals(true,toggles["myview_multiview_enabled"])
         assertEquals(true,toggles["nextv_profiles_enabled"])
