@@ -153,7 +153,7 @@ internal object HomeTvDiagnostics {
     // An abrupt native process crash cannot execute Kotlin's uncaught exception
     // handler. Android 11+ records its exit reason outside our process, so add
     // that information to a user-exported report on the next launch.
-    private fun recentProcessExits(): String {
+    private fun recentProcessExits(includeAnrTraces:Boolean): String {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return ""
         val context = appContext ?: return ""
         return try {
@@ -168,17 +168,34 @@ internal object HomeTvDiagnostics {
                 }
             if (entries.isEmpty()) "" else "===== Recent Android process exits =====\n" +
                 entries.joinToString("\n") { exit ->
-                    "time=" + Date(exit.timestamp) +
+                    val summary = "time=" + Date(exit.timestamp) +
                         " reason=" + exit.reason +
                         " status=" + exit.status +
                         " description=" + redact((exit.description ?: "").take(1000))
+                    if (!includeAnrTraces || exit.reason != ApplicationExitInfo.REASON_ANR)
+                        summary
+                    else {
+                        // Android 11+ retains the ANR thread snapshot. This is
+                        // the evidence needed to identify which main-thread
+                        // operation was stuck when a remote KeyEvent timed out.
+                        // Bound reading; never let a pathological trace exhaust RAM.
+                        val trace = try {
+                            exit.traceInputStream?.bufferedReader()?.use { reader ->
+                                val buffer = CharArray(64 * 1024)
+                                val count = reader.read(buffer)
+                                if (count > 0) redact(String(buffer, 0, count)) else ""
+                            }.orEmpty()
+                        } catch (_: Exception) { "" }
+                        summary + if (trace.isBlank()) "" else
+                            "\n===== Bounded ANR thread trace =====\n" + trace
+                    }
                 } + "\n"
         } catch (_: Exception) {
             ""
         }
     }
 
-    @Synchronized fun readReport(): String {
+    @Synchronized fun readReport(includeAnrTraces:Boolean=false): String {
         val dir = appContext?.let { File(it.filesDir, "diagnostics") } ?: return ""
         prune(dir)
         val files = dir.listFiles()?.filter { it.isFile && it.name.startsWith("hometv-") && it.name.endsWith(".log") }
@@ -189,7 +206,7 @@ internal object HomeTvDiagnostics {
                 redact(file.readText(Charsets.UTF_8).takeLast(MAX_REPORT_CHARS))
             } catch (_: Exception) { "[Unable to read log]\n" }
         }
-        val report = all + (if (all.isNotEmpty()) "\n" else "") + recentProcessExits()
+        val report = all + (if (all.isNotEmpty()) "\n" else "") + recentProcessExits(includeAnrTraces)
         return if (report.length > MAX_REPORT_CHARS) report.takeLast(MAX_REPORT_CHARS) else report
     }
 }
