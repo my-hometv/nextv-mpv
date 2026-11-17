@@ -6962,6 +6962,64 @@ class MainActivity: Activity() {
         }
         return SmartLogoPolicy.resolve(channel.name,channel.epgId,localLogoIndex).orEmpty()
     }
+    // Public directory lookups are opt-in, occur on a background thread, and
+    // contain no playlist URLs, source credentials or device identifiers.
+    private var externalLogoIndex:Map<String,String>?=null
+    private var externalLogoRequestRunning=false
+    private val externalLogoPending=mutableListOf<Triple<Channel,ImageView,Int>>()
+    private fun cachedExternalLogoIndex():Map<String,String>{
+        externalLogoIndex?.let{return it}
+        val index=mutableMapOf<String,String>()
+        try{
+            val json=org.json.JSONObject(prefs.getString("myview_external_logo_cache","{}") ?: "{}")
+            val iterator=json.keys()
+            while(iterator.hasNext()){
+                val key=iterator.next()
+                val url=json.optString(key)
+                if(url.startsWith("https://",true) && url.length<=2048)index[key]=url
+            }
+        }catch(e:Exception){HomeTvDiagnostics.w("MyView","Public logo cache unavailable",e)}
+        externalLogoIndex=index
+        return index
+    }
+    private fun refreshExternalLogos(force:Boolean=false){
+        if(!prefs.getBoolean("myview_external_logos_enabled",false) ||
+            externalLogoRequestRunning)return
+        val now=System.currentTimeMillis()
+        val fetchedAt=prefs.getLong("myview_external_logo_last_fetch",0L)
+        if(!force && now>=fetchedAt &&
+            now-fetchedAt<ExternalLogoCatalog.REFRESH_INTERVAL_MS)return
+        val targets=channels.asSequence()
+            .filter{it.logo.isBlank()}
+            .map{ExternalLogoMatchPolicy.Target(it.name,it.epgId)}
+            .distinct().take(5000).toList()
+        if(targets.isEmpty())return
+        externalLogoRequestRunning=true
+        kotlin.concurrent.thread(name="MyView-public-channel-logos",isDaemon=true){
+            val result=try{ExternalLogoCatalog.fetch(targets)}
+                catch(e:Exception){
+                    HomeTvDiagnostics.w("MyView","Public channel-logo directory unavailable",e)
+                    null
+                }
+            runOnUiThread{
+                externalLogoRequestRunning=false
+                if(result!=null && prefs.getBoolean("myview_external_logos_enabled",false)){
+                    val clipped=result.entries.take(10_000).associate{it.key to it.value}
+                    externalLogoIndex=clipped
+                    val json=org.json.JSONObject()
+                    clipped.forEach{(key,url)->json.put(key,url)}
+                    prefs.edit().putString("myview_external_logo_cache",json.toString())
+                        .putLong("myview_external_logo_last_fetch",System.currentTimeMillis()).apply()
+                    val pending=externalLogoPending.toList()
+                    externalLogoPending.clear()
+                    pending.forEach{(channel,view,size)->
+                        if(view.tag=="public-logo:"+id(channel))
+                            logoView(channel,size,view)
+                    }
+                }else externalLogoPending.clear()
+            }
+        }
+    }
     private val logoWaiting=mutableMapOf<String,MutableList<ImageView>>()
     private fun logoView(channel:Channel,size:Int=52,reuse:ImageView?=null):ImageView{
         val pixels=(size*resources.displayMetrics.density).toInt()
@@ -6973,9 +7031,20 @@ class MainActivity: Activity() {
         view.setImageResource(android.R.drawable.ic_menu_gallery)
         view.imageTintList=android.content.res.ColorStateList.valueOf(0xFFB6C9DD.toInt())
         val direct=channel.logo.trim()
-        val url=if(direct.startsWith("http://") || direct.startsWith("https://"))
+        val local=if(direct.startsWith("http://") || direct.startsWith("https://"))
             direct else matchedLocalLogo(channel)
-        if(!url.startsWith("http://") && !url.startsWith("https://"))return view
+        val url=if(local.isNotBlank())local else if(prefs.getBoolean("myview_external_logos_enabled",false))
+            ExternalLogoMatchPolicy.resolve(channel.name,channel.epgId,cachedExternalLogoIndex()).orEmpty()
+            else ""
+        if(!url.startsWith("http://") && !url.startsWith("https://")){
+            if(prefs.getBoolean("myview_external_logos_enabled",false)){
+                if(externalLogoPending.size>=128)externalLogoPending.removeAt(0)
+                externalLogoPending.add(Triple(channel,view,size))
+                view.tag="public-logo:"+id(channel)
+                refreshExternalLogos()
+            }
+            return view
+        }
         view.tag=url
         val cached=logoCache.get(url)
         if(cached!=null){
@@ -9672,7 +9741,7 @@ class MainActivity: Activity() {
             "Channel alternatives attempted: "+alternativeAttempted.size
         )
         AlertDialog.Builder(this).setTitle("Playback diagnostics")
-            .setMessage(lines.joinToString("\\n"))
+            .setMessage(lines.joinToString("\n"))
             .setPositiveButton("Close",null).show()
     }
     private fun onFeatureToggleChanged(key:String,enabled:Boolean){
@@ -9695,6 +9764,10 @@ class MainActivity: Activity() {
             }
             "myview_instant_preload_enabled"->{
                 if(previewIsAutomatic)closeVideoPreview()
+            }
+            "myview_external_logos_enabled"->{
+                externalLogoPending.clear()
+                externalLogoIndex=null
             }
             "myview_multiview_enabled"->{
                 multiViewDialog?.dismiss()
@@ -9853,8 +9926,12 @@ class MainActivity: Activity() {
             root.addView(button("MultiView — 2 or 4 channels"){chooseMultiView()})
         root.addView(label("MultiView is Media3-only and limited by TV decoder capacity. Some formats cannot play simultaneously."))
         root.addView(settingsToggle("Smart Logos — match other playlist entries","myview_smart_logo_matching",true))
-        root.addView(label("Reuses an unambiguous logo from your other playlist entries; no external logo database or channel identity guessing."))
-        root.addView(label("External logo lookup remains unimplemented. Instant switching uses an optional, bounded Media3-only preload and falls back safely if a channel is not ready."))
+        root.addView(label("Uses unambiguous matching logos from your playlists first."))
+        root.addView(settingsToggle("Public channel logos (IPTV-org directory)","myview_external_logos_enabled",false))
+        root.addView(label("OFF by default. When enabled, downloads a public channel-logo index at most once per 24 hours; no private playlist URLs are uploaded. Loading a logo contacts its image host."))
+        if(prefs.getBoolean("myview_external_logos_enabled",false))
+            root.addView(button("Refresh public channel logos"){refreshExternalLogos(true);showBanner("Public logo lookup started")})
+        root.addView(label("Instant switching uses one optional secondary Media3 decoder and falls back to normal tuning when necessary."))
         root.addView(tvSection("PLAYBACK & PICTURE"))
         root.addView(settingsToggle("Match display refresh for direct VOD","myview_match_vod_refresh",false))
         root.addView(label("OFF by default. Direct MP4/M4V movie or series only. Keeps the same resolution, never switches display modes for Live TV. May cause a brief screen blackout."))
