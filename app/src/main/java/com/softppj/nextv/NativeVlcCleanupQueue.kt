@@ -14,7 +14,8 @@ import java.util.concurrent.RejectedExecutionException
 internal class NativeVlcCleanupQueue(
     private val executor:ExecutorService=Executors.newSingleThreadExecutor { r->
         Thread(r,"MyView-VLC-cleanup").apply{isDaemon=true}
-    }
+    },
+    private val onError:(Throwable)->Unit = {}
 ) {
     private var closed=false
 
@@ -23,8 +24,7 @@ internal class NativeVlcCleanupQueue(
         return try {
             executor.execute {
                 try { cleanup() }
-                catch(e:Throwable) { android.util.Log.w("MyView-VLC-cleanup",
-                    "Detached native cleanup failed",e) }
+                catch(e:Throwable) { try { onError(e) } catch (_:Throwable) {} }
             }
             true
         }catch(_:RejectedExecutionException){false}
