@@ -76,11 +76,18 @@ internal class IsolatedVlcSessionController(private val registry: IsolatedVlcReg
     fun latestRequestGeneration():Long = generation
 
     @Synchronized
-    fun stop(requestGeneration: Long) {
-        if (released || requestGeneration != generation) return
-        val previous = active
+    fun detachStop(requestGeneration: Long): (() -> Unit)? {
+        if (released || requestGeneration != generation) return null
+        val previous = active ?: return null
         active = null
-        try { previous?.stop(requestGeneration) } catch (_: Exception) { /* native teardown must not crash playback */ }
+        return {
+            try { previous.stop(requestGeneration) }
+            catch (_: Exception) { /* stale native stop must not crash playback */ }
+        }
+    }
+
+    fun stop(requestGeneration: Long) {
+        detachStop(requestGeneration)?.invoke()
     }
 
     /**
