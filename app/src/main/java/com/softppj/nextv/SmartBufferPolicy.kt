@@ -6,7 +6,8 @@ package com.softppj.nextv
  * The level is stored per channel, never shared across unrelated streams.
  */
 internal object SmartBufferPolicy {
-    const val DEFAULT_LEVEL = 1
+    // Start with a responsive live buffer; sustained stalls promote it safely.
+    const val DEFAULT_LEVEL = 0
     const val MAX_LEVEL = 3
     const val STALL_WINDOW_MS = 90_000L
     const val CHANGE_COOLDOWN_MS = 12_000L
