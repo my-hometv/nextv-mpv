@@ -14,7 +14,7 @@ class RemotePreemptionPolicyTest {
             KeyEvent.KEYCODE_BACK,KeyEvent.KEYCODE_ESCAPE,
             KeyEvent.KEYCODE_MENU,KeyEvent.KEYCODE_LAST_CHANNEL,
             KeyEvent.KEYCODE_BUTTON_A,KeyEvent.KEYCODE_BUTTON_SELECT
-        ).forEach { assertTrue(KeyEvent.keyCodeToString(it),
+        ).forEach { assertTrue("Navigation key $it should preempt background checks",
             RemotePreemptionPolicy.isNavigationKey(it)) }
     }
     @Test fun allNumericChannelKeysPreemptBackgroundChecks(){
