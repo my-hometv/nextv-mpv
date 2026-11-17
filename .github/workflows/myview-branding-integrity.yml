@@ -1,0 +1,28 @@
+name: MyView Approved Branding Integrity (NO APK)
+on:
+  workflow_dispatch:
+  push:
+    branches: [myview-cinematic-home]
+    paths:
+      - 'app/src/main/res/drawable/tv_banner.png'
+      - 'app/src/main/res/drawable/nextv_launcher.png'
+      - 'tools/verify_myview_branding.py'
+      - '.github/workflows/myview-branding-integrity.yml'
+permissions:
+  contents: read
+jobs:
+  verify-original-artwork:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check exact original approved image hashes
+        run: python3 tools/verify_myview_branding.py
+      - name: Verify no APK assembled
+        run: |
+          if find app/build/outputs/apk -name '*.apk' -print -quit 2>/dev/null | grep -q .; then
+            echo "::error::Branding integrity verification must not assemble APKs."
+            exit 1
+          fi

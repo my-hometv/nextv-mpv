@@ -5,6 +5,17 @@ internal object ChannelFailurePolicy {
     fun hasEstablishedPlayback(savedUrl: Boolean, enabledSavedEngine: Boolean): Boolean =
         savedUrl || enabledSavedEngine
 
+    /**
+     * A transient network/decoder interruption on an already-working channel
+     * must not immediately advertise an alternative URL. Allow two normal
+     * reconnect attempts first. If reconnect is switched OFF, offer alternatives
+     * immediately rather than leaving the viewer with no recovery action.
+     */
+    fun shouldSearchAlternatives(
+        consecutiveFailures: Int,
+        autoReconnectEnabled: Boolean
+    ): Boolean = !autoReconnectEnabled || consecutiveFailures >= 3
+
     /** Advance from the failed logical channel, never restarting at channel one. */
     fun nextSurfingIndex(
         previousSequence: List<Int>,

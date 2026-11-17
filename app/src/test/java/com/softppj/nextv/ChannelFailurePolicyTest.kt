@@ -5,6 +5,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChannelFailurePolicyTest {
+    @Test fun establishedChannelKeepsWorkingUrlThroughShortOutage() {
+        assertFalse(ChannelFailurePolicy.shouldSearchAlternatives(1, true))
+        assertFalse(ChannelFailurePolicy.shouldSearchAlternatives(2, true))
+        assertTrue(ChannelFailurePolicy.shouldSearchAlternatives(3, true))
+        assertTrue(ChannelFailurePolicy.shouldSearchAlternatives(10, true))
+    }
+
+    @Test fun alternativesRemainAvailableWithoutAutoReconnect() {
+        assertTrue(ChannelFailurePolicy.shouldSearchAlternatives(1, false))
+        assertTrue(ChannelFailurePolicy.shouldSearchAlternatives(0, false))
+    }
+
     @Test fun savedUrlPreventsSkippingEvenWithoutSavedEngine() {
         assertTrue(ChannelFailurePolicy.hasEstablishedPlayback(true, false))
         assertFalse(ChannelFailurePolicy.shouldSkipUnestablishedChannel(true, true, true))
