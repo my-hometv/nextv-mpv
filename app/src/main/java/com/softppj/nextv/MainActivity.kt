@@ -782,13 +782,8 @@ class MainActivity: Activity() {
     private var playbackTeardownInProgress=false
     // Preserve the latest remote recovery command during reentrant native teardown.
     private var pendingTeardownRemoteKey:Int?=null
-    private fun isTeardownRecoveryKey(key:Int):Boolean=when(key){
-        KeyEvent.KEYCODE_BACK,KeyEvent.KEYCODE_ESCAPE,KeyEvent.KEYCODE_MENU,
-        KeyEvent.KEYCODE_CHANNEL_UP,KeyEvent.KEYCODE_CHANNEL_DOWN,
-        KeyEvent.KEYCODE_MEDIA_NEXT,KeyEvent.KEYCODE_MEDIA_PREVIOUS,
-        KeyEvent.KEYCODE_BUTTON_R1,KeyEvent.KEYCODE_BUTTON_L1->true
-        else->false
-    }
+    private fun isTeardownRecoveryKey(key:Int):Boolean =
+        RemotePreemptionPolicy.isNavigationKey(key)
     private var banner:View?=null
     private var bannerTask:Runnable?=null
     private var clockTask:Runnable?=null
@@ -4707,6 +4702,38 @@ class MainActivity: Activity() {
     }
     // Bounded background stream checks: optional players, never the on-screen player.
     @Volatile private var backgroundProbeGeneration=0
+    // A remote navigation key wins over speculative network/decoder activity.
+    // These resources are released after the current key is dispatched so
+    // native stop() cannot block the UI from honoring the key itself.
+    private fun preemptBackgroundChecksForRemote(){
+        backgroundProbeGeneration++
+        periodicProbeTask?.let{handler.removeCallbacks(it)}
+        periodicProbeTask=null
+        probeWatchdogs.values.forEach{handler.removeCallbacks(it)}
+        probeWatchdogs.clear()
+        probeQueue.clear()
+        vlcProbeQueue.clear()
+        probePositionByUrl=emptyMap()
+        val abandoned=probePlayers.toList()
+        probePlayers.clear()
+        probeInFlight=0
+        // Existing asynchronous callbacks see the incremented generation and
+        // must not publish results or schedule further work.
+        val playbackAtKey=playbackGeneration
+        handler.post{
+            abandoned.forEach{probe->
+                try{probe.stop()}catch(e:Exception){
+                    HomeTvDiagnostics.w("RemoteInput","Background probe stop",e)
+                }finally{
+                    try{probe.release()}catch(e:Exception){
+                        HomeTvDiagnostics.w("RemoteInput","Background probe release",e)
+                    }
+                }
+            }
+            stopVlcProbe()
+            if(playbackAtKey==playbackGeneration)cancelAlternativeBackgroundChecks()
+        }
+    }
     private var backgroundProbePlaylist:MutableList<Channel>?=null
     private val probeReachable=java.util.concurrent.ConcurrentHashMap<String,Boolean>()
     private var periodicProbeTask:Runnable?=null
@@ -10366,13 +10393,20 @@ class MainActivity: Activity() {
     }
 
     override fun dispatchKeyEvent(event:KeyEvent):Boolean{
-        // Do not reenter native teardown, but never discard remote recovery.
+        // Never discard a navigation command during native teardown. The
+        // newest eligible key is replayed when teardown relinquishes control.
         if(playbackTeardownInProgress){
-            if(event.action==KeyEvent.ACTION_DOWN && event.repeatCount==0 &&
-                isTeardownRecoveryKey(event.keyCode))
+            if(event.action==KeyEvent.ACTION_DOWN &&
+                event.repeatCount==0 && isTeardownRecoveryKey(event.keyCode))
                 pendingTeardownRemoteKey=event.keyCode
             return true
         }
+        // Invalidate obsolete background scans synchronously, then honor the
+        // remote command before the potentially slow native probe cleanup.
+        if(active>=0 && event.action==KeyEvent.ACTION_DOWN &&
+            event.repeatCount==0 &&
+            RemotePreemptionPolicy.isNavigationKey(event.keyCode))
+            preemptBackgroundChecksForRemote()
         // Detailed remote diagnostics are opt-in to avoid unnecessary per-key log writes.
         // Capture every key event before any Activity-level early return. Android TV
         // remotes frequently expose vendor-specific keycodes; logging only DPAD and
