@@ -55,6 +55,8 @@ jobs:
           python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Compile Kotlin and run unit tests (never assemble an APK)
         run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Run Android Lint without assembling an APK
+        run: gradle --no-daemon --stacktrace :app:lintDebug
       - name: Verify no APK was assembled
         shell: bash
         run: |
