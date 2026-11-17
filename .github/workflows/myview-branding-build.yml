@@ -49,7 +49,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Verify single LibVLC, compile and run tests
+      - name: Verify single LibVLC, compile and run tests including remote-busy regression
         run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
       - name: Assemble full MyView APK
         run: gradle --no-daemon --stacktrace :app:assembleDebug
