@@ -6958,7 +6958,9 @@ class MainActivity: Activity() {
             return view
         }
         val waiting=logoWaiting.getOrPut(url){mutableListOf()}
-        if(waiting.size<24)waiting.add(view)
+        // Recycled rows must not starve newer visible rows while a fetch is in flight.
+        if(waiting.size>=24)waiting.removeAt(0)
+        waiting.add(view)
         if(!logoLoading.add(url))return view
         try{logoExecutor.execute{
             val bmp=try{
@@ -6968,16 +6970,8 @@ class MainActivity: Activity() {
                     setRequestProperty("User-Agent","Mozilla/5.0 (Android TV; HomeTV)")
                 }
                 conn.getInputStream().use{stream->
-                    // Decode a small logo rather than a full-size remote image.
-                    val raw=android.graphics.BitmapFactory.decodeStream(stream)
-                    if(raw!=null && (raw.width>256 || raw.height>256)){
-                        val scale=minOf(256f/raw.width,256f/raw.height)
-                        val small=android.graphics.Bitmap.createScaledBitmap(
-                            raw,(raw.width*scale).toInt().coerceAtLeast(1),
-                            (raw.height*scale).toInt().coerceAtLeast(1),true)
-                        if(small!==raw)raw.recycle()
-                        small
-                    }else raw
+                    // Reject oversized responses before bitmap allocation.
+                    BoundedLogoDecoder.decode(stream)
                 }
             }catch(_:Exception){null}
             runOnUiThread{
