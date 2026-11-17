@@ -8906,8 +8906,10 @@ class MainActivity: Activity() {
         // attach a new decoder to a session whose previous release is still
         // executing. Replay the latest requested tune after teardown.
         if(playbackTeardownInProgress){
+            val deferredGeneration=playbackGeneration
             handler.post{
                 if(!isFinishing && !isDestroyed && licenseReady &&
+                    playbackGeneration==deferredGeneration &&
                     index in channels.indices && channels[index]===c)
                     playIndex(index)
             }
