@@ -10106,23 +10106,11 @@ class MainActivity: Activity() {
     private fun backupKeyAllowed(key:String):Boolean=BackupSafety.mayTransferSetting(key)
     private fun exportSettings(){
         if(!prefs.getBoolean("nextv_backup_enabled",true))return
-        val data=JSONObject()
-        prefs.all.forEach{(key,value)->
-            if(!backupKeyAllowed(key))return@forEach
-            when(value){
-                is String->data.put(key,JSONObject().put("type","string").put("value",value))
-                is Boolean->data.put(key,JSONObject().put("type","boolean").put("value",value))
-                is Int->data.put(key,JSONObject().put("type","int").put("value",value))
-                is Long->data.put(key,JSONObject().put("type","long").put("value",value))
-                is Float->data.put(key,JSONObject().put("type","float").put("value",value.toDouble()))
-                is Set<*>->data.put(key,JSONObject().put("type","strings").put("value",JSONArray(value.filterIsInstance<String>())))
+        val payload=try{PortableSettingsCodec.encode(prefs.all)}
+            catch(e:IllegalArgumentException){
+                Toast.makeText(this,e.message ?: "Settings backup is too large",Toast.LENGTH_LONG).show()
+                return
             }
-        }
-        val payload=JSONObject().put("format","HomeTV-settings-v1").put("settings",data).toString(2)
-        if(!BackupSafety.fitsBackupLimit(payload)){
-            Toast.makeText(this,"Settings backup exceeds the 2 MB portable limit",Toast.LENGTH_LONG).show()
-            return
-        }
         AlertDialog.Builder(this).setTitle("Save settings backup")
             .setMessage("The backup includes playlist URLs, which may contain provider credentials. Licence activation and the parental PIN are excluded. Save the file only to a location you trust.")
             .setPositiveButton("Choose location"){_,_->
@@ -10170,30 +10158,7 @@ class MainActivity: Activity() {
     private fun restoreSettingsFromText(raw:String){
         if(!prefs.getBoolean("nextv_backup_enabled",true))return
         try{
-            require(raw.toByteArray(Charsets.UTF_8).size<=BackupSafety.MAX_BACKUP_BYTES){"Backup exceeds the 2 MB safety limit"}
-            val backup=JSONObject(raw)
-            require(backup.optString("format")=="HomeTV-settings-v1")
-            val values=backup.getJSONObject("settings")
-            val staged=mutableListOf<Pair<String,Any>>()
-            val iterator=values.keys()
-            while(iterator.hasNext()){
-                val key=iterator.next()
-                if(!backupKeyAllowed(key))continue
-                val item=values.getJSONObject(key)
-                val value:Any=when(item.getString("type")){
-                    "string"->item.getString("value")
-                    "boolean"->item.getBoolean("value")
-                    "int"->item.getInt("value")
-                    "long"->item.getLong("value")
-                    "float"->item.getDouble("value").toFloat()
-                    "strings"->{
-                        val arr=item.getJSONArray("value")
-                        (0 until arr.length()).map{arr.getString(it)}.toSet()
-                    }
-                    else->throw IllegalArgumentException("Unsupported setting type for "+key)
-                }
-                staged.add(key to value)
-            }
+            val staged=PortableSettingsCodec.decode(raw)
             val incomingKeys=staged.map{it.first}.toSet()
             AlertDialog.Builder(this).setTitle("Choose restore method")
                 .setItems(arrayOf("Merge with existing settings","Replace existing settings")){_,mode->
