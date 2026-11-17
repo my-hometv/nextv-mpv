@@ -3660,20 +3660,20 @@ class MainActivity: Activity() {
             val o=arr.optJSONObject(i) ?:continue
             val url=o.optString("url","").trim()
             val name=o.optString("name","").trim()
-            if(url=="hometv://licensed-playlist"){
+            if(!PlaylistSourcePolicy.shouldKeepSavedSource(url)){
                 strippedInternalMarker=true
                 continue
             }
-            if(url.isNotBlank())configured.add(Playlist(name,url,o.optBoolean("enabled",true)))
+            if(PlaylistSourcePolicy.shouldKeepSavedSource(url))configured.add(Playlist(name,url,o.optBoolean("enabled",true)))
         }
         val selected=prefs.getString("selected_playlist_source",null)
-        if(selected=="hometv://licensed-playlist")
+        if(PlaylistSourcePolicy.shouldClearSelection(selected))
             prefs.edit().remove("selected_playlist_source").apply()
         if(strippedInternalMarker)savePlaylists(configured)
         return configured
     }
     private fun savePlaylists(list:List<Playlist>) {
-        val arr=JSONArray(); list.filter{it.url!="hometv://licensed-playlist"}.forEach { arr.put(JSONObject().put("name",it.name).put("url",it.url).put("enabled",it.enabled)) }
+        val arr=JSONArray(); list.filter{PlaylistSourcePolicy.shouldKeepSavedSource(it.url)}.forEach { arr.put(JSONObject().put("name",it.name).put("url",it.url).put("enabled",it.enabled)) }
         prefs.edit().putString("playlists",arr.toString()).apply()
     }
 
