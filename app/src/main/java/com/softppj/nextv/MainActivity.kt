@@ -9438,9 +9438,11 @@ class MainActivity: Activity() {
      * Keep the existing direct LibVLC path as a separate, stable fallback.
      */
     private fun startIsolatedVlc(c:Channel,index:Int,screen:FrameLayout,engineId:String){
-        if (!isolatedVlcRegistry.verifiedIds().contains(engineId)) {
-            // Preserve the requested version for recovery bookkeeping. A
-            // missing native adapter must never be misreported as Media3.
+        // Check only the build-time packaged engine identity on the UI thread.
+        // Registry.verifiedIds() performs a Binder readiness probe and must
+        // not run during a remote key or Surface callback. Actual readiness
+        // is validated by startWithSurface on the isolated worker.
+        if(engineId!=PlaybackEnginePolicy.versionEngineId(BuildConfig.LIBVLC_VERSION)){
             isolatedActiveEngineId=engineId
             showBanner("Native engine unavailable: "+engineId,true)
             handleEngineFailure(index,screen)
