@@ -35,6 +35,22 @@ class ExternalLogoMatchPolicyTest {
         }
     }
 
+    @Test fun qualitySuffixesMatchWithoutChangingUnrelatedChannelNames() {
+        val index=ExternalLogoMatchPolicy.build(listOf(
+            image("SuryaTV.in","https://example.org/surya.png"),
+            image("AsianetNews.in","https://example.org/news.png")))
+        for (name in listOf("Surya TV HD", "Surya TV (FHD)", "Surya TV [UHD]",
+            "Surya TV 4K", "Surya TV 1080p")) {
+            assertEquals("https://example.org/surya.png",
+                ExternalLogoMatchPolicy.resolve(name,"",index))
+        }
+        assertNull(ExternalLogoMatchPolicy.resolve("Asianet HD","",index))
+        assertEquals("https://example.org/news.png",
+            ExternalLogoMatchPolicy.resolve("Asianet News HD","",index))
+        assertEquals("hdone",
+            ExternalLogoMatchPolicy.canonical("HDOne"))
+    }
+
     @Test fun onlyRelevantSourcesAreSelected() {
         val target=listOf(ExternalLogoMatchPolicy.Target("Surya TV","surya.in"))
         assertTrue(ExternalLogoMatchPolicy.matchesAny(image("Surya.in"),target))
