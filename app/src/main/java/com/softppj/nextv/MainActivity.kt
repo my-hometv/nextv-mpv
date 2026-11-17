@@ -1181,9 +1181,11 @@ class MainActivity: Activity() {
         val selected=selectedPlaylistSource()
         return HomeTvPolicies.scopedChannelIndices(channels,channelNumbers(),selected)
     }
-    // Cache the remote-surfing sequence briefly. DPAD repeat events can arrive
-    // several times per second; rebuilding and sorting a 10k+ list on every key
-    // press caused avoidable allocations and UI stalls on Android TV devices.
+    // Keep the remote-surfing sequence stable across channel changes. A 900ms
+    // expiration forced full playlist filtering/sorting and saved-order parsing
+    // during ordinary CH+/CH- presses on large lists. Explicit invalidations
+    // still handle hide, favorites, source, playlist and order changes.
+    // Retain a bounded safety refresh for any externally changed preference.
     private var surfingCache:List<Int>?=null
     private var surfingCacheAt=0L
     private var surfingCacheOwner:MutableList<Channel>?=null
@@ -1207,7 +1209,7 @@ class MainActivity: Activity() {
         if(cached!=null && surfingCacheOwner===channels && surfingCacheSize==channels.size &&
             surfingCacheSource==source && surfingCacheFavorites==favoritesOnly &&
             surfingCacheGroup==group &&
-            now-surfingCacheAt<900L)return cached
+            now-surfingCacheAt<30000L)return cached
         val base=(if(group!=null || favoritesOnly)visibleIndices() else playlistIndices()).filter{
             !isSkipped(channels[it]) &&
             !isLocked(channels[it]) &&
