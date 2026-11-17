@@ -64,7 +64,8 @@ jobs:
           # Native binaries must actually exist inside the APK.
           unzip -Z -1 app/build/outputs/apk/debug/app-debug.apk > /tmp/myview-entries.txt
           grep -E 'lib/.*/libvlc[.]so' /tmp/myview-entries.txt
-          grep -E 'lib/.*/libvlccore[.]so' /tmp/myview-entries.txt
+          # This LibVLC 3.5.1 AAR exposes libvlc.so directly; libvlccore.so
+          # is not a mandatory separate library in the resolved package.
           grep -E 'lib/.*/libnextv_vlc_probe[.]so' /tmp/myview-entries.txt
           printf 'Packaged ABI list: '
           grep -E '^lib/.*[.]so' /tmp/myview-entries.txt | cut -d/ -f2 | sort -u
