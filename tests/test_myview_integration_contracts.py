@@ -109,7 +109,7 @@ class MyViewIntegrationContracts(unittest.TestCase):
 
     def test_native_crash_exit_reasons_are_exportable(self):
         diagnostics = (ROOT / "app/src/main/java/com/softppj/nextv/HomeTvDiagnostics.kt").read_text(encoding="utf-8")
-        self.assertIn("private fun recentProcessExits()", diagnostics)
+        self.assertIn("private fun recentProcessExits(includeAnrTraces:Boolean)", diagnostics)
         self.assertIn("ApplicationExitInfo.REASON_CRASH_NATIVE", diagnostics)
         self.assertIn("val report = all +", diagnostics)
 
