@@ -4,6 +4,8 @@ import android.app.Service
 import android.content.Intent
 import android.net.Uri
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
@@ -17,6 +19,10 @@ import org.videolan.libvlc.MediaPlayer
 class IsolatedVlcPlaybackService : Service() {
     private val gate = IsolatedVlcRequestGate()
     private val lock = Any()
+    // Native LibVLC events may be emitted from a decoder thread while a
+    // Binder stop holds lock. Never wait for that lock inside the callback:
+    // native stop can itself wait for the decoder callback to return.
+    private val eventHandler = Handler(Looper.getMainLooper())
     private var vlc: LibVLC? = null
     private var player: MediaPlayer? = null
     private var activeGeneration: Long? = null
@@ -80,9 +86,13 @@ class IsolatedVlcPlaybackService : Service() {
                 next = MediaPlayer(nativeVlc)
                 val candidate = next
                 candidate.setEventListener { event ->
-                    synchronized(lock) {
-                        if (player !== candidate || activeGeneration != requestGeneration) return@synchronized
-                        when (event.type) {
+                    val eventType = event.type
+                    // Queue state updates instead of acquiring our Binder/native
+                    // teardown monitor from LibVLC's callback thread.
+                    eventHandler.post {
+                        synchronized(lock) {
+                            if (player !== candidate || activeGeneration != requestGeneration) return@synchronized
+                            when (eventType) {
                             MediaPlayer.Event.Playing -> playbackTracker.playing()
                             MediaPlayer.Event.TimeChanged ->
                                 playbackTracker.timeChanged(candidate.time)
@@ -91,6 +101,7 @@ class IsolatedVlcPlaybackService : Service() {
                             MediaPlayer.Event.EncounteredError -> playbackTracker.error()
                             MediaPlayer.Event.EndReached -> playbackTracker.ended()
                             MediaPlayer.Event.Stopped -> playbackTracker.ended()
+                            }
                         }
                     }
                 }
