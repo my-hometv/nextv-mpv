@@ -155,6 +155,19 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('}catch(e:LinkageError){', self.activity)
         self.assertIn('handleEngineFailure(index,screen,failedEngine="LibVLC")', self.activity)
 
+    def test_diagnostic_export_works_without_tv_file_picker(self):
+        self.assertIn("private fun saveDiagnosticToDownloads(", self.activity)
+        self.assertIn("android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI", self.activity)
+        self.assertIn('thread(name="MyView-diagnostic-export")', self.activity)
+        self.assertIn("getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)", self.activity)
+        self.assertIn("HomeTvDiagnostics.readReport(includeAnrTraces=true)", self.activity)
+
+    def test_anr_stack_is_bounded_in_diagnostics(self):
+        diagnostics = (ROOT / "app/src/main/java/com/softppj/nextv/HomeTvDiagnostics.kt").read_text(encoding="utf-8")
+        self.assertIn("exit.traceInputStream", diagnostics)
+        self.assertIn("CharArray(64 * 1024)", diagnostics)
+        self.assertIn("readReport(includeAnrTraces:Boolean=false)", diagnostics)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
