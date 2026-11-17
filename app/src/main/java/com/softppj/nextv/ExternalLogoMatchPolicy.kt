@@ -9,14 +9,19 @@ internal object ExternalLogoMatchPolicy {
     data class Entry(val channelId: String, val url: String, val format: String, val inUse: Boolean)
     data class Target(val channelName: String, val epgId: String)
 
-    private val qualitySuffix = Regex(
-        """(?:\\s|[_\\[(])+?(?:sd|hd|fhd|uhd|4k|1080p|720p)(?:\\s|[_\\])])*?$""",
+    private val bracketedQuality = Regex(
+        """\\s*[\\[(](?:sd|hd|fhd|uhd|4k|1080p|720p)[\\])]\\s*$""",
+        RegexOption.IGNORE_CASE
+    )
+    private val spacedQuality = Regex(
+        """(?:\\s+|_)(?:sd|hd|fhd|uhd|4k|1080p|720p)$""",
         RegexOption.IGNORE_CASE
     )
 
-    /** Remove only separate resolution labels, never the letters in a channel name. */
+    /** Remove only separate quality labels; never strip part of a channel name. */
     fun canonical(text: String): String {
-        val trimmed = text.trim().replace(qualitySuffix, "").trim()
+        val trimmed = text.trim().replace(bracketedQuality, "")
+            .replace(spacedQuality, "").trim()
         return trimmed.lowercase(java.util.Locale.ROOT).filter { it.isLetterOrDigit() }
     }
 
