@@ -6261,12 +6261,12 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
     }
     private val clockDayFormats=arrayOf("EEE","EEEE")
-    private val clockDateFormats=arrayOf("dd MMM yyyy","dd MMM yy","dd MMMM yyyy","yyyy-MM-dd")
+    private val clockDateFormats=arrayOf("dd MMM yy","dd MMM yyyy","dd MMMM yyyy","yyyy-MM-dd")
     private val clockTimeFormats=arrayOf("hh:mm:ss a","HH:mm:ss","hh:mm a","HH:mm")
     private fun clockDayPattern()=prefs.getString("clock_day_format","EEE")
         ?.takeIf{it in clockDayFormats} ?: "EEE"
-    private fun clockDatePattern()=prefs.getString("clock_date_format","dd MMM yyyy")
-        ?.takeIf{it in clockDateFormats} ?: "dd MMM yyyy"
+    private fun clockDatePattern()=prefs.getString("clock_date_format","dd MMM yy")
+        ?.takeIf{it in clockDateFormats} ?: "dd MMM yy"
     private fun clockTimePattern()=prefs.getString("clock_time_format",null)
         ?.takeIf{it in clockTimeFormats}
         ?: if(prefs.getBoolean("clock_24h",false))"HH:mm:ss" else "hh:mm:ss a"
@@ -6308,16 +6308,17 @@ class MainActivity: Activity() {
         val dayEnabled=prefs.getBoolean("clock_show_day",true)
         val timeEnabled=prefs.getBoolean("clock_show_time",true)
         val datePageEnabled=dateEnabled || dayEnabled
-        val dateMs=prefs.getInt("clock_date_seconds",2).coerceIn(1,30)*1000L
-        val timeMs=prefs.getInt("clock_time_seconds",5).coerceIn(1,30)*1000L
-        val cycleMs=dateMs+timeMs
+        val dateMs=prefs.getInt("clock_date_seconds",5).coerceIn(1,30)*1000L
+        val timeMs=prefs.getInt("clock_time_seconds",10).coerceIn(1,30)*1000L
         val start=android.os.SystemClock.elapsedRealtime()
         // Date and time have independent durations; time remains live on every
         // second boundary and never freezes for the length of a rotation.
         fun render(){
             val elapsed=android.os.SystemClock.elapsedRealtime()-start
-            val showDate=datePageEnabled &&
-                (!timeEnabled || elapsed%cycleMs<dateMs)
+            // Default rotation starts with LIVE TIME for 10 seconds, then
+            // shows day/date for 5 seconds; both timings are configurable.
+            val showDate=ClockOverlayPolicy.showDate(elapsed,timeMs,dateMs,
+                timeEnabled,datePageEnabled)
             val now=java.util.Date()
             if(showDate){
                 val segments=mutableListOf<String>()
@@ -6447,11 +6448,11 @@ class MainActivity: Activity() {
             "Show day: "+enabled("clock_show_day"),
             "Show date: "+enabled("clock_show_date"),
             "Show time: "+enabled("clock_show_time"),
-            "Day format: "+if(clockDayPattern()=="EEE")"SAT" else "Saturday",
+            "Day format: "+if(clockDayPattern()=="EEE")"Sat" else "Saturday",
             "Date format: "+java.text.SimpleDateFormat(clockDatePattern(),java.util.Locale.ENGLISH).format(java.util.Date()),
             "Time format: "+clockTimePattern(),
-            "Day / date display: "+prefs.getInt("clock_date_seconds",2).coerceIn(1,30)+" seconds",
-            "Time display: "+prefs.getInt("clock_time_seconds",5).coerceIn(1,30)+" seconds",
+            "Day / date display: "+prefs.getInt("clock_date_seconds",5).coerceIn(1,30)+" seconds",
+            "Time display: "+prefs.getInt("clock_time_seconds",10).coerceIn(1,30)+" seconds",
             "Text size: "+prefs.getInt("clock_size",18)+" sp",
             "Position: "+(prefs.getString("clock_position","Top right") ?: "Top right")
         )
@@ -6495,7 +6496,7 @@ class MainActivity: Activity() {
                     7,8->{
                         val key=if(which==7)"clock_date_seconds" else "clock_time_seconds"
                         val seconds=intArrayOf(1,2,3,4,5,6,8,10,15,20,30)
-                        val current=prefs.getInt(key,if(which==7)2 else 5).coerceIn(1,30)
+                        val current=prefs.getInt(key,if(which==7)5 else 10).coerceIn(1,30)
                         val picker=AlertDialog.Builder(this)
                             .setTitle(if(which==7)"Day / date duration" else "Time duration")
                             .setSingleChoiceItems(seconds.map{it.toString()+" seconds"}.toTypedArray(),
@@ -6740,6 +6741,14 @@ class MainActivity: Activity() {
         // This prebuffers the highlighted channel without disrupting the
         // foreground picture or claiming an unsafe instant handoff.
         if(prefs.getBoolean("live_channel_preview",false))showVideoPreview(previewIndex)
+        // Only the visual channel preview times out; do not retune or interrupt
+        // the currently playing channel. Each UP/DOWN press restarts this timer.
+        val requested=previewIndex
+        val dismiss=Runnable{
+            if(previewIndex==requested)clearChannelPreview()
+        }
+        previewTask=dismiss
+        handler.postDelayed(dismiss,prefs.getInt("channel_preview_seconds",5).coerceIn(1,30)*1000L)
     }
     private fun screenInfoOnStart(index:Int){
         handler.postDelayed({if(active==index)showChannelInfo(index)},500)
@@ -9775,6 +9784,20 @@ class MainActivity: Activity() {
         root.addView(settingsToggle("Household profiles","nextv_profiles_enabled",true))
         root.addView(settingsToggle("Settings backup and restore","nextv_backup_enabled",true))
         root.addView(settingsToggle("Live channel preview","live_channel_preview",false))
+        root.addView(button("UP/DOWN channel preview timeout: "+
+            prefs.getInt("channel_preview_seconds",5).coerceIn(1,30)+" seconds"){
+            val options=intArrayOf(1,2,3,4,5,6,8,10,15,20,30)
+            val current=prefs.getInt("channel_preview_seconds",5).coerceIn(1,30)
+            showSideDialog(AlertDialog.Builder(this)
+                .setTitle("Channel preview timeout")
+                .setSingleChoiceItems(options.map{it.toString()+" seconds"}.toTypedArray(),
+                    options.indexOf(current)){dialog,choice->
+                    prefs.edit().putInt("channel_preview_seconds",options[choice]).apply()
+                    dialog.dismiss()
+                    settings()
+                }.setNegativeButton("Cancel",null).create())
+        })
+        root.addView(label("The UP/DOWN channel information disappears after the chosen idle period. Press OK before it closes to tune the selected channel."))
         root.addView(settingsToggle("Preload adjacent Media3 channel (one only)","myview_instant_preload_enabled",true))
         root.addView(label("Uses one silent background Media3 preparation after picture is stable. On supported TVs, ready channels hand over without reopening the stream. LibVLC, locked channels and unsupported formats use normal switching."))
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
