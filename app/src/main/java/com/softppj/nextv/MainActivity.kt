@@ -2161,22 +2161,24 @@ class MainActivity: Activity() {
     private fun armEpgTune(){
         epgTuneTask?.let{handler.removeCallbacks(it)}
         epgTuneTask=null
+        if(!prefs.getBoolean("nextv_epg_enabled",true) || isFinishing || isDestroyed)return
         val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))
         val now=System.currentTimeMillis()
         val upcoming=(0 until saved.length()).mapNotNull{saved.optJSONObject(it)}
             .filter{it.optLong("start")>now-120000L}
             .minByOrNull{it.optLong("start")} ?:return
         val start=upcoming.optLong("start")
-        // If a scheduled event becomes due while HomeTV is backgrounded,
-        // retain it for the short delivery window and poll at one-minute
-        // intervals. A zero-delay loop here would spin continuously in background.
-        val delay=if(start<=now && !appInForeground)60_000L
-            else (start-now).coerceAtLeast(0L).coerceAtMost(60_000L)
+        // A due event cannot be delivered while licence validation is pending
+        // or the Activity is backgrounded. Recheck in one minute rather than
+        // posting endlessly at zero delay on the UI thread.
+        val mayDeliver=appInForeground && licenseReady && !isFinishing && !isDestroyed
+        val delay=EpgGuidePolicy.nextReminderDelayMs(start,now,mayDeliver)
         val task=Runnable{checkEpgTune()}
         epgTuneTask=task
         handler.postDelayed(task,delay)
     }
     private fun checkEpgTune(){
+        if(!prefs.getBoolean("nextv_epg_enabled",true) || isFinishing || isDestroyed)return
         val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))
         val now=System.currentTimeMillis()
         val keep=JSONArray()
@@ -10289,7 +10291,11 @@ class MainActivity: Activity() {
             .setPositiveButton("Close",null).show()
     }
     private fun onFeatureToggleChanged(key:String,enabled:Boolean){
-        if(enabled)return
+        if(enabled){
+            // Re-enable saved reminders that were suspended by EPG OFF.
+            if(key=="nextv_epg_enabled")armEpgTune()
+            return
+        }
         when(key){
             "auto_hidden_channel_check","background_hidden_channel_check"->{
                 // Disabling an automatic check must never interrupt a scan

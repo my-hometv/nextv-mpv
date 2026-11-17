@@ -4,6 +4,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EpgGuidePolicyTest {
+    @Test fun dueReminderBacksOffWhenLicenceNotReadyOrAppBackgrounded() {
+        assertEquals(60_000L,EpgGuidePolicy.nextReminderDelayMs(1000L,2000L,false))
+        assertEquals(0L,EpgGuidePolicy.nextReminderDelayMs(1000L,2000L,true))
+    }
+
+    @Test fun upcomingReminderRetainsBoundedTimerAndDoesNotMissDueTime() {
+        assertEquals(30_000L,EpgGuidePolicy.nextReminderDelayMs(60_000L,30_000L,false))
+        assertEquals(60_000L,EpgGuidePolicy.nextReminderDelayMs(900_000L,30_000L,true))
+        assertEquals(0L,EpgGuidePolicy.nextReminderDelayMs(30_000L,30_000L,true))
+        assertEquals(60_000L,EpgGuidePolicy.nextReminderDelayMs(30_000L,30_000L,false))
+    }
+
     @Test fun visibleChannelsRemainEvenWithoutProgrammeData() {
         val visible=listOf(0,1,4,7)
         assertEquals(visible,EpgGuidePolicy.rows(visible,8))
