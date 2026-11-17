@@ -3,7 +3,12 @@ package com.softppj.nextv
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk=[28])
 class PortableSettingsCodecTest {
     @Test fun portableTypedPreferencesSurviveFullRoundTrip() {
         val input:Map<String,Any> = mapOf(
