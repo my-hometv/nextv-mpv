@@ -10905,6 +10905,24 @@ class MainActivity: Activity() {
                     }
                 }
             }
+            // After returning Home or a menu, restart optional scan work
+            // only after the remote/key burst has settled. A new foreground
+            // tune advances playbackGeneration and cancels this opportunity.
+            val idleGeneration=playbackGeneration
+            if(VideoQualityPolicy.mayResumeIdleChecks(
+                appInForeground,licenseReady,active>=0,
+                playbackTeardownInProgress,prefs.getBoolean("background_url_checks",false),
+                safeStartupMode
+            )){
+                handler.postDelayed({
+                    if(idleGeneration==playbackGeneration && !isFinishing && !isDestroyed &&
+                        VideoQualityPolicy.mayResumeIdleChecks(
+                            appInForeground,licenseReady,active>=0,
+                            playbackTeardownInProgress,
+                            prefs.getBoolean("background_url_checks",false),safeStartupMode
+                        ))startBackgroundChannelChecks()
+                },1800L)
+            }
         }
     }
     override fun onTrimMemory(level:Int){
