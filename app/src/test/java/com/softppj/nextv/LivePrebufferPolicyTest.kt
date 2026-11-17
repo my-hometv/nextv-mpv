@@ -53,6 +53,23 @@ class LivePrebufferPolicyTest {
         assertTrue(LivePrebufferPolicy.mayAdopt(true, true, true, true, true))
     }
 
+    @Test fun customPicturePresetMustUseFullRendererInsteadOfPreparedPlayer() {
+        assertFalse(LivePrebufferPolicy.mayAdopt(
+            licenseReady = true,
+            correctIdentity = true,
+            ready = true,
+            engineIsMedia3 = true,
+            unlocked = true,
+            picturePresetIsStandard = false))
+        assertTrue(LivePrebufferPolicy.mayAdopt(
+            licenseReady = true,
+            correctIdentity = true,
+            ready = true,
+            engineIsMedia3 = true,
+            unlocked = true,
+            picturePresetIsStandard = true))
+    }
+
     @Test fun lockedOrMismatchedPreparedChannelCannotBeAdopted() {
         assertFalse(LivePrebufferPolicy.mayAdopt(true, false, true, true, true))
         assertFalse(LivePrebufferPolicy.mayAdopt(true, true, true, true, false))
