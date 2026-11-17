@@ -44,6 +44,22 @@ class IsolatedVlcRegistryTest {
         assertNotNull(registry.resolve(healthy.engineId))
     }
 
+    @Test fun linkageFailureDuringReadinessDoesNotHideHealthyRuntime() {
+        val broken = object : IsolatedVlcRuntime {
+            override val engineId = "LibVLC-3.7.7"
+            override val version = "3.7.7"
+            override fun isAvailable(): Boolean { throw UnsatisfiedLinkError("native library missing") }
+            override fun start(url: String, generation: Long) = false
+            override fun stop(generation: Long) {}
+            override fun release() {}
+        }
+        val healthy = Fake("3.5.1", true)
+        val registry = IsolatedVlcRegistry(listOf(broken, healthy))
+        assertEquals(setOf("LibVLC-3.5.1"), registry.verifiedIds())
+        assertNull(registry.resolve(broken.engineId))
+        assertNotNull(registry.resolve(healthy.engineId))
+    }
+
     @Test fun linkageFailureDuringReleaseDoesNotLeakNextRuntime() {
         val first = object : IsolatedVlcRuntime {
             override val engineId = "LibVLC-3.5.1"
