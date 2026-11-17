@@ -9465,6 +9465,7 @@ class MainActivity: Activity() {
             }
             private var startPending=false
             private var surfaceRequestGeneration=0
+            private var isolatedStartTimeout:Runnable?=null
             private fun watchPlayback() {
                 val check=object:Runnable {
                     override fun run() {
@@ -9521,6 +9522,22 @@ class MainActivity: Activity() {
                 val surface=holder.surface
                 val request=++surfaceRequestGeneration
                 startPending=true
+                val timeout=Runnable{
+                    if(startPending && request==surfaceRequestGeneration &&
+                        active==index && videoScreen===screen &&
+                        playbackGeneration==activityGeneration){
+                        // Binder has not answered. Do not wait indefinitely;
+                        // invalidate this request before switching engine.
+                        startPending=false
+                        surfaceRequestGeneration++
+                        isolatedStartTimeout=null
+                        if(surfaceRecovery.requestRecovery()){
+                            showBanner("Native engine took too long. Trying recovery.",true)
+                            handleEngineFailure(index,screen)
+                        }
+                    }
+                }
+                isolatedStartTimeout=timeout
                 // A remote-start IPC can take seconds. Never invoke it on
                 // surfaceCreated's main thread or while handling a remote key.
                 val queued=isolatedVlcOps.submit{
@@ -9531,6 +9548,10 @@ class MainActivity: Activity() {
                         false
                     }
                     handler.post{
+                        if(isolatedStartTimeout===timeout){
+                            handler.removeCallbacks(timeout)
+                            isolatedStartTimeout=null
+                        }
                         if(request!=surfaceRequestGeneration || !surfaceRecovery.canStart() ||
                             !surface.isValid || active!=index || videoScreen!==screen ||
                             playbackGeneration!=activityGeneration){
@@ -9551,12 +9572,15 @@ class MainActivity: Activity() {
                 }
                 if(!queued){
                     startPending=false
+                    isolatedStartTimeout=null
                     if(surfaceRecovery.requestRecovery())handleEngineFailure(index,screen)
-                }
+                }else handler.postDelayed(timeout,12000L)
             }
             override fun surfaceChanged(holder:SurfaceHolder,format:Int,width:Int,height:Int) = Unit
             override fun surfaceDestroyed(holder:SurfaceHolder) {
                 cancelPoll()
+                isolatedStartTimeout?.let{handler.removeCallbacks(it)}
+                isolatedStartTimeout=null
                 watchdog=null
                 val wasAttached=attached
                 val wasStarting=startPending
