@@ -2240,6 +2240,8 @@ class MainActivity: Activity() {
     private data class EpgProgramme(val start:Long,val end:Long,val title:String,val description:String)
     @Volatile private var epgGuide:Map<String,List<EpgProgramme>> = emptyMap()
     @Volatile private var epgLoadedAt=0L
+    // Reject stale parsing results and callbacks after EPG is disabled.
+    @Volatile private var epgLoadGeneration=0
     private fun epgTime(value:String?):Long{
         if(value.isNullOrBlank())return 0L
         val m=Regex("""^(\d{14})(?:\s*([+-]\d{4}))?""").find(value.trim()) ?:return 0L
@@ -2339,6 +2341,8 @@ class MainActivity: Activity() {
         }
     }
     private fun loadEpg(done:(Boolean)->Unit){
+        if(!prefs.getBoolean("nextv_epg_enabled",true)){done(false);return}
+        val generation=epgLoadGeneration
         val urls=epgUrls()
         if(urls.isEmpty()){done(false);return}
         if(epgGuide.isNotEmpty() && System.currentTimeMillis()-epgLoadedAt<60*60*1000L){
@@ -2348,6 +2352,7 @@ class MainActivity: Activity() {
             val combined=mutableMapOf<String,MutableMap<Long,EpgProgramme>>()
             var loaded=0
             for(url in urls){
+                if(generation!=epgLoadGeneration)break
                 try{
                     val connection=URL(url).openConnection().apply{
                         connectTimeout=8000;readTimeout=20000;useCaches=false
@@ -2370,6 +2375,7 @@ class MainActivity: Activity() {
                         var channel="";var start=0L;var end=0L;var title="";var description=""
                         var event=parser.eventType
                         while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT){
+                            if(generation!=epgLoadGeneration)break
                             if(event==org.xmlpull.v1.XmlPullParser.START_TAG){
                                 when(parser.name){
                                     "programme"->{
@@ -2401,11 +2407,15 @@ class MainActivity: Activity() {
                     HomeTvDiagnostics.w("HomeTV","EPG source failed: "+url,e)
                 }
             }
+            if(generation!=epgLoadGeneration)return@thread
             if(loaded>0){
                 epgGuide=combined.mapValues{(_,v)->v.values.sortedBy{it.start}}
                 epgLoadedAt=System.currentTimeMillis()
             }
-            runOnUiThread{done(loaded>0 || epgGuide.isNotEmpty())}
+            runOnUiThread{
+                if(generation==epgLoadGeneration && prefs.getBoolean("nextv_epg_enabled",true) &&
+                    !isFinishing && !isDestroyed)done(loaded>0 || epgGuide.isNotEmpty())
+            }
         }
     }
     private fun showChannelEpg(i:Int){
@@ -10320,6 +10330,7 @@ class MainActivity: Activity() {
                 networkRecoveryTask=null
             }
             "nextv_epg_enabled"->{
+                epgLoadGeneration++
                 epgTuneTask?.let{handler.removeCallbacks(it)}
                 epgTuneTask=null
             }
