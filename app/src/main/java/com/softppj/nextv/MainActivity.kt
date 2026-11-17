@@ -3147,7 +3147,7 @@ class MainActivity: Activity() {
     private fun bufferProfile():String{
         val channel=channels.getOrNull(active)
         val override=channel?.let{prefs.getString("buffer_channel_"+channelKey(it),null)}
-        return override ?: (prefs.getString("buffer_profile","Auto") ?: "Auto")
+        return override ?: (prefs.getString("buffer_profile","Auto") ?: "Best Available")
     }
     private fun bufferValues():IntArray=when(bufferProfile()){
         "Auto"->bufferLevelValues(autoBufferLevel)
@@ -3366,7 +3366,7 @@ class MainActivity: Activity() {
                 if(engineEnabled(it))return it
             }
         }
-        val universal=prefs.getString("engine","Auto") ?: "Auto"
+        val universal=prefs.getString("engine","Auto") ?: "Best Available"
         if(prefs.getBoolean("libvlc_only_"+hash(c.url),false) && engineEnabled("LibVLC"))return "LibVLC"
         if(engineEnabled(universal))return universal
         return PlaybackEnginePolicy.firstEnabled(initialEngines(c))
@@ -3376,7 +3376,7 @@ class MainActivity: Activity() {
         val returnToPlaybackDrawer=videoScreen?.findViewWithTag<View>("settings_drawer")!=null
         val c=channels[i]
         val universal=(prefs.getString("engine","Media3") ?: "Media3")
-            .takeIf(::engineEnabled) ?: "Auto"
+            .takeIf(::engineEnabled) ?: "Best Available"
         val available=enabledEngines()
         val choices=(listOf("Auto (Universal: "+playbackEngineLabel(universal)+")")+
             available.map(::playbackEngineLabel)).toTypedArray()
@@ -6205,8 +6205,8 @@ class MainActivity: Activity() {
             if(isManuallyHidden(c))"Unhide channel" else "Hide channel",
             if(isLocked(c))"Unlock channel" else "Lock channel",
             "Alternative Source ("+(alternateIndices(active).size)+" streams)",
-            "Aspect Ratio ("+(prefs.getString("screen_channel_"+hash(c.url),null) ?: prefs.getString("screen_mode","Fit"))+")",
-            "Picture Quality ("+(prefs.getString("quality_channel_"+hash(c.url),null) ?: prefs.getString("quality_global","Auto"))+")",
+            "Aspect Ratio ("+(prefs.getString("screen_channel_"+hash(c.url),null) ?: prefs.getString("screen_mode","16:9"))+")",
+            "Picture Quality ("+(prefs.getString("quality_channel_"+hash(c.url),null) ?: prefs.getString("quality_global","Best Available"))+")",
             "Audio tracks",
             "Subtitles",
             "Sleep timer",
@@ -7505,7 +7505,7 @@ class MainActivity: Activity() {
         screen.findViewWithTag<View>("settings_drawer")?.let{screen.removeView(it);return}
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
         val options=arrayOf(
-            "Default screen fit: "+(prefs.getString("screen_mode","Fit") ?: "Fit"),
+            "Default screen fit: "+(prefs.getString("screen_mode","16:9") ?: "16:9"),
             "Channel screen fit: "+screenMode(),
             "Stream quality","Buffering profile","Audio track","Preferred audio language","Subtitle settings","Sleep timer","Playback engine",
             "Clock display","Select stream source","Home","Live TV settings","Channel volume",
@@ -7572,7 +7572,7 @@ class MainActivity: Activity() {
     private fun qualityMode(index:Int?=active.takeIf{it>=0}):String{
         val url=index?.let{channels.getOrNull(it)?.url}
         if(url!=null)prefs.getString("quality_channel_"+hash(url),null)?.let{return it}
-        return prefs.getString("quality_global","Auto") ?: "Auto"
+        return prefs.getString("quality_global","Best Available") ?: "Best Available"
     }
     private var qualityUpgradeTask:Runnable?=null
     private fun scheduleQualityUpgrade(){
@@ -7737,16 +7737,16 @@ class MainActivity: Activity() {
         val url=index?.let{channels.getOrNull(it)?.url}
         val key=url?.let{"quality_channel_"+hash(it)}
         val options=if(key!=null)arrayOf("Use universal default")+qualityModes else qualityModes
-        val current=if(key!=null)prefs.getString(key,null) else prefs.getString("quality_global","Auto")
+        val current=if(key!=null)prefs.getString(key,null) else prefs.getString("quality_global","Best Available")
         val selected=if(key!=null && current==null)0 else options.indexOf(current).coerceAtLeast(0)
         var pending=selected
         previewQualityIndex=index ?: active
-        previewQualityMode=if(key!=null && pending==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[pending]
+        previewQualityMode=if(key!=null && pending==0) prefs.getString("quality_global","Best Available") ?: "Best Available" else options[pending]
         val dialog=AlertDialog.Builder(this)
             .setTitle(if(index!=null)numberFor(index).toString()+". "+channels[index].name+" Settings — Picture Quality" else "Default stream quality")
             .setSingleChoiceItems(options,selected){_,choice->
                 pending=choice
-                previewQualityMode=if(key!=null && choice==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[choice]
+                previewQualityMode=if(key!=null && choice==0) prefs.getString("quality_global","Best Available") ?: "Best Available" else options[choice]
                 if(index==null || index==active)player?.let{applyQualityMode(it,previewQualityMode!!)}
             }
             .setPositiveButton("OK"){_,_->
@@ -7769,7 +7769,7 @@ class MainActivity: Activity() {
             list.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
                 override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){
                     pending=position;list.setItemChecked(position,true)
-                    previewQualityMode=if(key!=null && position==0) prefs.getString("quality_global","Auto") ?: "Auto" else options[position]
+                    previewQualityMode=if(key!=null && position==0) prefs.getString("quality_global","Best Available") ?: "Best Available" else options[position]
                     if(index==null || index==active)player?.let{applyQualityMode(it,previewQualityMode!!)}
                 }
                 override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
@@ -7792,7 +7792,7 @@ class MainActivity: Activity() {
             val saved=prefs.getString("screen_channel_"+hash(url),null)
             if(saved!=null)return saved
         }
-        return prefs.getString("screen_mode","Fit") ?: "Fit"
+        return prefs.getString("screen_mode","16:9") ?: "16:9"
     }
     private fun resizeMode():Int=when(screenMode()){
         "Stretch"->androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -7891,7 +7891,7 @@ class MainActivity: Activity() {
         val target=channelIndex?.takeIf{it in channels.indices}
         val key=if(target!=null)"screen_channel_"+hash(channels[target].url) else "screen_mode"
         val original=prefs.getString(key,null)
-        val universal=prefs.getString("screen_mode","Fit") ?: "Fit"
+        val universal=prefs.getString("screen_mode","16:9") ?: "16:9"
         val labels=if(target!=null)arrayOf("Use universal default")+screenModes else screenModes
         val selected=if(target!=null && original==null)0 else labels.indexOf(original ?: universal).coerceAtLeast(0)
         var pending=selected
@@ -9354,8 +9354,8 @@ class MainActivity: Activity() {
         val items=arrayOf(
             "Playback engine: "+(prefs.getString("engine","Media3")?:"Media3"),
             "Buffering profile: "+bufferProfile(),
-            "Default stream quality: "+(prefs.getString("quality_global","Auto")?:"Auto"),
-            "Default screen fit: "+(prefs.getString("screen_mode","Fit")?:"Fit"),
+            "Default stream quality: "+(prefs.getString("quality_global","Best Available")?:"Auto"),
+            "Default screen fit: "+(prefs.getString("screen_mode","16:9")?:"Fit"),
             "Automatic reconnection: "+if(prefs.getBoolean("auto_reconnect",true))"ON" else "OFF",
             "Resume previous channel: "+if(prefs.getBoolean("resume",true))"ON" else "OFF",
             "Clock display",
@@ -9863,9 +9863,9 @@ class MainActivity: Activity() {
             root.addView(label("Android 10+: MyView cannot reliably launch itself from a normal boot receiver. Open NexTV from your TV launcher, or use an OEM-supported auto-start setting if available."))
             root.addView(label("Automatic last-channel playback starts when MyView is opened, after licensing and parental checks. The legacy boot toggle has no effect on Android 10+."))
         }
-        root.addView(button("Default stream quality: "+(prefs.getString("quality_global","Auto") ?: "Auto")){selectQuality()})
+        root.addView(button("Default stream quality: "+(prefs.getString("quality_global","Best Available") ?: "Best Available")){selectQuality()})
         root.addView(label("Auto uses the original quality offered by the active playback engine/stream. Manual resolution preferences apply only where the engine and stream support them."))
-        root.addView(button("Default screen fit: "+(prefs.getString("screen_mode","16:9") ?: "Fit")){selectScreenMode()})
+        root.addView(button("Default screen fit: "+(prefs.getString("screen_mode","16:9") ?: "16:9")){selectScreenMode()})
         root.addView(button("Remote LEFT action: "+(prefs.getString("side_left","Channel list") ?: "Channel list")){chooseSideAction("left")})
         root.addView(button("Remote RIGHT action: "+(prefs.getString("side_right","Channel settings") ?: "Channel settings")){chooseSideAction("right")})
         root.addView(button("Clock display"){clockSettings()})
