@@ -136,6 +136,14 @@ class MyViewIntegrationContracts(unittest.TestCase):
         ):
             self.assertIn(marker, self.activity)
 
+    def test_poster_artwork_is_size_and_concurrency_bounded(self):
+        self.assertIn("LruCache<String,android.graphics.Bitmap>(12*1024*1024)", self.activity)
+        self.assertIn("posterExecutor=java.util.concurrent.ThreadPoolExecutor(", self.activity)
+        self.assertIn("ArrayBlockingQueue<Runnable>(64)", self.activity)
+        self.assertIn("BoundedLogoDecoder.decode(it,512)", self.activity)
+        self.assertIn("posterExecutor.shutdownNow()", self.activity)
+        self.assertNotIn("android.graphics.BitmapFactory.decodeStream(it)", self.activity)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
