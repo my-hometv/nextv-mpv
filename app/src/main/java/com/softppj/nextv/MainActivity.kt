@@ -913,7 +913,8 @@ class MainActivity: Activity() {
         dialog.setOnDismissListener{
             multiViewDialog=null
             releaseMultiView()
-            if(appInForeground && !isFinishing && !isDestroyed)showHome()
+            // Never reopen Home or leave a decoder running after license loss.
+            if(licenseReady && appInForeground && !isFinishing && !isDestroyed)showHome()
         }
         dialog.show()
         panel.post{(panel.getChildAt(0) as? LinearLayout)?.getChildAt(0)?.requestFocus()}
@@ -10256,6 +10257,12 @@ class MainActivity: Activity() {
     }
     private fun stopPlayback(){
         cancelRapidSurf()
+        // MultiView owns its own Media3 sessions, separate from the foreground
+        // player. Revocation must stop those decoders immediately.
+        if(MultiViewAccessPolicy.mustReleaseSession(licenseReady)){
+            multiViewDialog?.dismiss()
+            releaseMultiView()
+        }
         if(playbackTeardownInProgress)return
         playbackTeardownInProgress=true
         try{
