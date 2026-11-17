@@ -10164,7 +10164,7 @@ class MainActivity: Activity() {
                 .setItems(arrayOf("Merge with existing settings","Replace existing settings")){_,mode->
                     try{
                         val previousToggles=FeatureTogglePolicy.runtimeToggles
-                            .associate{(key,default)->key to prefs.getBoolean(key,default)}
+                            .mapValues{(key,default)->prefs.getBoolean(key,default)}
                         val edit=prefs.edit()
                         if(mode==1){
                             prefs.all.keys.filter{key->
