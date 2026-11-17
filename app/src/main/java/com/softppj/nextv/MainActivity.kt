@@ -532,11 +532,17 @@ class MainActivity: Activity() {
             (0 until a.length()).mapNotNull{a.optString(it).takeIf(String::isNotBlank)}.distinct()
         }catch(_:Exception){emptyList()}
     }
-    private fun applySavedChannelOrder(indices:List<Int>):List<Int>{
+    private fun applySavedChannelOrder(
+        indices:List<Int>,preloadedOrders:Map<String,List<String>>?=null
+    ):List<Int>{
         if(indices.isEmpty())return indices
         val bySource=indices.groupBy{channels[it].source}
-        return indices.map{channels[it].source}.distinct().flatMap{source->
-            ChannelOrderPolicy.apply(bySource[source].orEmpty(),savedChannelOrder(source)){channelKey(channels[it])}
+        // Only load saved positions once for each distinct playlist, never
+        // once per channel. A 10k-channel list previously ran 10k SHA-256
+        // hashes and SharedPreferences lookups on the remote input thread.
+        return bySource.keys.flatMap{source->
+            val order=preloadedOrders?.get(source) ?:savedChannelOrder(source)
+            ChannelOrderPolicy.apply(bySource[source].orEmpty(),order){channelKey(channels[it])}
         }
     }
     private fun ensureChannelIndex(){
@@ -3076,8 +3082,13 @@ class MainActivity: Activity() {
         }
         val key=if(title=="Favorites")"channel_order_favorites" else "channel_order_all"
         val saved=prefs.getString(viewerKey(key),"") ?: ""
-        if(distinct.any{savedChannelOrder(channels[it].source).isNotEmpty()})
-            return applySavedChannelOrder(distinct)
+        // Do not call savedChannelOrder for every item: with large M3U
+        // playlists this repeated SHA-256 + prefs + JSON work stalled the
+        // UI for 15s on actual Android TV KeyEvents (confirmed ANR trace).
+        val ordersBySource=distinct.asSequence().map{channels[it].source}
+            .distinct().associateWith(::savedChannelOrder)
+        if(ordersBySource.values.any{it.isNotEmpty()})
+            return applySavedChannelOrder(distinct,ordersBySource)
         if(saved.isBlank())return distinct
         val positions=try{
             val array=JSONArray(saved)
