@@ -778,6 +778,25 @@ class MainActivity: Activity() {
     private var videoScreen:FrameLayout?=null
     private var currentPlayerView:PlayerView?=null
     private val handler=Handler(Looper.getMainLooper())
+    // Only detached LibVLC native instances may be stopped on this worker.
+    // Media3 and SurfaceView methods stay on the Android application looper.
+    private val nativeVlcCleanup=NativeVlcCleanupQueue()
+    private fun enqueueDetachedVlcCleanup(probe:VlcPlayer?,core:LibVLC?){
+        if(probe==null && core==null)return
+        val accepted=nativeVlcCleanup.submit{
+            try{probe?.stop()}catch(e:Throwable){
+                HomeTvDiagnostics.w("Playback","Detached LibVLC stop failed",e)
+            }
+            try{probe?.release()}catch(e:Throwable){
+                HomeTvDiagnostics.w("Playback","Detached LibVLC release failed",e)
+            }
+            try{core?.release()}catch(e:Throwable){
+                HomeTvDiagnostics.w("Playback","Detached LibVLC core release failed",e)
+            }
+        }
+        if(!accepted)HomeTvDiagnostics.w("Playback",
+            "Detached LibVLC cleanup queue was already closed")
+    }
     // Main-thread playback teardown is reentrant when native players dispatch callbacks.
     private var playbackTeardownInProgress=false
     // Preserve the latest remote recovery command during reentrant native teardown.
@@ -4712,7 +4731,6 @@ class MainActivity: Activity() {
     // Track releases queued behind a foreground command. onDestroy cancels
     // Handler callbacks, so it must reclaim anything not yet disposed.
     private val abandonedMedia3Probes=mutableSetOf<ExoPlayer>()
-    private val abandonedVlcProbes=mutableListOf<Pair<VlcPlayer?,LibVLC?>>()
     // A remote navigation key wins over speculative network/decoder activity.
     // These resources are released after the current key is dispatched so
     // native stop() cannot block the UI from honoring the key itself.
@@ -4757,24 +4775,10 @@ class MainActivity: Activity() {
                 }
             },350L+position*50L)
         }
-        if(oldVlcProbe!=null || oldVlcCore!=null){
-            val orphan=oldVlcProbe to oldVlcCore
-            abandonedVlcProbes.add(orphan)
-            handler.postDelayed({
-                if(abandonedVlcProbes.remove(orphan)){
-                    try{oldVlcProbe?.stop()}catch(e:Exception){
-                        HomeTvDiagnostics.w("RemoteInput","Native probe stop",e)
-                    }finally{
-                        try{oldVlcProbe?.release()}catch(e:Exception){
-                            HomeTvDiagnostics.w("RemoteInput","Native probe release",e)
-                        }
-                        try{oldVlcCore?.release()}catch(e:Exception){
-                            HomeTvDiagnostics.w("RemoteInput","Native core release",e)
-                        }
-                    }
-                }
-            },500L)
-        }
+        // These probes have no attached Surface; only the detached old
+        // instances are handed to the serial native worker.
+        if(oldVlcProbe!=null || oldVlcCore!=null)
+            enqueueDetachedVlcCleanup(oldVlcProbe,oldVlcCore)
         // Do not blindly cancel a different engine's newer recovery scan.
         // Foreground retuning/teardown owns cancellation of its recovery work.
     }
@@ -10833,15 +10837,20 @@ class MainActivity: Activity() {
         try{oldPlayer?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","Media3 cleanup failed",e)}
         activeChannelGainProcessor=null
         val oldVlc=vlcPlayer
-        vlcPlayer=null
-        oldVlc?.let{v->
-            try{v.stop()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC stop failed",e)}
-            try{v.vlcVout.detachViews()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC detach failed",e)}
-            try{v.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC release failed",e)}
-        }
         val oldCore=vlcCore
+        vlcPlayer=null
         vlcCore=null
-        try{oldCore?.release()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","LibVLC core cleanup failed",e)}
+        // Detach the Activity-owned Surface on the UI thread. Potentially
+        // blocking native stop/release runs serially off the key handler.
+        oldVlc?.let{v->
+            try{v.setEventListener(null)}catch(e:Throwable){
+                HomeTvDiagnostics.w("Playback","LibVLC listener detach failed",e)
+            }
+            try{v.vlcVout.detachViews()}catch(e:Throwable){
+                HomeTvDiagnostics.w("Playback","LibVLC view detach failed",e)
+            }
+        }
+        enqueueDetachedVlcCleanup(oldVlc,oldCore)
         val oldWeb=web
         web=null
         try{oldWeb?.onPause();oldWeb?.destroy()}catch(e:Throwable){HomeTvDiagnostics.w("Playback","WebView cleanup failed",e)}
@@ -10907,12 +10916,6 @@ class MainActivity: Activity() {
             try{probe.stop()}catch(_:Exception){}
             try{probe.release()}catch(_:Exception){}
         }
-        abandonedVlcProbes.toList().forEach{(probe,core)->
-            abandonedVlcProbes.remove(probe to core)
-            try{probe?.stop()}catch(_:Exception){}
-            try{probe?.release()}catch(_:Exception){}
-            try{core?.release()}catch(_:Exception){}
-        }
         stopPlayback()
         // Drop in-memory caches and queued UI work on final exit. Keep the
         // persistent playlist files, preferences and validated license cache.
@@ -10932,6 +10935,9 @@ class MainActivity: Activity() {
         isolatedVlcSessions.release()
         isolatedVlcClient?.close()
         isolatedVlcClient = null
+        // Detached native sessions already submitted to the worker finish in
+        // order; do not block the Activity main thread waiting for shutdown.
+        nativeVlcCleanup.shutdown()
         super.onDestroy()
     }
 }
