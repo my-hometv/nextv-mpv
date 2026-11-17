@@ -148,6 +148,34 @@ internal object HomeTvDiagnostics {
         files.forEach { if (it.lastModified() < cutoff) it.delete() }
     }
 
+    // An abrupt native process crash cannot execute Kotlin's uncaught exception
+    // handler. Android 11+ records its exit reason outside our process, so add
+    // that information to a user-exported report on the next launch.
+    private fun recentProcessExits(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return ""
+        val context = appContext ?: return ""
+        return try {
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                ?: return ""
+            val entries = manager.getHistoricalProcessExitReasons(context.packageName, 0, 5)
+                .filter { exit ->
+                    exit.reason == ApplicationExitInfo.REASON_CRASH ||
+                        exit.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
+                        exit.reason == ApplicationExitInfo.REASON_ANR ||
+                        exit.reason == ApplicationExitInfo.REASON_INITIALIZATION_FAILURE
+                }
+            if (entries.isEmpty()) "" else "===== Recent Android process exits =====\n" +
+                entries.joinToString("\n") { exit ->
+                    "time=" + Date(exit.timestamp) +
+                        " reason=" + exit.reason +
+                        " status=" + exit.status +
+                        " description=" + redact((exit.description ?: "").take(1000))
+                } + "\n"
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     @Synchronized fun readReport(): String {
         val dir = appContext?.let { File(it.filesDir, "diagnostics") } ?: return ""
         prune(dir)
@@ -159,6 +187,7 @@ internal object HomeTvDiagnostics {
                 redact(file.readText(Charsets.UTF_8).takeLast(MAX_REPORT_CHARS))
             } catch (_: Exception) { "[Unable to read log]\n" }
         }
-        return if (all.length > MAX_REPORT_CHARS) all.takeLast(MAX_REPORT_CHARS) else all
+        val report = all + (if (all.isNotEmpty()) "\n" else "") + recentProcessExits()
+        return if (report.length > MAX_REPORT_CHARS) report.takeLast(MAX_REPORT_CHARS) else report
     }
 }
