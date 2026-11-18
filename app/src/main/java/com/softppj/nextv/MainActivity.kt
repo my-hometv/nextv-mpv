@@ -4541,7 +4541,7 @@ class MainActivity: Activity() {
                 val list=playlists()
                 list.add(Playlist(title,result))
                 savePlaylists(list)
-                refresh({managePlaylists()},true)
+                refresh({startAddedPlaylist(title)},true)
             }
         }
     }
@@ -4648,7 +4648,7 @@ class MainActivity: Activity() {
                 val list=playlists()
                 list.add(Playlist(displayName,file.toURI().toString()))
                 savePlaylists(list)
-                runOnUiThread{refresh({managePlaylists()},true)}
+                runOnUiThread{refresh({startAddedPlaylist(displayName)},true)}
             }catch(e:Exception){
                 runOnUiThread{Toast.makeText(this,"Import failed: "+e.message,Toast.LENGTH_LONG).show()}
             }
@@ -4677,7 +4677,7 @@ class MainActivity: Activity() {
                     val list=playlists()
                     list.add(Playlist(n,url))
                     savePlaylists(list)
-                    refresh({managePlaylists()},true)
+                    refresh({startAddedPlaylist(n)},true)
                 }
             }.setNegativeButton("Cancel",null).show()
     }
@@ -4734,6 +4734,22 @@ class MainActivity: Activity() {
         root.addView(button("Add Xtream Codes account"){addXtream()})
         root.addView(button("Back"){showHome()})
     }
+    private fun startAddedPlaylist(name:String){
+        if(!licenseReady || isFinishing || isDestroyed)return
+        // New playlists start at their own first channel, not the saved
+        // channel of whichever playlist was previously active.
+        val first=channels.indexOfFirst{it.source==name && it.mediaType=="live"}
+            .takeIf{it>=0} ?:channels.indexOfFirst{it.source==name}
+        if(first !in channels.indices){
+            Toast.makeText(this,"New playlist has no channels available yet",Toast.LENGTH_LONG).show()
+            return
+        }
+        prefs.edit().putString("selected_playlist_source",name)
+            .putBoolean(viewerKey("favorites_surfing"),false).apply()
+        setActiveFavoriteGroup(null)
+        invalidateSurfingCache()
+        playIndex(preferredChannel(first))
+    }
     private fun editPlaylist(index:Int?,fromPlaybackDrawer:Boolean=false){
         val old=index?.let{playlists()[it]}
         val layout=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
@@ -4748,8 +4764,8 @@ class MainActivity: Activity() {
                 savePlaylists(list)
                 Toast.makeText(this,"Downloading and saving playlist…",Toast.LENGTH_SHORT).show()
                 refresh({
-                    if(fromPlaybackDrawer){
-                        // Stay in the TV player; show the newly added playlist's channels.
+                    if(index==null)startAddedPlaylist(n)
+                    else if(fromPlaybackDrawer){
                         prefs.edit().putString("selected_playlist_source",n).apply()
                         if(videoScreen!=null && active>=0)showPlaylistDrawer()
                         else showHome()
@@ -7365,10 +7381,19 @@ class MainActivity: Activity() {
                         }else{
                             showSideDialog(AlertDialog.Builder(this)
                                 .setTitle("Hide "+channel.name+"?")
-                                .setMessage("Hide this channel from normal channel surfing? You can restore it from Hidden Channels. The currently playing channel will not be interrupted.")
+                                .setMessage("Hide this channel and switch to the next visible channel in the last remote direction? Restore it from Hidden Channels.")
                                 .setPositiveButton("Hide Channel"){_,_->
                                     toggleManualHide(channel)
-                                    if(active==index)showChannelInfo(index)
+                                    if(active==index){
+                                        val next=nextSurfingIndex(index,surfingDirection,surfingIndices())
+                                        if(next in channels.indices && next!=index)
+                                            playIndex(preferredChannel(next))
+                                        else{
+                                            stopPlayback()
+                                            showHome()
+                                            Toast.makeText(this,"No other visible channel available",Toast.LENGTH_LONG).show()
+                                        }
+                                    }
                                 }
                                 .setNegativeButton("Cancel",null).create())
                         }
@@ -10159,7 +10184,24 @@ class MainActivity: Activity() {
             return available[(filteredPosition+direction+available.size)%available.size]
         }
         val position=key?.let{surfingIndexByChannelKey[it]}
-        if(position==null)return if(direction>0)available.first() else available.last()
+        if(position==null){
+            // Explicitly selected hidden channels are absent from the filtered
+            // surfing list. Preserve their original position for both remote
+            // directions rather than jumping to the first/last channel.
+            val group=activeFavoriteGroup()
+            val favoritesOnly=prefs.getBoolean(viewerKey("favorites_surfing"),false)
+            val scope=if(group!=null || favoritesOnly)visibleIndices() else playlistIndices()
+            val candidates=when{
+                group!=null->HomeTvPolicies.favoriteGroupIndices(channels,scope,favoriteGroupMembers(group))
+                favoritesOnly->scope.filter{isFavorite(channels[it])}
+                else->scope
+            }
+            val ordered=orderedChannelIndices(group ?: if(favoritesOnly)"Favorites" else "All channels",candidates)
+            val anchor=ordered.firstOrNull{candidate->
+                channels.getOrNull(candidate)?.let{channelKey(it)==key}==true
+            } ?:current
+            return HiddenChannelNavigationPolicy.nextFromExcluded(ordered,available,anchor,direction)
+        }
         return available[(position+direction+available.size)%available.size]
     }
     private var rapidSurfTask:Runnable?=null
