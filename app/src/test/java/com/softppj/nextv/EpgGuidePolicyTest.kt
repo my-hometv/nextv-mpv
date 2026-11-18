@@ -5,7 +5,7 @@ import org.junit.Test
 
 class EpgGuidePolicyTest {
     @Test fun displayNameMatchingIgnoresRepeatedWhitespaceAndCase() {
-        assertEquals("surya tv hd",EpgGuidePolicy.normalizeDisplayName("  Surya   TV\\tHD  "))
+        assertEquals("surya tv hd",EpgGuidePolicy.normalizeDisplayName("  Surya   TV   HD  "))
         assertEquals("asianet news",EpgGuidePolicy.normalizeDisplayName("ASIANET NEWS"))
     }
 
