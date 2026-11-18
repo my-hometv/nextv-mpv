@@ -5812,7 +5812,20 @@ class MainActivity: Activity() {
         showSideDialog(dialog)
         first.requestFocus()
     }
-    private fun hash(pin:String)=MessageDigest.getInstance("SHA-256").digest(pin.toByteArray()).joinToString(""){"%02x".format(it)}
+    private fun hash(pin:String):String{
+        // This hash also names per-playlist preferences. Preserve its exact
+        // lowercase SHA-256 hex representation; avoid String.format() for each
+        // byte because Android TV ANR traces showed this on the UI hot path.
+        val digest=MessageDigest.getInstance("SHA-256").digest(pin.toByteArray())
+        val alphabet="0123456789abcdef"
+        return buildString(digest.size*2){
+            for(byte in digest){
+                val value=byte.toInt() and 0xff
+                append(alphabet[value ushr 4])
+                append(alphabet[value and 0x0f])
+            }
+        }
+    }
     private fun requirePin(action:()->Unit){
         requirePin(action,null,null)
     }
