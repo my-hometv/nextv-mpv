@@ -18,7 +18,8 @@ class FeatureTogglePolicyTest {
         assertEquals(false,toggles["live_channel_preview"])
         assertEquals(false,toggles["myview_instant_preload_enabled"])
         assertEquals(true,toggles["nextv_epg_enabled"])
-        assertEquals(true,toggles["myview_multiview_enabled"])
+        assertEquals(false,toggles["myview_multiview_enabled"])
+        assertEquals(false,toggles["myview_smart_logo_matching"])
         assertEquals(true,toggles["nextv_profiles_enabled"])
         assertEquals(toggles.size,toggles.keys.toSet().size)
     }
