@@ -10,7 +10,7 @@ internal object M3uParser {
   val header=body.lineSequence().firstOrNull{it.isNotBlank()}?.trim()
    ?.removePrefix("\uFEFF")?.trim() ?:return emptyList()
   if(!header.startsWith("#EXTM3U",ignoreCase=true))return emptyList()
-  val attrs=Regex("""(?:^|\\s)(?:url-tvg|x-tvg-url|tvg-url)\\s*=\\s*["']([^"']*)["']""",RegexOption.IGNORE_CASE)
+  val attrs=Regex("""(?:^|\s)(?:url-tvg|x-tvg-url|tvg-url)\s*=\s*["']([^"']*)["']""",RegexOption.IGNORE_CASE)
   return attrs.findAll(header).flatMap{match->
    match.groupValues[1].split(',',';').asSequence()
   }.map{it.trim()}.filter{url->
