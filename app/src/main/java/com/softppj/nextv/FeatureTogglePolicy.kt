@@ -7,6 +7,11 @@ internal object FeatureTogglePolicy {
     const val DEFAULT_AUTO_PLAYLIST_REFRESH = false
     const val DEFAULT_AUTO_HIDDEN_CHANNEL_CHECK = false
     const val DEFAULT_BACKGROUND_HIDDEN_CHANNEL_CHECK = false
+    // Playback-first defaults: no extra decoder and no large on-demand
+    // playlist-logo indexing unless the viewer explicitly opts in.
+    // Already-saved preferences remain authoritative.
+    const val DEFAULT_MULTIVIEW = false
+    const val DEFAULT_SMART_LOGO_MATCHING = false
 
     // Restore uses the same feature lifecycle transitions as Settings.
     // Values are the actual first-install defaults, not restored user values.
@@ -18,7 +23,8 @@ internal object FeatureTogglePolicy {
         "live_channel_preview" to false,
         "myview_instant_preload_enabled" to false,
         "myview_external_logos_enabled" to false,
-        "myview_multiview_enabled" to true,
+        "myview_smart_logo_matching" to DEFAULT_SMART_LOGO_MATCHING,
+        "myview_multiview_enabled" to DEFAULT_MULTIVIEW,
         "nextv_smartplay_enabled" to true,
         "auto_skip_nonworking" to false,
         "auto_reconnect" to true,
