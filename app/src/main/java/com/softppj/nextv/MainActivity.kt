@@ -2163,6 +2163,9 @@ class MainActivity: Activity() {
                     Toast.makeText(this,"Use HTTP or HTTPS EPG URLs",Toast.LENGTH_LONG).show()
                 }else{
                     prefs.edit().putString("epg_xmltv_urls",urls.joinToString("\n")).apply()
+                    epgLoadGeneration++
+                    epgLoadingGeneration=null
+                    epgWaitingCallbacks.clear()
                     epgGuide=emptyMap();epgLoadedAt=0L
                     showEpg()
                 }
@@ -2281,6 +2284,10 @@ class MainActivity: Activity() {
     @Volatile private var epgLoadedAt=0L
     // Reject stale parsing results and callbacks after EPG is disabled.
     @Volatile private var epgLoadGeneration=0
+    // XMLTV can take seconds to fetch. Coalesce simultaneous channel-info
+    // requests rather than downloading the same guide on every tune.
+    private var epgLoadingGeneration:Int?=null
+    private val epgWaitingCallbacks=mutableListOf<(Boolean)->Unit>()
     private fun epgTime(value:String?):Long{
         if(value.isNullOrBlank())return 0L
         val m=Regex("""^(\d{14})(?:\s*([+-]\d{4}))?""").find(value.trim()) ?:return 0L
@@ -2384,11 +2391,18 @@ class MainActivity: Activity() {
         val generation=epgLoadGeneration
         val urls=epgUrls()
         if(urls.isEmpty()){done(false);return}
-        if(epgGuide.isNotEmpty() && System.currentTimeMillis()-epgLoadedAt<60*60*1000L){
-            done(true);return
+        if(epgLoadedAt>0L && System.currentTimeMillis()-epgLoadedAt<60*60*1000L){
+            done(epgGuide.isNotEmpty());return
         }
+        if(epgLoadingGeneration==generation){
+            epgWaitingCallbacks.add(done)
+            return
+        }
+        epgLoadingGeneration=generation
+        epgWaitingCallbacks.add(done)
         thread{
             val combined=mutableMapOf<String,MutableMap<Long,EpgProgramme>>()
+            val displayNames=mutableMapOf<String,String>()
             var loaded=0
             for(url in urls){
                 if(generation!=epgLoadGeneration)break
@@ -2412,11 +2426,22 @@ class MainActivity: Activity() {
                         val parser=android.util.Xml.newPullParser()
                         parser.setInput(bounded,"UTF-8")
                         var channel="";var start=0L;var end=0L;var title="";var description=""
+                        var definitionId=""
                         var event=parser.eventType
                         while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT){
                             if(generation!=epgLoadGeneration)break
                             if(event==org.xmlpull.v1.XmlPullParser.START_TAG){
                                 when(parser.name){
+                                    "channel"->{
+                                        definitionId=parser.getAttributeValue(null,"id")
+                                            ?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+                                    }
+                                    "display-name"->if(definitionId.isNotEmpty()){
+                                        val displayName=parser.nextText().trim()
+                                            .lowercase(java.util.Locale.ROOT)
+                                        if(displayName.isNotBlank())
+                                            displayNames.putIfAbsent(displayName,definitionId)
+                                    }
                                     "programme"->{
                                         channel=parser.getAttributeValue(null,"channel")?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
                                         start=epgTime(parser.getAttributeValue(null,"start"))
@@ -2426,6 +2451,8 @@ class MainActivity: Activity() {
                                     "title"->if(channel.isNotEmpty())title=parser.nextText()
                                     "desc"->if(channel.isNotEmpty())description=parser.nextText()
                                 }
+                            }else if(event==org.xmlpull.v1.XmlPullParser.END_TAG && parser.name=="channel"){
+                                definitionId=""
                             }else if(event==org.xmlpull.v1.XmlPullParser.END_TAG && parser.name=="programme"){
                                 if(channel.isNotEmpty() && start>0 && end>start && title.isNotBlank() &&
                                     end>System.currentTimeMillis()-2L*86400000L &&
@@ -2448,12 +2475,26 @@ class MainActivity: Activity() {
             }
             if(generation!=epgLoadGeneration)return@thread
             if(loaded>0){
-                epgGuide=combined.mapValues{(_,v)->v.values.sortedBy{it.start}}
+                val sorted=combined.mapValues{(_,v)->v.values.sortedBy{it.start}}
+                // tvg-id is not always supplied by an IPTV playlist. XMLTV
+                // <display-name> provides a legitimate name-to-id match.
+                val withNames=sorted.toMutableMap()
+                displayNames.forEach{(name,id)->
+                    sorted[id]?.let{if(it.isNotEmpty())withNames.putIfAbsent(name,it)}
+                }
+                epgGuide=withNames
                 epgLoadedAt=System.currentTimeMillis()
             }
             runOnUiThread{
-                if(generation==epgLoadGeneration && prefs.getBoolean("nextv_epg_enabled",true) &&
-                    !isFinishing && !isDestroyed)done(loaded>0 || epgGuide.isNotEmpty())
+                if(epgLoadingGeneration==generation){
+                    epgLoadingGeneration=null
+                    val callbacks=epgWaitingCallbacks.toList()
+                    epgWaitingCallbacks.clear()
+                    if(generation==epgLoadGeneration && prefs.getBoolean("nextv_epg_enabled",true) &&
+                        !isFinishing && !isDestroyed){
+                        callbacks.forEach{callback->callback(epgGuide.isNotEmpty())}
+                    }
+                }
             }
         }
     }
@@ -7203,7 +7244,19 @@ class MainActivity: Activity() {
     }
     private fun screenInfoOnStart(index:Int){
         handler.postDelayed({if(active==index)showChannelInfo(index)},500)
-        if(prefs.getBoolean("show_channel_epg",true) && epgGuide.isEmpty() && !prefs.getString("epg_xmltv_url","").isNullOrBlank())loadEpg{if(active==index)showChannelInfo(index)}
+        // Use configured multi-source XMLTV URLs or the default source. The
+        // legacy epg_xmltv_url pref may be absent, even for a valid EPG setup.
+        if(prefs.getBoolean("nextv_epg_enabled",true) &&
+            prefs.getBoolean("show_channel_epg",true) &&
+            epgGuide.isEmpty() && epgUrls().isNotEmpty()){
+            val originalScreen=videoScreen
+            loadEpg{success->
+                // Do not reopen an expired banner or interfere with playback.
+                if(success && active==index && videoScreen===originalScreen &&
+                    banner?.parent===originalScreen && previewIndex<0)
+                    showChannelInfo(index)
+            }
+        }
     }
     private fun informationAlpha():Int=prefs.getInt("information_opacity",65).coerceIn(20,100)*255/100
     private fun informationColor(rgb:Int):Int=(informationAlpha() shl 24) or (rgb and 0xFFFFFF)
@@ -7294,6 +7347,8 @@ class MainActivity: Activity() {
                 if(next!=null)append("\nNext: ").append(next.title)
                     .append(" (").append(programmeTime(next.start)).append(" – ")
                     .append(programmeTime(next.end)).append(")")
+                if(showEpg && current==null && next==null)
+                    append("\nEPG: ").append(if(epgLoadingGeneration!=null) "Loading…" else "No programme matched")
                 if(extra.isNotBlank())append("\n").append(extra)
             }
             textSize=18f
@@ -10514,6 +10569,8 @@ class MainActivity: Activity() {
             }
             "nextv_epg_enabled"->{
                 epgLoadGeneration++
+                epgLoadingGeneration=null
+                epgWaitingCallbacks.clear()
                 epgTuneTask?.let{handler.removeCallbacks(it)}
                 epgTuneTask=null
             }
