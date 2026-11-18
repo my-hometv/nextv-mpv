@@ -41,6 +41,10 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('prefs.getBoolean("nextv_epg_enabled",true)', self.activity)
         self.assertIn('prefs.getBoolean("show_channel_epg",true)', self.activity)
         self.assertIn('banner?.parent===originalScreen', self.activity)
+        self.assertLess(
+            self.activity.index("setContentView(screen)", self.activity.index("private fun playIndex(index:Int)")),
+            self.activity.index("screenInfoOnStart(index)", self.activity.index("private fun playIndex(index:Int)")),
+        )
         self.assertIn('append("\\nEPG: ").append(if(epgLoadingGeneration!=null)', self.activity)
 
     def test_epg_downloads_are_deduplicated_and_display_names_matched(self):
