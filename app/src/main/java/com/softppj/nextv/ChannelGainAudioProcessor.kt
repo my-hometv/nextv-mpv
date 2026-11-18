@@ -22,6 +22,16 @@ internal class ChannelGainAudioProcessor(initialGain:Float = 1f):BaseAudioProces
         val input=inputBuffer.slice().order(ByteOrder.LITTLE_ENDIAN)
         val output=replaceOutputBuffer(input.remaining()).order(ByteOrder.LITTLE_ENDIAN)
         val currentGain=gain.coerceIn(0f,2f)
+        // Normal (100%) audio should not rescale every PCM sample. On
+        // low-power Android TVs this needless per-sample work can cause
+        // AudioTrack underruns despite having ample network data buffered.
+        // Preserve the exact original PCM bits, including floats.
+        if(currentGain==1f){
+            output.put(input)
+            inputBuffer.position(inputBuffer.limit())
+            output.flip()
+            return
+        }
         when(encoding){
             C.ENCODING_PCM_16BIT->{
                 while(input.remaining()>=2){
