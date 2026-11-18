@@ -7407,63 +7407,121 @@ class MainActivity: Activity() {
         val screen=videoScreen ?:return
         val channel=channels.getOrNull(index) ?:return
         bannerTask?.let{handler.removeCallbacks(it)}
-        banner?.let{screen.removeView(it)}
+        banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
         if(previewInfoPanel===banner)previewInfoPanel=null
+
+        // A compact TV-safe glass card: no extra artwork downloads, decoders,
+        // animation loops or expensive work on every remote press.
         val panel=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(tvDp(3),tvDp(3),tvDp(3),tvDp(3))
+            background=android.graphics.drawable.GradientDrawable(
+                android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(informationColor(0x14293F),informationColor(0x091827))
+            ).apply{
+                cornerRadius=tvDp(16).toFloat()
+                setStroke(tvDp(1),0x6689B5D4)
+            }
+            elevation=tvDp(9).toFloat()
+        }
+        val content=LinearLayout(this).apply{
             orientation=LinearLayout.HORIZONTAL
             gravity=Gravity.CENTER_VERTICAL
-            setPadding(18,12,18,12)
-            setBackgroundColor(informationColor(0x15283C))
+            setPadding(tvDp(12),tvDp(9),tvDp(13),tvDp(9))
         }
-        panel.addView(logoView(channel,64))
-        panel.addView(TextView(this).apply{
-            val now=System.currentTimeMillis()
-            // One guide lookup per banner rather than three potentially expensive
-            // scans while rapidly switching channels with the TV remote.
-            val showEpg=prefs.getBoolean("nextv_epg_enabled",true) &&
-                prefs.getBoolean("show_channel_epg",true)
-            val programmes=if(showEpg)programmeList(channel) else emptyList()
-            val playing=if(index==active)when{
-                player!=null->"Media3"
-                vlcPlayer!=null->"LibVLC"
-                else->"Starting"
-            } else engineFor(channel)
-            val current=programmes.firstOrNull{it.start<=now && it.end>now}
-            val next=programmes.asSequence().filter{it.start>now}.minByOrNull{it.start}
+        val accent=View(this).apply{
+            background=android.graphics.drawable.GradientDrawable().apply{
+                setColor(if(index==active)0xFF39D9B2.toInt() else 0xFF63B9FF.toInt())
+                cornerRadius=tvDp(3).toFloat()
+            }
+        }
+        content.addView(accent,LinearLayout.LayoutParams(tvDp(4),tvDp(90)))
+        content.addView(logoView(channel,64),LinearLayout.LayoutParams(tvDp(64),tvDp(64)).apply{
+            marginStart=tvDp(12)
+        })
+
+        val now=System.currentTimeMillis()
+        val showEpg=prefs.getBoolean("nextv_epg_enabled",true) &&
+            prefs.getBoolean("show_channel_epg",true)
+        // Query the guide once; repeated EPG lookups here can stall rapid surfing.
+        val programmes=if(showEpg)programmeList(channel) else emptyList()
+        val current=programmes.firstOrNull{it.start<=now && it.end>now}
+        val next=programmes.asSequence().filter{it.start>now}.minByOrNull{it.start}
+        val playing=if(index==active)when{
+            player!=null->"Media3"
+            vlcPlayer!=null->"LibVLC"
+            else->"Starting"
+        } else engineFor(channel)
+
+        val details=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(tvDp(14),0,tvDp(8),0)
+        }
+        details.addView(TextView(this).apply{
+            text=numberFor(index).toString()+".  "+channel.name
+            textSize=22f
+            setTypeface(null,android.graphics.Typeface.BOLD)
+            setTextColor(android.graphics.Color.WHITE)
+            maxLines=1
+            ellipsize=android.text.TextUtils.TruncateAt.END
+        })
+        details.addView(TextView(this).apply{
+            text=(if(index==active)"● LIVE" else "◉ PREVIEW")+"   •   "+playing+
+                (if(channel.group.isNotBlank())"   •   "+channel.group else "")
+            textSize=13f
+            setTextColor(if(index==active)0xFF7DE9C9.toInt() else 0xFF9ED4FF.toInt())
+            maxLines=1
+            ellipsize=android.text.TextUtils.TruncateAt.END
+            setPadding(0,tvDp(3),0,tvDp(5))
+        })
+        details.addView(TextView(this).apply{
             text=buildString{
-                append(numberFor(index)).append(". ").append(channel.name)
-                append("\nPlayer: ").append(playing)
-                if(current!=null)append("\nNow: ").append(current.title)
-                    .append(" (").append(programmeTime(current.start)).append(" – ")
-                    .append(programmeTime(current.end)).append(")")
-                if(next!=null)append("\nNext: ").append(next.title)
-                    .append(" (").append(programmeTime(next.start)).append(" – ")
-                    .append(programmeTime(next.end)).append(")")
+                if(current!=null)append("NOW   ").append(current.title)
+                    .append("  ·  ").append(programmeTime(current.start))
+                    .append("–").append(programmeTime(current.end))
+                if(next!=null){
+                    if(isNotEmpty())append("\n")
+                    append("NEXT   ").append(next.title)
+                        .append("  ·  ").append(programmeTime(next.start))
+                }
                 if(showEpg && current==null && next==null)
                     append("\nEPG: ").append(if(epgLoadingGeneration!=null) "Loading…" else "No programme matched")
-                if(extra.isNotBlank())append("\n").append(extra)
+                if(extra.isNotBlank()){
+                    if(isNotEmpty())append("\n")
+                    append(extra)
+                }
             }
-            textSize=18f
-            setTextColor(android.graphics.Color.WHITE)
-            setPadding(18,4,8,4)
-        },LinearLayout.LayoutParams(0,-2,1f))
-        // Family branding appears on the right without replacing the channel logo.
-        panel.addView(ImageView(this).apply{
+            textSize=14f
+            setTextColor(0xFFD8E8F4.toInt())
+            maxLines=3
+            ellipsize=android.text.TextUtils.TruncateAt.END
+            setLineSpacing(tvDp(2).toFloat(),1f)
+        })
+        content.addView(details,LinearLayout.LayoutParams(0,-2,1f))
+
+        // Original, approved family artwork stays on the right.
+        content.addView(ImageView(this).apply{
             setImageResource(R.drawable.tv_banner)
             scaleType=ImageView.ScaleType.FIT_CENTER
             contentDescription="MyView family app logo"
-        },LinearLayout.LayoutParams(tvDp(112),tvDp(63)).apply{
-            marginStart=tvDp(10)
+        },LinearLayout.LayoutParams(tvDp(100),tvDp(62)).apply{
+            marginStart=tvDp(8)
         })
+        panel.addView(content,LinearLayout.LayoutParams(-1,-2))
         banner=panel
         val isPreview=previewIndex==index && index!=active
         previewInfoPanel=if(isPreview)panel else null
-        screen.addView(panel,FrameLayout.LayoutParams((resources.displayMetrics.widthPixels*0.78f).toInt(),-2,Gravity.BOTTOM or Gravity.LEFT))
-        // A preview stays visible until OK, BACK, another channel preview, or
-        // immediate CH+/CH- tuning. Ordinary channel information still fades.
+        screen.addView(panel,FrameLayout.LayoutParams(
+            (resources.displayMetrics.widthPixels*0.86f).toInt(),-2,
+            Gravity.BOTTOM or Gravity.LEFT
+        ).apply{
+            leftMargin=tvDp(12)
+            bottomMargin=tvDp(12)
+        })
+        // Preserve the existing remote interaction and preview lifetime.
         val task=Runnable{
             if(banner===panel && previewInfoPanel!==panel){
-                screen.removeView(panel)
+                (panel.parent as? android.view.ViewGroup)?.removeView(panel)
                 banner=null
             }
         }
