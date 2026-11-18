@@ -17,6 +17,7 @@ def check(root: Path = ROOT) -> list[str]:
     source_ci = (root / ".github/workflows/myview-source-verification.yml").read_text()
     legacy = (root / ".github/workflows/myview-branding-build.yml").read_text()
     manual = (root / ".github/workflows/myview-full-app.yml").read_text()
+    beta = (root / ".github/workflows/myview-beta-test.yml").read_text()
     strings = (root / "app/src/main/res/values/strings.xml").read_text()
 
     def require(ok: bool, message: str) -> None:
@@ -67,6 +68,19 @@ def check(root: Path = ROOT) -> list[str]:
             "MyView must install independently with its own name and ID")
     require('workflow_dispatch:' in manual and '  push:' not in manual,
             "The full-app APK build must remain manual-only")
+    require('applicationId = "com.softppj.myview.beta"' in gradle and
+            'myviewBetaBuild' in gradle,
+            "Only an explicit Beta build property may change the app ID")
+    require('workflow_dispatch:' in beta and '  push:' not in beta and
+            '-PmyviewBetaBuild=true :app:assembleDebug' in beta,
+            "Beta APK must only be built by its own manual workflow")
+    require('com.softppj.myview.beta' in beta and
+            "application-label:'MyView'" in beta and
+            'grep -Fq \'name="app_name">MyView\'' in beta,
+            "Beta must have distinct ID but identical launcher label")
+    require('android:icon="@drawable/nextv_launcher"' in manifest and
+            'android:banner="@drawable/tv_banner"' in manifest,
+            "Beta and full MyView must share approved icon and banner")
     require("    if: ${{ false }}" in legacy and "  push:" not in legacy,
             "Retired branding build must remain a disabled, non-push workflow")
     require(":app:assemble" not in source_ci and
