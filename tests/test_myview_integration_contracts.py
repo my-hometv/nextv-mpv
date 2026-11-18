@@ -176,6 +176,13 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('@Synchronized private fun persist(', diagnostics)
         self.assertIn('persist("ERROR", "HomeTV", "Uncaught crash on thread "', diagnostics)
 
+    def test_playlist_hash_avoids_per_byte_formatter_and_preserves_hex(self):
+        self.assertNotIn('joinToString(""){"%02x".format(it)}', self.activity)
+        self.assertIn('val alphabet="0123456789abcdef"', self.activity)
+        self.assertIn('val value=byte.toInt() and 0xff', self.activity)
+        self.assertIn('append(alphabet[value ushr 4])', self.activity)
+        self.assertIn('append(alphabet[value and 0x0f])', self.activity)
+
     def test_anr_channel_order_is_loaded_once_per_source(self):
         # Real device ANR: dispatchKeyEvent -> surfingIndices ->
         # orderedChannelIndices -> savedChannelOrder -> SHA-256 hash.
