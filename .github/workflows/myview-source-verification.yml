@@ -9,6 +9,7 @@ on:
       - '.github/workflows/myview-source-verification.yml'
       - '.github/workflows/myview-branding-build.yml'
       - '.github/workflows/myview-full-app.yml'
+      - '.github/workflows/myview-beta-test.yml'
       - 'tools/verify_myview_branding.py'
       - 'tools/**'
       - 'tests/**'
