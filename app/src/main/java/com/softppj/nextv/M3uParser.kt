@@ -1,6 +1,23 @@
 package com.softppj.nextv
 import org.json.JSONObject
 internal object M3uParser {
+ /**
+  * M3U header metadata is independent of the per-channel #EXTINF records.
+  * Extract XMLTV sources from the FIRST #EXTM3U header only. Never interpret
+  * a stream URL or a channel attribute as an EPG configuration.
+  */
+ fun headerEpgUrls(body:String):List<String>{
+  val header=body.lineSequence().firstOrNull{it.isNotBlank()}?.trim()
+   ?.removePrefix("\uFEFF")?.trim() ?:return emptyList()
+  if(!header.startsWith("#EXTM3U",ignoreCase=true))return emptyList()
+  val attrs=Regex("""(?:^|\\s)(?:url-tvg|x-tvg-url|tvg-url)\\s*=\\s*["']([^"']*)["']""",RegexOption.IGNORE_CASE)
+  return attrs.findAll(header).flatMap{match->
+   match.groupValues[1].split(',',';').asSequence()
+  }.map{it.trim()}.filter{url->
+   url.length in 10..2048 && url.none{it.code<32 || it.code==127} &&
+    (url.startsWith("https://",true)||url.startsWith("http://",true))
+  }.distinct().take(8).toList()
+ }
  fun parse(body:String,source:String,deletedGroups:Set<String> = emptySet()):MutableList<Channel>{
   val out=mutableListOf<Channel>()
   var name="";var group="Other";var logo="";var epgId="";var webChannel=""
