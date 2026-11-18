@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EpgGuidePolicyTest {
+    @Test fun displayNameMatchingIgnoresRepeatedWhitespaceAndCase() {
+        assertEquals("surya tv hd",EpgGuidePolicy.normalizeDisplayName("  Surya   TV\\tHD  "))
+        assertEquals("asianet news",EpgGuidePolicy.normalizeDisplayName("ASIANET NEWS"))
+    }
+
     @Test fun dueReminderBacksOffWhenLicenceNotReadyOrAppBackgrounded() {
         assertEquals(60_000L,EpgGuidePolicy.nextReminderDelayMs(1000L,2000L,false))
         assertEquals(0L,EpgGuidePolicy.nextReminderDelayMs(1000L,2000L,true))
