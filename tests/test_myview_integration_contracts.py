@@ -85,6 +85,24 @@ class MyViewIntegrationContracts(unittest.TestCase):
             self.activity,
         )
 
+    def test_playback_first_defaults_preserve_advanced_features(self):
+        policy = (ROOT / "app/src/main/java/com/softppj/nextv/FeatureTogglePolicy.kt").read_text(encoding="utf-8")
+        self.assertIn("const val DEFAULT_MULTIVIEW = false", policy)
+        self.assertIn("const val DEFAULT_SMART_LOGO_MATCHING = false", policy)
+        self.assertIn('"myview_multiview_enabled" to DEFAULT_MULTIVIEW', policy)
+        self.assertIn('"myview_smart_logo_matching" to DEFAULT_SMART_LOGO_MATCHING', policy)
+        self.assertIn('settingsToggle("Enable MultiView","myview_multiview_enabled",FeatureTogglePolicy.DEFAULT_MULTIVIEW)', self.activity)
+        self.assertIn('settingsToggle("Smart Logos — match other playlist entries","myview_smart_logo_matching",FeatureTogglePolicy.DEFAULT_SMART_LOGO_MATCHING)', self.activity)
+        self.assertNotIn('prefs.getBoolean("myview_multiview_enabled",true)', self.activity)
+        self.assertNotIn('prefs.getBoolean("myview_smart_logo_matching",true)', self.activity)
+        self.assertIn('settingsToggle("Preload adjacent Media3 channel (one only)","myview_instant_preload_enabled",false)', self.activity)
+        self.assertIn('settingsToggle("Live channel preview","live_channel_preview",false)', self.activity)
+        self.assertIn('settingsToggle("Check alternative stream links in background","background_url_checks",false)', self.activity)
+        # Essential functionality is still enabled and selectable.
+        self.assertIn('"nextv_smartplay_enabled" to true', policy)
+        self.assertIn('"nextv_epg_enabled" to true', policy)
+        self.assertIn('"nextv_backup_enabled" to true', policy)
+
     def test_channel_skip_key_burst_is_debounced(self):
         self.assertIn("handler.postDelayed(task,350L)", self.activity)
         self.assertIn("private fun cancelRapidSurf()", self.activity)
