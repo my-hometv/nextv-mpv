@@ -2517,24 +2517,29 @@ class MainActivity: Activity() {
                 }
             }
             if(generation!=epgLoadGeneration || cancellation.isCancelled())return@thread
-            if(loaded>0){
-                // ID matching wins; name aliases merge multiple providers even
-                // when they disagree about their XMLTV channel IDs.
+            // Construct the replacement schedule off-thread, but publish it
+            // only on the UI thread after the final generation/feature check.
+            val replacement=if(loaded>0){
+                // ID matching wins; display-name aliases cover different XMLTV IDs.
                 val withNames=combined.toMutableMap()
                 namedSchedules.forEach{(name,entries)->
                     if(entries.isNotEmpty())withNames.putIfAbsent(name,entries)
                 }
-                epgGuide=withNames
-                epgLoadedAt=System.currentTimeMillis()
-            }
+                withNames.toMap()
+            }else null
             runOnUiThread{
                 if(epgLoadingGeneration==generation){
                     epgLoadingGeneration=null
                     if(epgDownloadCancellation===cancellation)epgDownloadCancellation=null
                     val callbacks=epgWaitingCallbacks.toList()
                     epgWaitingCallbacks.clear()
-                    if(generation==epgLoadGeneration && prefs.getBoolean("nextv_epg_enabled",true) &&
+                    if(generation==epgLoadGeneration && !cancellation.isCancelled() &&
+                        prefs.getBoolean("nextv_epg_enabled",true) &&
                         !isFinishing && !isDestroyed){
+                        if(replacement!=null){
+                            epgGuide=replacement
+                            epgLoadedAt=System.currentTimeMillis()
+                        }
                         callbacks.forEach{callback->callback(epgGuide.isNotEmpty())}
                     }
                 }
@@ -11417,6 +11422,10 @@ class MainActivity: Activity() {
         backgroundProbeGeneration++
         refreshGeneration++
         epgLoadGeneration++
+        epgDownloadCancellation?.cancel()
+        epgDownloadCancellation=null
+        epgLoadingGeneration=null
+        epgWaitingCallbacks.clear()
         periodicProbeTask?.let{handler.removeCallbacks(it)}
         probePlayers.toList().forEach{try{it.release()}catch(_:Exception){}}
         probePlayers.clear()
