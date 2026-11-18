@@ -2412,12 +2412,16 @@ class MainActivity: Activity() {
         epgLoadingGeneration=generation
         epgWaitingCallbacks.add(done)
         thread{
-            val combined=mutableMapOf<String,MutableMap<Long,EpgProgramme>>()
-            val displayNames=mutableMapOf<String,String>()
+            val combined=mutableMapOf<String,List<EpgProgramme>>()
+            val namedSchedules=mutableMapOf<String,List<EpgProgramme>>()
             var loaded=0
             for(url in urls){
                 if(generation!=epgLoadGeneration)break
                 try{
+                    // Stage each feed independently: one malformed XMLTV source
+                    // must not partially replace the last successful schedule.
+                    val sourceProgrammes=mutableMapOf<String,MutableList<EpgProgramme>>()
+                    val sourceNames=mutableMapOf<String,String>()
                     val connection=URL(url).openConnection().apply{
                         connectTimeout=8000;readTimeout=20000;useCaches=false
                     }
@@ -2451,7 +2455,7 @@ class MainActivity: Activity() {
                                         val displayName=parser.nextText().trim()
                                             .lowercase(java.util.Locale.ROOT)
                                         if(displayName.isNotBlank())
-                                            displayNames.putIfAbsent(displayName,definitionId)
+                                            sourceNames.putIfAbsent(displayName,definitionId)
                                     }
                                     "programme"->{
                                         channel=parser.getAttributeValue(null,"channel")?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
@@ -2470,13 +2474,24 @@ class MainActivity: Activity() {
                                     start<System.currentTimeMillis()+8L*86400000L){
                                     // Bound each channel to 1000 programmes and
                                     // keep the first source's entries by priority.
-                                    val programmes=combined.getOrPut(channel){mutableMapOf()}
-                                    if(programmes.size<1000)programmes.putIfAbsent(
-                                        start,EpgProgramme(start,end,title,description.take(2000)))
+                                    val programmes=sourceProgrammes.getOrPut(channel){mutableListOf()}
+                                    if(programmes.size<1000)programmes.add(
+                                        EpgProgramme(start,end,title,description.take(2000)))
                                 }
                                 channel=""
                             }
                             event=parser.next()
+                        }
+                    }
+                    if(generation!=epgLoadGeneration)break
+                    sourceProgrammes.forEach{(id,entries)->
+                        combined[id]=EpgMergePolicy.merge(combined[id].orEmpty(),entries,
+                            {it.start},{it.end})
+                    }
+                    sourceNames.forEach{(name,id)->
+                        sourceProgrammes[id]?.let{entries->
+                            namedSchedules[name]=EpgMergePolicy.merge(
+                                namedSchedules[name].orEmpty(),entries,{it.start},{it.end})
                         }
                     }
                     loaded++
@@ -2486,12 +2501,11 @@ class MainActivity: Activity() {
             }
             if(generation!=epgLoadGeneration)return@thread
             if(loaded>0){
-                val sorted=combined.mapValues{(_,v)->v.values.sortedBy{it.start}}
-                // tvg-id is not always supplied by an IPTV playlist. XMLTV
-                // <display-name> provides a legitimate name-to-id match.
-                val withNames=sorted.toMutableMap()
-                displayNames.forEach{(name,id)->
-                    sorted[id]?.let{if(it.isNotEmpty())withNames.putIfAbsent(name,it)}
+                // ID matching wins; name aliases merge multiple providers even
+                // when they disagree about their XMLTV channel IDs.
+                val withNames=combined.toMutableMap()
+                namedSchedules.forEach{(name,entries)->
+                    if(entries.isNotEmpty())withNames.putIfAbsent(name,entries)
                 }
                 epgGuide=withNames
                 epgLoadedAt=System.currentTimeMillis()
