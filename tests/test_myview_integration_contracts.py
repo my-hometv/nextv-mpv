@@ -50,10 +50,15 @@ class MyViewIntegrationContracts(unittest.TestCase):
     def test_epg_downloads_are_deduplicated_and_display_names_matched(self):
         self.assertIn('if(epgLoadingGeneration==generation)', self.activity)
         self.assertIn('epgWaitingCallbacks.add(done)', self.activity)
-        self.assertIn('val displayNames=mutableMapOf<String,String>()', self.activity)
+        # Each XMLTV source is staged and merged only after successful parsing.
+        # The previous displayNames map was superseded by priority-aware
+        # per-source aliases and the reusable overlap merge policy.
+        self.assertIn('val sourceNames=mutableMapOf<String,String>()', self.activity)
         self.assertIn('"display-name"->if(definitionId.isNotEmpty())', self.activity)
-        self.assertIn('displayNames.putIfAbsent(displayName,definitionId)', self.activity)
-        self.assertIn('withNames.putIfAbsent(name,it)', self.activity)
+        self.assertIn('sourceNames.putIfAbsent(displayName,definitionId)', self.activity)
+        self.assertIn('EpgMergePolicy.merge(combined[id].orEmpty(),entries,', self.activity)
+        self.assertIn('namedSchedules[name]=EpgMergePolicy.merge(', self.activity)
+        self.assertIn('withNames.putIfAbsent(name,entries)', self.activity)
 
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
