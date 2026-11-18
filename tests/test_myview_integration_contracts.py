@@ -33,6 +33,24 @@ class MyViewIntegrationContracts(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertNotIn(value, self.activity)
 
+    def test_channel_info_epg_uses_all_configured_sources(self):
+        # The old guard checked only epg_xmltv_url; new setups use
+        # epg_xmltv_urls or the default XMLTV feed.
+        self.assertNotIn('epgGuide.isEmpty() && !prefs.getString("epg_xmltv_url","").isNullOrBlank()', self.activity)
+        self.assertIn('epgGuide.isEmpty() && epgUrls().isNotEmpty()', self.activity)
+        self.assertIn('prefs.getBoolean("nextv_epg_enabled",true)', self.activity)
+        self.assertIn('prefs.getBoolean("show_channel_epg",true)', self.activity)
+        self.assertIn('banner?.parent===originalScreen', self.activity)
+        self.assertIn('append("\\nEPG: ").append(if(epgLoadingGeneration!=null)', self.activity)
+
+    def test_epg_downloads_are_deduplicated_and_display_names_matched(self):
+        self.assertIn('if(epgLoadingGeneration==generation)', self.activity)
+        self.assertIn('epgWaitingCallbacks.add(done)', self.activity)
+        self.assertIn('val displayNames=mutableMapOf<String,String>()', self.activity)
+        self.assertIn('"display-name"->if(definitionId.isNotEmpty())', self.activity)
+        self.assertIn('displayNames.putIfAbsent(displayName,definitionId)', self.activity)
+        self.assertIn('withNames.putIfAbsent(name,it)', self.activity)
+
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
         self.assertIn("openCurrentChannelEpg()", self.activity)
