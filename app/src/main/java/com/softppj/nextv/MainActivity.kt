@@ -2142,10 +2142,21 @@ class MainActivity: Activity() {
     private val defaultEpgUrl="https://avkb.short.gy/epg.xml.gz"
     private fun configuredEpgUrl():String=prefs.getString("epg_xmltv_url",null)?.trim()?.takeIf{it.isNotEmpty()} ?:defaultEpgUrl
     private fun epgUrls():List<String>{
-        val saved=prefs.getString("epg_xmltv_urls",null)
-        val legacy=prefs.getString("epg_xmltv_url",null)
-        val value=saved ?: legacy?.takeIf{it.isNotBlank()} ?:defaultEpgUrl
-        return value.lineSequence().map{it.trim()}.filter{it.startsWith("https://") || it.startsWith("http://")}.distinct().toList()
+        // Explicitly configured XMLTV URLs have priority. Each enabled M3U
+        // playlist may also announce url-tvg / x-tvg-url in its #EXTM3U header.
+        // Never overwrite a manually saved guide or force a network request
+        // while parsing a playlist; loadEpg remains asynchronous and on demand.
+        val manual=prefs.getString("epg_xmltv_urls",null)
+            ?:prefs.getString("epg_xmltv_url",null).orEmpty()
+        val announced=playlists().filter{it.enabled}.flatMap{playlist->
+            prefs.getString("playlist_xmltv_urls_"+hash(playlist.name),"").orEmpty()
+                .lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()
+        }
+        val candidates=manual.lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()+
+            announced+if(manual.isBlank() && announced.isEmpty() &&
+                !prefs.contains("epg_xmltv_urls"))listOf(defaultEpgUrl) else emptyList()
+        return candidates.filter{it.startsWith("https://",true) || it.startsWith("http://",true)}
+            .distinct().take(16)
     }
     private fun configureEpg(){
         val input=EditText(this).apply{
@@ -5538,6 +5549,16 @@ class MainActivity: Activity() {
     private fun parseM3u(body:String,source:String):List<Channel>{
         val deletedGroups=prefs.getStringSet("deleted_groups",emptySet()) ?: emptySet()
         val parsed=M3uParser.parse(body,source,deletedGroups).toMutableList()
+        // Persist only metadata from this playlist's top-level M3U header.
+        // The URL is not fetched during playlist parsing or player startup.
+        // Comparing before editing avoids unnecessary preferences writes.
+        val key="playlist_xmltv_urls_"+hash(source)
+        val headerUrls=M3uParser.headerEpgUrls(body).joinToString("\n")
+        if(prefs.getString(key,"")!=headerUrls){
+            prefs.edit().putString(key,headerUrls).apply()
+            // Existing guide data may belong to an older advertised source.
+            epgLoadedAt=0L
+        }
         addSavedWebTv(parsed)
         return parsed
     }
