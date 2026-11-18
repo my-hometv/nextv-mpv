@@ -108,6 +108,15 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('epgLoadedAt=System.currentTimeMillis()', ui)
         self.assertNotIn('epgGuide=withNames', loader)
 
+    def test_malformed_saved_lists_cannot_crash_startup_or_epg_actions(self):
+        self.assertIn('private fun savedJsonArray(key:String):JSONArray = try {', self.activity)
+        self.assertIn('catch(e:Exception){', self.activity)
+        for key in ("epg_tune_schedules", "viewer_profiles"):
+            self.assertIn('savedJsonArray("'+key+'")', self.activity)
+            self.assertNotIn('JSONArray(prefs.getString("'+key+'","[]"))', self.activity)
+        self.assertIn('savedJsonArray(viewerKey("recent_channels"))', self.activity)
+        self.assertNotIn('JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))', self.activity)
+
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
         self.assertIn("openCurrentChannelEpg()", self.activity)
