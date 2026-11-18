@@ -43,6 +43,30 @@ class EpgMergePolicyTest {
             merge(first, second).map { it.title })
     }
 
+    @Test fun largeGuideHasNoOverlapsAndMaintainsSourcePriority() {
+        val first = (1..1000).map { n -> Slot(n * 200L, n * 200L + 100L, "Priority $n") }
+        val fallback = (1..1000).map { n ->
+            Slot(n * 200L + 100L, n * 200L + 200L, "Gap $n")
+        }
+        val merged = merge(first, fallback, limit = 2000)
+        assertEquals(2000, merged.size)
+        assertEquals("Priority 1", merged.first().title)
+        assertEquals("Gap 1000", merged.last().title)
+        assertEquals(true, merged.zipWithNext().all { (a, b) -> a.end <= b.start })
+    }
+
+    @Test fun nestedAndSameStartIntervalsKeepFirstPriority() {
+        val existing = listOf(Slot(100, 500, "Keep"))
+        val additions = listOf(
+            Slot(100, 200, "Same start"),
+            Slot(200, 300, "Nested"),
+            Slot(400, 550, "Partial"),
+            Slot(500, 600, "Adjacent")
+        )
+        assertEquals(listOf("Keep", "Adjacent"),
+            merge(existing, additions).map { it.title })
+    }
+
     @Test fun programmeLimitIsPreserved() {
         val slots = (1..5).map { Slot(it * 100L, it * 100L + 50, "P$it") }
         assertEquals(3, merge(emptyList(), slots, limit = 3).size)
