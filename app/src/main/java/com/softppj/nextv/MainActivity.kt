@@ -9512,7 +9512,10 @@ class MainActivity: Activity() {
                         // STATE_READY means prepared, not necessarily playing.
                         // Keep the startup watchdog active until isPlaying becomes true.
                         applyVideoSize()
-                        scheduleQualityUpgrade()
+                        // Initial quality is already set before prepare().
+                        // Reapplying track selection on every BUFFERING->READY
+                        // oscillation can cause unnecessary decoder/track work.
+                        // Explicit user quality changes still apply immediately.
                         retryTask?.let{handler.removeCallbacks(it)}
                         retryTask=null
                     }
