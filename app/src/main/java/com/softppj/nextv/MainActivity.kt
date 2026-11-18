@@ -2164,7 +2164,9 @@ class MainActivity: Activity() {
             setSingleLine(false)
             minLines=4
             maxLines=10
-            // Edit only manually configured URLs. Playlist-announced url-tvg\n            // entries remain lower priority and must not be promoted on Save.\n            setText((prefs.getString("epg_xmltv_urls",null)\n                ?:prefs.getString("epg_xmltv_url",null).orEmpty()).trim())
+            // Edit only manually configured URLs. Playlist-announced url-tvg
+            // entries remain lower priority and must not be promoted on Save.
+            setText((prefs.getString("epg_xmltv_urls",null)\n                ?:prefs.getString("epg_xmltv_url",null).orEmpty()).trim())
         }
         showSideDialog(AlertDialog.Builder(this).setTitle("EPG sources (priority order)")
             .setMessage("Manual EPG sources, highest priority first. Playlist url-tvg sources are included automatically after these URLs.")
@@ -2175,9 +2177,13 @@ class MainActivity: Activity() {
                 }else{
                     prefs.edit().putString("epg_xmltv_urls",urls.joinToString("\n")).apply()
                     epgLoadGeneration++
+                    epgDownloadCancellation?.cancel()
+                    epgDownloadCancellation=null
                     epgLoadingGeneration=null
                     epgWaitingCallbacks.clear()
-                    // Continue showing the last working programme schedule\n                    // until a complete replacement has been fetched and parsed.\n                    epgLoadedAt=0L
+                    // Continue showing the last working programme schedule
+                    // until a complete replacement has been fetched and parsed.
+                    epgLoadedAt=0L
                     showEpg()
                 }
             }.setNegativeButton("Cancel",null).create())
@@ -2298,6 +2304,7 @@ class MainActivity: Activity() {
     // XMLTV can take seconds to fetch. Coalesce simultaneous channel-info
     // requests rather than downloading the same guide on every tune.
     private var epgLoadingGeneration:Int?=null
+    private var epgDownloadCancellation:EpgDownloadCancellation?=null
     private val epgWaitingCallbacks=mutableListOf<(Boolean)->Unit>()
     private fun epgTime(value:String?):Long{
         if(value.isNullOrBlank())return 0L
@@ -2411,21 +2418,26 @@ class MainActivity: Activity() {
         }
         epgLoadingGeneration=generation
         epgWaitingCallbacks.add(done)
-        thread{
+        val cancellation=EpgDownloadCancellation()
+        epgDownloadCancellation=cancellation
+        thread(name="MyView-epg-load"){
             val combined=mutableMapOf<String,List<EpgProgramme>>()
             val namedSchedules=mutableMapOf<String,List<EpgProgramme>>()
             var loaded=0
             for(url in urls){
-                if(generation!=epgLoadGeneration)break
+                if(generation!=epgLoadGeneration || cancellation.isCancelled())break
                 try{
                     // Stage each feed independently: one malformed XMLTV source
                     // must not partially replace the last successful schedule.
                     val sourceProgrammes=mutableMapOf<String,MutableList<EpgProgramme>>()
                     val sourceNames=mutableMapOf<String,String>()
-                    val connection=URL(url).openConnection().apply{
+                    val connection=(URL(url).openConnection() as java.net.HttpURLConnection).apply{
                         connectTimeout=8000;readTimeout=20000;useCaches=false
                     }
+                    if(!cancellation.attachConnection(connection))break
+                    try {
                     val raw=connection.getInputStream()
+                    if(!cancellation.attachStream(raw))break
                     val buffered=java.io.BufferedInputStream(raw)
                     buffered.mark(4)
                     val magic0=buffered.read()
@@ -2444,7 +2456,7 @@ class MainActivity: Activity() {
                         var definitionId=""
                         var event=parser.eventType
                         while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT){
-                            if(generation!=epgLoadGeneration)break
+                            if(generation!=epgLoadGeneration || cancellation.isCancelled())break
                             if(event==org.xmlpull.v1.XmlPullParser.START_TAG){
                                 when(parser.name){
                                     "channel"->{
@@ -2482,7 +2494,7 @@ class MainActivity: Activity() {
                             event=parser.next()
                         }
                     }
-                    if(generation!=epgLoadGeneration)break
+                    if(generation!=epgLoadGeneration || cancellation.isCancelled())break
                     sourceProgrammes.forEach{(id,entries)->
                         combined[id]=EpgMergePolicy.merge(combined[id].orEmpty(),entries,
                             {it.start},{it.end})
@@ -2494,11 +2506,16 @@ class MainActivity: Activity() {
                         }
                     }
                     loaded++
+                    } finally {
+                        cancellation.releaseConnection(connection)
+                        connection.disconnect()
+                    }
                 }catch(e:Exception){
-                    HomeTvDiagnostics.w("HomeTV","EPG source failed: "+url,e)
+                    if(!cancellation.isCancelled() && generation==epgLoadGeneration)
+                        HomeTvDiagnostics.w("HomeTV","EPG source failed: "+url,e)
                 }
             }
-            if(generation!=epgLoadGeneration)return@thread
+            if(generation!=epgLoadGeneration || cancellation.isCancelled())return@thread
             if(loaded>0){
                 // ID matching wins; name aliases merge multiple providers even
                 // when they disagree about their XMLTV channel IDs.
@@ -2512,6 +2529,7 @@ class MainActivity: Activity() {
             runOnUiThread{
                 if(epgLoadingGeneration==generation){
                     epgLoadingGeneration=null
+                    if(epgDownloadCancellation===cancellation)epgDownloadCancellation=null
                     val callbacks=epgWaitingCallbacks.toList()
                     epgWaitingCallbacks.clear()
                     if(generation==epgLoadGeneration && prefs.getBoolean("nextv_epg_enabled",true) &&
@@ -10605,6 +10623,8 @@ class MainActivity: Activity() {
             }
             "nextv_epg_enabled"->{
                 epgLoadGeneration++
+                epgDownloadCancellation?.cancel()
+                epgDownloadCancellation=null
                 epgLoadingGeneration=null
                 epgWaitingCallbacks.clear()
                 epgTuneTask?.let{handler.removeCallbacks(it)}
