@@ -72,6 +72,23 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertNotIn('epgGuide=emptyMap()', editor)
         self.assertIn('epgLoadedAt=0L', editor)
 
+    def test_epg_off_and_source_change_cancel_the_active_download(self):
+        editor = self.activity.split("private fun configureEpg(){", 1)[1].split(
+            "private var epgTuneTask:", 1
+        )[0]
+        off = self.activity.split('"nextv_epg_enabled"->{', 1)[1].split(
+            '"auto_playlist_check"->{', 1
+        )[0]
+        loader = self.activity.split("private fun loadEpg(done:", 1)[1].split(
+            "private fun showChannelEpg(", 1
+        )[0]
+        self.assertIn('epgDownloadCancellation?.cancel()', editor)
+        self.assertIn('epgDownloadCancellation?.cancel()', off)
+        self.assertIn('cancellation.attachConnection(connection)', loader)
+        self.assertIn('cancellation.attachStream(raw)', loader)
+        self.assertIn('cancellation.isCancelled()', loader)
+        self.assertIn('cancellation.releaseConnection(connection)', loader)
+
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
         self.assertIn("openCurrentChannelEpg()", self.activity)
