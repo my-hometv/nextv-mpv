@@ -9041,11 +9041,13 @@ class MainActivity: Activity() {
         if(unlockedChannel!=id(c)) unlockedChannel=null
         prefs.edit().putString("last_url",c.url).putString("last_channel_identity",id(c)).putString("last_url_"+c.source,c.url).apply()
         rememberRecentChannel(c)
-        screenInfoOnStart(index)
         window.decorView.systemUiVisibility=(View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
         val screen=FrameLayout(this).apply{setBackgroundColor(android.graphics.Color.BLACK);isFocusableInTouchMode=true}
         videoScreen=screen
         setContentView(screen)
+        // EPG callbacks must capture the newly attached screen; otherwise an
+        // async XMLTV download cannot refresh the visible channel-info panel.
+        screenInfoOnStart(index)
         // Alternative probing is initiated only after a sustained playback failure.
         val youtubeUri=try{
             val uri=Uri.parse(c.url)
