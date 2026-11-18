@@ -5,6 +5,10 @@ package com.softppj.nextv
  * Missing programme metadata must not make a playable channel disappear.
  */
 internal object EpgGuidePolicy {
+    /** Compare XMLTV display names despite inconsistent case and spacing. */
+    fun normalizeDisplayName(value:String):String =
+        value.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+")," ")
+
     fun rows(visibleIndices:List<Int>, channelCount:Int):List<Int> =
         visibleIndices.filter { it >= 0 && it < channelCount }
 
