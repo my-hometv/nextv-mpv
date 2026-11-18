@@ -1065,6 +1065,15 @@ class MainActivity: Activity() {
             try{window.attributes=window.attributes.apply{preferredDisplayModeId=0}}
             catch(e:Exception){HomeTvDiagnostics.w("MyView","Refresh restoration unavailable",e)}
     }
+    // Restore files and older installations can contain malformed JSON
+    // preferences. Never allow those values to crash startup, guide reminders
+    // or a viewer/profile screen on the Android main thread.
+    private fun savedJsonArray(key:String):JSONArray = try {
+        JSONArray(prefs.getString(key,"[]") ?: "[]")
+    }catch(e:Exception){
+        HomeTvDiagnostics.w("MyView","Ignoring malformed saved list for "+key,e)
+        JSONArray()
+    }
     private var fallbackAttempted=mutableSetOf<String>()
     // Viewer-specific preferences; license, playlists and parental restrictions remain shared.
     private fun viewerId():String {
@@ -1085,7 +1094,7 @@ class MainActivity: Activity() {
     }
     private fun manageViewerProfiles(){
         if(!prefs.getBoolean("nextv_profiles_enabled",true))return
-        val names=org.json.JSONArray(prefs.getString("viewer_profiles","[]"))
+        val names=savedJsonArray("viewer_profiles")
         val entries=mutableListOf("Default")
         for(i in 0 until names.length())entries.add(names.optString(i))
         val options=entries+listOf("＋ Add viewer","− Remove current viewer")
@@ -2111,7 +2120,7 @@ class MainActivity: Activity() {
     }
     private fun rememberRecentChannel(channel:Channel){
         val key=channelKey(channel)
-        val recent=JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))
+        val recent=savedJsonArray(viewerKey("recent_channels"))
         val updated=JSONArray().put(key)
         for(i in 0 until recent.length()){
             val value=recent.optString(i)
@@ -2120,7 +2129,7 @@ class MainActivity: Activity() {
         prefs.edit().putString(viewerKey("recent_channels"),updated.toString()).apply()
     }
     private fun recentlyWatched(){
-        val saved=JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))
+        val saved=savedJsonArray(viewerKey("recent_channels"))
         val keys=(0 until saved.length()).map{saved.optString(it)}
         val indices=keys.mapNotNull{key->
             visibleIndices().firstOrNull{channelKey(channels[it])==key}
@@ -2197,7 +2206,7 @@ class MainActivity: Activity() {
             Toast.makeText(this,"This programme has already started",Toast.LENGTH_SHORT).show()
             return
         }
-        val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))
+        val saved=savedJsonArray("epg_tune_schedules")
         val key=channelKey(channel)+"|"+programme.start
         if((0 until saved.length()).any{saved.optJSONObject(it)?.optString("key")==key}){
             Toast.makeText(this,"Programme already scheduled",Toast.LENGTH_SHORT).show()
@@ -2216,7 +2225,7 @@ class MainActivity: Activity() {
         epgTuneTask?.let{handler.removeCallbacks(it)}
         epgTuneTask=null
         if(!prefs.getBoolean("nextv_epg_enabled",true) || isFinishing || isDestroyed)return
-        val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))
+        val saved=savedJsonArray("epg_tune_schedules")
         val now=System.currentTimeMillis()
         val upcoming=(0 until saved.length()).mapNotNull{saved.optJSONObject(it)}
             .filter{it.optLong("start")>now-120000L}
@@ -2233,7 +2242,7 @@ class MainActivity: Activity() {
     }
     private fun checkEpgTune(){
         if(!prefs.getBoolean("nextv_epg_enabled",true) || isFinishing || isDestroyed)return
-        val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))
+        val saved=savedJsonArray("epg_tune_schedules")
         val now=System.currentTimeMillis()
         val keep=JSONArray()
         val due=mutableListOf<JSONObject>()
@@ -2275,7 +2284,7 @@ class MainActivity: Activity() {
         armEpgTune()
     }
     private fun showEpgSchedules(){
-        val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))
+        val saved=savedJsonArray("epg_tune_schedules")
         val items=(0 until saved.length()).mapNotNull{saved.optJSONObject(it)}
             .filter{it.optLong("start")>System.currentTimeMillis()}
         if(items.isEmpty()){
