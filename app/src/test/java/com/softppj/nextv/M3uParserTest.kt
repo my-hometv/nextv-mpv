@@ -26,7 +26,7 @@ https://stream.example/live.m3u8
 """
   assertEquals(listOf("https://example.com/a.xml","https://example.com/b.xml"),
       M3uParser.headerEpgUrls(playlist))
-  assertTrue(M3uParser.headerEpgUrls("#EXTINF:-1 url-tvg=\\"https://evil.example/epg.xml\\",Fake").isEmpty())
+  assertTrue(M3uParser.headerEpgUrls("""#EXTINF:-1 url-tvg="https://evil.example/epg.xml",Fake""").isEmpty())
  }
  @Test fun parsesAlternateUrlsAndMetadataHeaders(){
   val body="""#EXTM3U
