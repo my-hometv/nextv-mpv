@@ -17,16 +17,21 @@ internal object EpgMergePolicy {
         limit: Int = 1000
     ): List<T> {
         if (limit <= 0) return emptyList()
-        val accepted = ArrayList<T>(minOf(limit, existing.size + incoming.size))
+        // Accepted intervals never overlap, so only the immediate preceding
+        // and following intervals need checking. Avoid quadratic scans when
+        // XMLTV feeds contain hundreds of entries per channel.
+        val accepted = java.util.TreeMap<Long, T>()
         for (candidate in existing + incoming) {
             val from = start(candidate)
             val to = end(candidate)
             if (from <= 0L || to <= from) continue
-            // Half-open ranges: adjacent programmes do not overlap.
-            if (accepted.any { start(it) < to && from < end(it) }) continue
             if (accepted.size >= limit) break
-            accepted.add(candidate)
+            val previous = accepted.floorEntry(from)
+            if (previous != null && end(previous.value) > from) continue
+            val next = accepted.ceilingEntry(from)
+            if (next != null && next.key < to) continue
+            accepted[from] = candidate
         }
-        return accepted.sortedBy(start)
+        return accepted.values.toList()
     }
 }
