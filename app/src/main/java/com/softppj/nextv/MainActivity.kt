@@ -4660,9 +4660,7 @@ class MainActivity: Activity() {
             } else Toast.makeText(this,"Enter name and HTTP(S) URL",Toast.LENGTH_LONG).show()
         }.setNegativeButton("Cancel",null).show()
     }
-    private fun playlistCacheKey(p:Playlist):String =
-        MessageDigest.getInstance("SHA-256").digest(p.url.toByteArray())
-            .joinToString(""){"%02x".format(it)}
+    private fun playlistCacheKey(p:Playlist):String = hash(p.url)
     private fun cacheFile(p:Playlist):java.io.File =
         java.io.File(filesDir,"playlist_"+playlistCacheKey(p)+".m3u")
     // Limit a malformed/oversized feed before it can exhaust the TV's heap.
@@ -4783,8 +4781,7 @@ class MainActivity: Activity() {
                                         parsed=parseM3u(readPlaylistCache(file),p.name)
                                     }else if(code in 200..299){
                                         val body=connection.inputStream.use{readPlaylistText(it)}
-                                        val bodyHash=MessageDigest.getInstance("SHA-256").digest(body.toByteArray())
-                                            .joinToString(""){"%02x".format(it)}
+                                        val bodyHash=hash(body)
                                         val oldHash=prefs.getString(metadataKey+"_hash",null)
                                         parsed=if(!forceRebuild && bodyHash==oldHash && file.exists()){
                                             parseM3u(readPlaylistCache(file),p.name)
