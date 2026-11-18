@@ -867,7 +867,7 @@ class MainActivity: Activity() {
         }
     }
     private fun chooseMultiView(){
-        if(!prefs.getBoolean("myview_multiview_enabled",true)){
+        if(!prefs.getBoolean("myview_multiview_enabled",FeatureTogglePolicy.DEFAULT_MULTIVIEW)){
             Toast.makeText(this,"Enable MultiView in MyView Feature Controls",Toast.LENGTH_LONG).show()
             return
         }
@@ -881,7 +881,7 @@ class MainActivity: Activity() {
             }.setNegativeButton("Cancel",null).create())
     }
     private fun openMultiView(requested:Int){
-        if(!prefs.getBoolean("myview_multiview_enabled",true))return
+        if(!prefs.getBoolean("myview_multiview_enabled",FeatureTogglePolicy.DEFAULT_MULTIVIEW))return
         if(requested !in setOf(2,4))return
         if(!licenseReady || multiViewDialog!=null || playbackTeardownInProgress)return
         val lockedSources=lockedPlaylistNames()
@@ -7401,7 +7401,7 @@ class MainActivity: Activity() {
     private var localLogoOwner:MutableList<Channel>?=null
     private var localLogoIndex:Map<String,String> = emptyMap()
     private fun matchedLocalLogo(channel:Channel):String{
-        if(!prefs.getBoolean("myview_smart_logo_matching",true))return ""
+        if(!prefs.getBoolean("myview_smart_logo_matching",FeatureTogglePolicy.DEFAULT_SMART_LOGO_MATCHING))return ""
         if(localLogoOwner!==channels){
             localLogoIndex=SmartLogoPolicy.build(channels.map{
                 SmartLogoPolicy.Entry(it.name,it.epgId,it.logo)
@@ -10646,11 +10646,11 @@ class MainActivity: Activity() {
         root.addView(label("OFF by default to reduce second-decoder crashes on TVs with limited decoder resources. Enable only after normal channel changes are stable. When enabled, one silent Media3 neighbour may be prepared; LibVLC and restricted streams use normal switching."))
         root.addView(settingsToggle("Stream Health diagnostics","nextv_stream_health_enabled",true))
         root.addView(label("Observed start percentages require at least three attempts; they are not guaranteed future availability."))
-        root.addView(settingsToggle("Enable MultiView","myview_multiview_enabled",true))
-        if(prefs.getBoolean("myview_multiview_enabled",true))
+        root.addView(settingsToggle("Enable MultiView","myview_multiview_enabled",FeatureTogglePolicy.DEFAULT_MULTIVIEW))
+        if(prefs.getBoolean("myview_multiview_enabled",FeatureTogglePolicy.DEFAULT_MULTIVIEW))
             root.addView(button("MultiView — 2 or 4 channels"){chooseMultiView()})
         root.addView(label("MultiView is Media3-only and limited by TV decoder capacity. Some formats cannot play simultaneously."))
-        root.addView(settingsToggle("Smart Logos — match other playlist entries","myview_smart_logo_matching",true))
+        root.addView(settingsToggle("Smart Logos — match other playlist entries","myview_smart_logo_matching",FeatureTogglePolicy.DEFAULT_SMART_LOGO_MATCHING))
         root.addView(label("Uses unambiguous matching logos from your playlists first."))
         root.addView(settingsToggle("Public channel logos (IPTV-org directory)","myview_external_logos_enabled",false))
         root.addView(label("OFF by default. When enabled, downloads a public channel-logo index at most once per 24 hours; no private playlist URLs are uploaded. Loading a logo contacts its image host."))
