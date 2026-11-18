@@ -2166,7 +2166,8 @@ class MainActivity: Activity() {
             maxLines=10
             // Edit only manually configured URLs. Playlist-announced url-tvg
             // entries remain lower priority and must not be promoted on Save.
-            setText((prefs.getString("epg_xmltv_urls",null)\n                ?:prefs.getString("epg_xmltv_url",null).orEmpty()).trim())
+            setText((prefs.getString("epg_xmltv_urls",null)
+                ?:prefs.getString("epg_xmltv_url",null).orEmpty()).trim())
         }
         showSideDialog(AlertDialog.Builder(this).setTitle("EPG sources (priority order)")
             .setMessage("Manual EPG sources, highest priority first. Playlist url-tvg sources are included automatically after these URLs.")
