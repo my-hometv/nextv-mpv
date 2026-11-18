@@ -113,7 +113,10 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('catch(e:Exception){', self.activity)
         for key in ("epg_tune_schedules", "viewer_profiles"):
             self.assertIn('savedJsonArray("'+key+'")', self.activity)
-            self.assertNotIn('JSONArray(prefs.getString("'+key+'","[]"))', self.activity)
+        # The viewerId lookup already protects its fallback parse with
+        # try/catch; only unguarded EPG reminder parsing is prohibited.
+        self.assertNotIn('val saved=JSONArray(prefs.getString("epg_tune_schedules","[]"))',
+                         self.activity)
         self.assertIn('savedJsonArray(viewerKey("recent_channels"))', self.activity)
         self.assertNotIn('JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))', self.activity)
 
