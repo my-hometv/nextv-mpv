@@ -15,6 +15,12 @@ android {
     defaultConfig {
         // MyView is a private full-featured fork, installed independently from NexTV.
         applicationId = "com.softppj.myview"
+        // Optional separately installable testing package. Keep the launcher
+        // name, artwork, namespace, licensing and production ID unchanged.
+        // Only the dedicated manual Beta workflow supplies this property.
+        if (providers.gradleProperty("myviewBetaBuild").orNull == "true") {
+            applicationId = "com.softppj.myview.beta"
+        }
         minSdk = 23
         targetSdk = 35
         versionCode = 3
