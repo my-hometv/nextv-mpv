@@ -120,6 +120,33 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('savedJsonArray(viewerKey("recent_channels"))', self.activity)
         self.assertNotIn('JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))', self.activity)
 
+    def test_hidden_channel_remotes_respect_original_order_and_direction(self):
+        switching = self.activity.split("private fun nextSurfingIndex(", 1)[1].split(
+            "private var rapidSurfTask:", 1
+        )[0]
+        self.assertIn("HiddenChannelNavigationPolicy.nextFromExcluded(", switching)
+        self.assertIn("orderedChannelIndices(", switching)
+        self.assertIn("val direction=if(delta>=0)1 else -1", switching)
+        hiding = self.activity.split("private fun showChannelInfoActions(", 1)[1].split(
+            "private fun showChannelInfo(", 1
+        )[0]
+        self.assertIn("nextSurfingIndex(index,surfingDirection,surfingIndices())", hiding)
+        self.assertIn("playIndex(preferredChannel(next))", hiding)
+        self.assertIn("stopPlayback()", hiding)
+
+    def test_new_playlists_start_their_own_first_channel(self):
+        start = self.activity.split("private fun startAddedPlaylist(", 1)[1].split(
+            "private fun editPlaylist(", 1
+        )[0]
+        self.assertIn("channels.indexOfFirst{it.source==name", start)
+        self.assertIn('putString("selected_playlist_source",name)', start)
+        self.assertIn("playIndex(preferredChannel(first))", start)
+        self.assertIn("if(first !in channels.indices)", start)
+        self.assertIn("if(index==null)startAddedPlaylist(n)", self.activity)
+        self.assertIn("refresh({startAddedPlaylist(n)},true)", self.activity)
+        self.assertIn("refresh({startAddedPlaylist(title)},true)", self.activity)
+        self.assertIn("refresh({startAddedPlaylist(displayName)},true)", self.activity)
+
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
         self.assertIn("openCurrentChannelEpg()", self.activity)
