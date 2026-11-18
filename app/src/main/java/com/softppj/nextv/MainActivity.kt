@@ -2164,10 +2164,10 @@ class MainActivity: Activity() {
             setSingleLine(false)
             minLines=4
             maxLines=10
-            setText(epgUrls().joinToString("\n"))
+            // Edit only manually configured URLs. Playlist-announced url-tvg\n            // entries remain lower priority and must not be promoted on Save.\n            setText((prefs.getString("epg_xmltv_urls",null)\n                ?:prefs.getString("epg_xmltv_url",null).orEmpty()).trim())
         }
         showSideDialog(AlertDialog.Builder(this).setTitle("EPG sources (priority order)")
-            .setMessage("One .xml or .xml.gz URL per line. First source has priority. Remove a line to disable that source.")
+            .setMessage("Manual EPG sources, highest priority first. Playlist url-tvg sources are included automatically after these URLs.")
             .setView(input).setPositiveButton("Save"){_,_->
                 val urls=input.text.toString().lineSequence().map{it.trim()}.filter{it.isNotBlank()}.distinct().toList()
                 if(urls.any{!it.startsWith("https://") && !it.startsWith("http://")}){
@@ -2177,7 +2177,7 @@ class MainActivity: Activity() {
                     epgLoadGeneration++
                     epgLoadingGeneration=null
                     epgWaitingCallbacks.clear()
-                    epgGuide=emptyMap();epgLoadedAt=0L
+                    // Continue showing the last working programme schedule\n                    // until a complete replacement has been fetched and parsed.\n                    epgLoadedAt=0L
                     showEpg()
                 }
             }.setNegativeButton("Cancel",null).create())
