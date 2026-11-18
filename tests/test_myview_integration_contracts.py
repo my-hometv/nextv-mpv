@@ -89,6 +89,25 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('cancellation.isCancelled()', loader)
         self.assertIn('cancellation.releaseConnection(connection)', loader)
 
+    def test_epg_shutdown_closes_network_and_invalidates_callbacks(self):
+        destroy = self.activity.split("override fun onDestroy(){", 1)[1]
+        for marker in (
+            "epgLoadGeneration++",
+            "epgDownloadCancellation?.cancel()",
+            "epgLoadingGeneration=null",
+            "epgWaitingCallbacks.clear()",
+        ):
+            self.assertIn(marker, destroy)
+        loader = self.activity.split("private fun loadEpg(done:", 1)[1].split(
+            "private fun showChannelEpg(", 1
+        )[0]
+        ui = loader.split("runOnUiThread{", 1)[1]
+        self.assertIn('!cancellation.isCancelled()', ui)
+        self.assertIn('!isFinishing && !isDestroyed', ui)
+        self.assertIn('epgGuide=replacement', ui)
+        self.assertIn('epgLoadedAt=System.currentTimeMillis()', ui)
+        self.assertNotIn('epgGuide=withNames', loader)
+
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
         self.assertIn("openCurrentChannelEpg()", self.activity)
