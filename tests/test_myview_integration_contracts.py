@@ -60,6 +60,18 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('namedSchedules[name]=EpgMergePolicy.merge(', self.activity)
         self.assertIn('withNames.putIfAbsent(name,entries)', self.activity)
 
+    def test_epg_source_editor_preserves_manual_priority_and_live_schedule(self):
+        # Editing sources must not silently promote playlist url-tvg feeds
+        # into manual sources or erase a working guide before reload succeeds.
+        editor = self.activity.split("private fun configureEpg(){", 1)[1].split(
+            "private var epgTuneTask:", 1
+        )[0]
+        self.assertIn('prefs.getString("epg_xmltv_urls",null)', editor)
+        self.assertIn('prefs.getString("epg_xmltv_url",null)', editor)
+        self.assertNotIn('setText(epgUrls().joinToString', editor)
+        self.assertNotIn('epgGuide=emptyMap()', editor)
+        self.assertIn('epgLoadedAt=0L', editor)
+
     def test_channel_info_actions_are_connected(self):
         self.assertIn("private fun showChannelInfoActions(", self.activity)
         self.assertIn("openCurrentChannelEpg()", self.activity)
