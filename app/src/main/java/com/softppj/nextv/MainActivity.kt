@@ -2170,7 +2170,7 @@ class MainActivity: Activity() {
             .setMessage("Manual EPG sources, highest priority first. Playlist url-tvg sources are included automatically after these URLs.")
             .setView(input).setPositiveButton("Save"){_,_->
                 val urls=input.text.toString().lineSequence().map{it.trim()}.filter{it.isNotBlank()}.distinct().toList()
-                if(urls.any{!it.startsWith("https://") && !it.startsWith("http://")}){
+                if(urls.any{!it.startsWith("https://",true) && !it.startsWith("http://",true)}){
                     Toast.makeText(this,"Use HTTP or HTTPS EPG URLs",Toast.LENGTH_LONG).show()
                 }else{
                     prefs.edit().putString("epg_xmltv_urls",urls.joinToString("\n")).apply()
@@ -2313,7 +2313,7 @@ class MainActivity: Activity() {
     }
     private fun programmeList(c:Channel):List<EpgProgramme> {
         val id=c.epgId.trim().lowercase(java.util.Locale.ROOT)
-        val name=c.name.trim().lowercase(java.util.Locale.ROOT)
+        val name=EpgGuidePolicy.normalizeDisplayName(c.name)
         val raw=HomeTvPolicies.matchEpg(epgGuide,id,name)
         val global=prefs.getInt("epg_offset_minutes",0)
         val source=prefs.getInt("epg_offset_source_"+c.source.hashCode(),0)
@@ -2452,8 +2452,7 @@ class MainActivity: Activity() {
                                             ?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
                                     }
                                     "display-name"->if(definitionId.isNotEmpty()){
-                                        val displayName=parser.nextText().trim()
-                                            .lowercase(java.util.Locale.ROOT)
+                                        val displayName=EpgGuidePolicy.normalizeDisplayName(parser.nextText())
                                         if(displayName.isNotBlank())
                                             sourceNames.putIfAbsent(displayName,definitionId)
                                     }
