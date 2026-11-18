@@ -195,6 +195,19 @@ class MyViewIntegrationContracts(unittest.TestCase):
         )
         self.assertIn("now-surfingCacheAt<30000L)return cached", self.activity)
 
+    def test_stable_media3_startup_avoids_repeated_quality_selection(self):
+        # The user-selected track policy is applied before exo.prepare().
+        # Reapplying on each READY transition can restart selection when
+        # a live stream repeatedly buffers after its first frame.
+        self.assertIn("            applyQuality()\n", self.activity)
+        self.assertNotIn("                        scheduleQualityUpgrade()\n", self.activity)
+
+    def test_default_audio_gain_uses_pcm_passthrough(self):
+        processor = (ROOT / "app/src/main/java/com/softppj/nextv/ChannelGainAudioProcessor.kt").read_text(encoding="utf-8")
+        self.assertIn("if(currentGain==1f)", processor)
+        self.assertIn("output.put(input)", processor)
+        self.assertIn("return\n        }\n        when(encoding)", processor)
+
     def test_apk_stays_manual_and_linted_before_packaging(self):
         workflow = self.apk_workflow
         self.assertIn("workflow_dispatch:", workflow)
