@@ -8,6 +8,26 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[28])
 class M3uParserTest {
+ @Test fun extractsTopLevelPlaylistEpgUrlWithoutAddingStreamOrChannelHeaders(){
+  val url="https://raw.githubusercontent.com/doms9/iptv/refs/heads/default/M3U8/TV.xml"
+  val content="""#EXTM3U url-tvg="$url"
+#EXTINF:-1 tvg-id="tv1",TV One
+https://stream.example/live.m3u8
+"""
+  assertEquals(listOf(url),M3uParser.headerEpgUrls(content))
+  val channels=M3uParser.parse(content,"My Playlist")
+  assertEquals(1,channels.size)
+  assertEquals("tv1",channels.single().epgId)
+ }
+ @Test fun acceptsAlternateEpgHeaderAndRejectsInvalidOrNonHeaderUrls(){
+  val playlist="""#EXTM3U x-tvg-url="https://example.com/a.xml,https://example.com/b.xml" url-tvg="file:///secret.xml"
+#EXTINF:-1 tvg-id="example",Example
+https://stream.example/live.m3u8
+"""
+  assertEquals(listOf("https://example.com/a.xml","https://example.com/b.xml"),
+      M3uParser.headerEpgUrls(playlist))
+  assertTrue(M3uParser.headerEpgUrls("#EXTINF:-1 url-tvg=\\"https://evil.example/epg.xml\\",Fake").isEmpty())
+ }
  @Test fun parsesAlternateUrlsAndMetadataHeaders(){
   val body="""#EXTM3U
 #EXTINF:-1 tvg-id="asianet.cinema" tvg-logo="https://logo.example/a.png" group-title="Movies" media-type="movie",Asianet Cinema
