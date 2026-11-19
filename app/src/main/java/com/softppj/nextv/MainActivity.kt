@@ -2444,8 +2444,8 @@ class MainActivity: Activity() {
             return index.takeIf{canAutoRestoreChannel(channel)} ?: -1
         }
         if(canDeliver){
-            val auto=due.filter{it.optString("mode","reminder")=="auto"}
-            val chosen=EpgDuePolicy.lastAutomatic(auto){true}
+            val batch=EpgDuePolicy.partition(due){it.optString("mode","reminder")=="auto"}
+            val chosen=batch.automatic
             if(chosen!=null){
                 val index=scheduledIndex(chosen)
                 if(index>=0){
@@ -2453,11 +2453,10 @@ class MainActivity: Activity() {
                     val current=resolveListedChannel(identity,true,index)
                     if(current>=0)playIndex(current)
                 }
-                if(auto.size>1)showBanner(
-                    auto.size.toString()+" automatic EPG events due; latest selection used")
+                if(batch.automaticCount>1)showBanner(
+                    batch.automaticCount.toString()+" automatic EPG events due; latest selection used")
             }
-            val reminders=due.filter{it.optString("mode","reminder")!="auto"}
-                .mapNotNull{entry->
+            val reminders=batch.reminders.mapNotNull{entry->
                     val index=scheduledIndex(entry)
                     channels.getOrNull(index)?.let{channel->
                         Triple(id(channel),channel.name,entry.optString("title"))
