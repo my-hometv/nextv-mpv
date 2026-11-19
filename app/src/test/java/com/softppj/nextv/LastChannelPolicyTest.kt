@@ -36,4 +36,27 @@ class LastChannelPolicyTest {
         assertEquals(-1, find(null, null))
         assertEquals(-1, find("Removed", "https://stream/missing"))
     }
+    @Test fun automaticHistorySkipsHiddenAndLockedChannels(){
+        assertEquals(-1,LastChannelPolicy.findEligibleSavedChannel(
+            channels,"Two","https://stream/shared",{it.name},{it.name!="Two"}))
+        assertEquals(0,LastChannelPolicy.findEligibleSavedChannel(
+            channels,null,"https://stream/shared",{it.name},{it.name=="One"}))
+    }
+    @Test fun deletedIdentityCannotReopenSameUrlInAnotherPlaylist(){
+        assertEquals(-1,LastChannelPolicy.findEligibleSavedChannel(
+            channels,"Deleted","https://stream/shared",{it.name},{true}))
+    }
+    @Test fun perPlaylistHistoryUsesExactIdentity(){
+        assertEquals(1,LastChannelPolicy.findEligibleSavedChannel(
+            channels,"Two","https://stream/shared",{it.name},{it.source=="B"}))
+        assertEquals(-1,LastChannelPolicy.findEligibleSavedChannel(
+            channels,"Two","https://stream/shared",{it.name},{it.source=="A"}))
+    }
+    @Test fun legacyUrlHistoryRespectsEligibility(){
+        assertEquals(1,LastChannelPolicy.findEligibleSavedChannel(
+            channels,null,"https://stream/shared",{it.name},{it.source=="B"}))
+        assertEquals(-1,LastChannelPolicy.findEligibleSavedChannel(
+            channels,null,"https://stream/shared",{it.name},{false}))
+    }
 }
+

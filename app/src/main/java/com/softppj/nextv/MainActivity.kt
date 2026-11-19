@@ -746,6 +746,7 @@ class MainActivity: Activity() {
                 .putString("last_working_url",c.url)
                 .putString("last_working_channel_identity",id(c))
                 .putString("last_working_url_"+c.source,c.url)
+                .putString("last_working_identity_"+c.source,id(c))
                 .apply()
         }
         // Record the player that actually reached playback, not a pending fallback hint.
@@ -4112,11 +4113,11 @@ class MainActivity: Activity() {
         suspendedPlaybackUrl=null
         suspendedPlaybackIdentity=null
         if(url!=null && licenseReady && channels.isNotEmpty()){
-            val index=LastChannelPolicy.findSavedChannel(channels,identity,url){id(it)}
-            if(index>=0){
-                // Do not bypass parental controls on resume.
-                playIndex(index)
-            }else showHome()
+            val index=LastChannelPolicy.findEligibleSavedChannel(
+                channels,identity,url,::id,::canAutoRestoreChannel
+            )
+            if(index>=0)playIndex(index)
+            else resumeLast()
         }
         // Resume the suspended channel first. Otherwise an EPG auto-tune
         // can be immediately overwritten by the old channel on return.
@@ -6061,11 +6062,26 @@ class MainActivity: Activity() {
         val candidates=eligible(source)
         val confirmed=prefs.getString("last_working_url_"+source,null)
         val attempted=prefs.getString("last_url_"+source,null)
-        val target=candidates.firstOrNull{channels[it].url==confirmed}
-            ?:candidates.firstOrNull{channels[it].url==attempted}
+        val candidateSet=candidates.toHashSet()
+        val target=LastChannelPolicy.findEligibleSavedChannel(
+            channels,prefs.getString("last_working_identity_"+source,null),confirmed,::id
+        ){c->c.source==source && channels.indexOfFirst{it===c} in candidateSet}.takeIf{it>=0}
+            ?:LastChannelPolicy.findEligibleSavedChannel(
+                channels,prefs.getString("last_identity_"+source,null),attempted,::id
+            ){c->c.source==source && channels.indexOfFirst{it===c} in candidateSet}.takeIf{it>=0}
             ?:candidates.firstOrNull{channels[it].mediaType=="live"}
             ?:candidates.firstOrNull() ?:return null
         return source to target
+    }
+    // Saved-channel restores must obey ordinary surfing eligibility.
+    private fun canAutoRestoreChannel(c:Channel):Boolean{
+        val source=c.source
+        return (source.isBlank() || playlists().any{it.enabled && it.name==source}) &&
+            !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
+            !isSkipped(c) && channelKey(c) !in temporaryFailureHidden &&
+            channelKey(c) !in unavailableChannels &&
+            (source !in lockedPlaylistNames() || source in unlockedPlaylistsThisSession) &&
+            (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
     }
     private fun clearRemovedPreviousChannel(){
         val url=previousChannelUrl ?:return
@@ -6165,7 +6181,9 @@ class MainActivity: Activity() {
             .putStringSet("locked_groups",groupLocks)
             .remove("pin_failures_playlist:"+name)
             .remove("last_url_"+name)
+            .remove("last_identity_"+name)
             .remove("last_working_url_"+name)
+            .remove("last_working_identity_"+name)
         groupsToClear.forEach{edit.remove("pin_failures_group:"+it)}
         edit.apply()
         unlockedPlaylistsThisSession.remove(name)
@@ -9222,12 +9240,9 @@ class MainActivity: Activity() {
     }
     private fun returnToPreviousChannel(){
         val url=previousChannelUrl ?:run{showBanner("No previous channel");return}
-        val enabled=playlists().filter{it.enabled}.map{it.name}.toHashSet()
-        val index=channels.indexOfFirst{candidate->
-            candidate.url==url &&
-                (previousChannelIdentity==null || id(candidate)==previousChannelIdentity) &&
-                (candidate.source.isBlank() || candidate.source in enabled)
-        }
+        val index=LastChannelPolicy.findEligibleSavedChannel(
+            channels,previousChannelIdentity,url,::id,::canAutoRestoreChannel
+        )
         if(index>=0 && index!=active)playIndex(index)
         else{
             previousChannelUrl=null
@@ -9682,7 +9697,8 @@ class MainActivity: Activity() {
                 ))applyChannelVolume()
         },400)
         if(unlockedChannel!=id(c)) unlockedChannel=null
-        prefs.edit().putString("last_url",c.url).putString("last_channel_identity",id(c)).putString("last_url_"+c.source,c.url).apply()
+        prefs.edit().putString("last_url",c.url).putString("last_channel_identity",id(c))
+            .putString("last_url_"+c.source,c.url).putString("last_identity_"+c.source,id(c)).apply()
         rememberRecentChannel(c)
         window.decorView.systemUiVisibility=(View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
         val screen=FrameLayout(this).apply{setBackgroundColor(android.graphics.Color.BLACK);isFocusableInTouchMode=true}
@@ -10799,33 +10815,19 @@ class MainActivity: Activity() {
         // updates last_url but must never replace this safe startup choice.
         val workingUrl=prefs.getString("last_working_url",null)
         val workingIdentity=prefs.getString("last_working_channel_identity",null)
-        val workingIndex=LastChannelPolicy.findSavedChannel(channels,workingIdentity,workingUrl){id(it)}
-        val url=if(workingIndex>=0)workingUrl else prefs.getString("last_url",null)
-        val savedIdentity=if(workingIndex>=0)workingIdentity else prefs.getString("last_channel_identity",null)
-        val index=LastChannelPolicy.findSavedChannel(channels,savedIdentity,url){id(it)}
-        // Avoid building and sorting the full surfing list on the common
-        // startup path when the saved channel is already present and unlocked.
-        if(index>=0 && channels[index].source.let{source->
-                source.isBlank() || playlists().any{it.enabled && it.name==source}
-            } && !isLocked(channels[index]) &&
-            (channels[index].source !in lockedPlaylistNames() ||
-                channels[index].source in unlockedPlaylistsThisSession) &&
-            (channels[index].group !in lockedGroupNames() ||
-                channels[index].group in unlockedGroupsThisSession)){
+        val workingIndex=LastChannelPolicy.findEligibleSavedChannel(
+            channels,workingIdentity,workingUrl,::id,::canAutoRestoreChannel
+        )
+        val index=if(workingIndex>=0)workingIndex else
+            LastChannelPolicy.findEligibleSavedChannel(
+                channels,prefs.getString("last_channel_identity",null),
+                prefs.getString("last_url",null),::id,::canAutoRestoreChannel
+            )
+        if(index>=0){
             playIndex(index)
             return
         }
-        // Startup fallback must also honor playlist/group PIN gates. Surfing
-        // filters channel locks but may still include protected containers.
-        val lockedSources=lockedPlaylistNames()
-        val lockedGroups=lockedGroupNames()
-        val available=surfingIndices().firstOrNull { candidate ->
-            val channel=channels[candidate]
-            (channel.source !in lockedSources ||
-                channel.source in unlockedPlaylistsThisSession) &&
-            (channel.group !in lockedGroups ||
-                channel.group in unlockedGroupsThisSession)
-        }
+        val available=surfingIndices().firstOrNull{canAutoRestoreChannel(channels[it])}
         // Use the already-authorized candidate directly: preferredChannel()
         // may otherwise switch to a protected alternative URL.
         if(available!=null)playIndex(available)
