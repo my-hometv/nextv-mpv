@@ -7,6 +7,19 @@ package com.softppj.nextv
  * the refreshed list. An index captured before the network request is stale.
  */
 internal object ActiveChannelRefreshPolicy {
+    data class Transition(val newIndex:Int,val mustStop:Boolean)
+    fun <T> planTransition(
+        previous:List<T>,updated:List<T>,active:Int,foreground:Boolean,
+        key:(T)->String,url:(T)->String,source:(T)->String
+    ):Transition {
+        val old=previous.getOrNull(active) ?:return Transition(-1,false)
+        val destination=findRelocated(
+            updated,key(old),url(old),source(old),key,url,source)
+        val new=updated.getOrNull(destination)
+        val changed=new==null || key(new)!=key(old) ||
+            url(new)!=url(old) || source(new)!=source(old)
+        return Transition(destination,foreground && (destination!=active || changed))
+    }
     fun <T> findRelocated(
         refreshed:List<T>,
         currentKey:String?,

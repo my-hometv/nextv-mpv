@@ -11,6 +11,40 @@ class ActiveChannelRefreshPolicyTest {
             {it.key},{it.url},{it.source}
         )
 
+    private fun transition(previous:List<Entry>,updated:List<Entry>,active:Int,playing:Boolean)=
+        ActiveChannelRefreshPolicy.planTransition(
+            previous,updated,active,playing,{it.key},{it.url},{it.source})
+
+    @Test fun indexShiftRequiresStopBeforeListMutation(){
+        val deleted=Entry("gone","https://a.test/gone","Old")
+        val playing=Entry("movie","https://a.test/movie","New")
+        val result=transition(listOf(deleted,playing),listOf(playing),1,true)
+        assertEquals(0,result.newIndex)
+        assertTrue(result.mustStop)
+    }
+    @Test fun unrelatedDeletionAfterActiveIndexKeepsDecoder(){
+        val playing=Entry("movie","https://a.test/movie","New")
+        val deleted=Entry("gone","https://a.test/gone","Old")
+        val result=transition(listOf(playing,deleted),listOf(playing),0,true)
+        assertEquals(0,result.newIndex)
+        assertFalse(result.mustStop)
+    }
+    @Test fun changingAStreamAtSameIndexRequiresStop(){
+        val before=Entry("movie","https://a.test/movie","New")
+        val after=Entry("renamed","https://a.test/movie","New")
+        assertTrue(transition(listOf(before),listOf(after),0,true).mustStop)
+    }
+    @Test fun removedCurrentChannelRequiresStopAndNoReplacement(){
+        val before=Entry("old","https://a.test/old","Old")
+        val replacement=Entry("new","https://a.test/new","New")
+        val result=transition(listOf(before),listOf(replacement),0,true)
+        assertEquals(-1,result.newIndex)
+        assertTrue(result.mustStop)
+    }
+    @Test fun inactiveScreenMayRebuildWithoutDecoderStop(){
+        val before=Entry("old","https://a.test/old","Old")
+        assertFalse(transition(listOf(before),emptyList(),0,false).mustStop)
+    }
     @Test fun currentRemoteSelectionWinsOverOldNetworkSnapshot(){
         val originalFirst=Entry("alpha-1","https://a.test/1","Alpha")
         val newRemoteSelection=Entry("alpha-2","https://a.test/2","Alpha")

@@ -23,6 +23,7 @@ internal object BackupSafety {
     fun mayTransferSetting(key: String): Boolean {
         val name = key.lowercase(java.util.Locale.ROOT)
         if (name in nonPortableKeys || name.startsWith("last_url_") ||
+            name.startsWith("last_working_url_") ||
             name.startsWith("license_") || name.startsWith("signed_license_") ||
             name.startsWith("pin_failures_")) return false
         return secretKeyParts.none { it in name }

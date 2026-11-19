@@ -97,14 +97,14 @@ class HumanJourneyTest(unittest.TestCase):
 
     def test_delete_stops_correct_vod_before_channel_indices_change(self):
         block=between("private fun removePlaylistSource(", "private fun clearPlaylistLocalHistory(")
-        self.assertLess(block.index("if(wasPlaying)stopPlayback()"),block.index("channels=channels.filter"))
-        self.assertLess(block.index("clearPlaylistLocalHistory(name)"),block.index("channels=channels.filter"))
+        self.assertLess(block.index("if(wasPlaying)stopPlayback()"),block.index("publishChannelsKeepingPlayback("))
+        self.assertLess(block.index("clearPlaylistLocalHistory(name)"),block.index("publishChannelsKeepingPlayback("))
     def test_unrelated_playlist_disable_preserves_active_decoder_and_index(self):
         transition=between("private fun switchAfterPlaylistRemoved(", "private fun disablePlaylistSource(")
         self.assertIn("if(keepWatching)",transition)
         self.assertIn("return",transition)
         delete=between("private fun removePlaylistSource(", "private fun clearPlaylistLocalHistory(")
-        self.assertIn("if(active !in channels.indices)",delete)
+        self.assertIn("publishChannelsKeepingPlayback(channels.filter{it.source!=name}.toMutableList())",delete)
     def test_skip_entirely_hidden_locked_replacements(self):
         select=between("private fun nextAvailablePlaylistChannel(", "private fun clearRemovedPreviousChannel(")
         self.assertIn("PlaylistTransitionPolicy.nextEligiblePlaylist(",select)
@@ -119,5 +119,32 @@ class HumanJourneyTest(unittest.TestCase):
         clear=between("private fun clearRemovedPreviousChannel(", "private fun switchAfterPlaylistRemoved(")
         self.assertIn("identity==null || id(c)==identity",clear)
         self.assertIn("c.source in enabled",clear)
+
+    def test_reordered_playlist_saves_outgoing_vod_before_swap(self):
+        updater=between("private fun publishChannelsKeepingPlayback(", "private var automaticRefreshGeneration:")
+        self.assertLess(updater.index("if(needsRetune)stopPlayback()"),
+                        updater.index("channels=replacement"))
+        self.assertIn("ActiveChannelRefreshPolicy.planTransition(",updater)
+        refresh=between("private fun refresh(", "private var backgroundProbeGeneration")
+        self.assertIn("publishChannelsKeepingPlayback(nextChannels)",refresh)
+        self.assertNotIn("active=relocated",refresh)
+    def test_delete_eviction_occurs_unconditionally(self):
+        remover=between("private fun removePlaylistSource(", "private fun clearPlaylistLocalHistory(")
+        self.assertIn("publishChannelsKeepingPlayback(channels.filter{it.source!=name}",remover)
+        self.assertNotIn("if(active !in channels.indices)",remover)
+        self.assertIn("if(wasPlaying)stopPlayback()",remover)
+    def test_restore_reconciles_disabled_sources_and_downloads_newly_enabled(self):
+        method=between("private fun reconcileRestoredPlaylistState(", "private fun restoreSettingsFromText(")
+        self.assertIn("if(lostCurrent)stopPlayback()",method)
+        self.assertIn("publishChannelsKeepingPlayback(channels.filter",method)
+        self.assertIn("clearRemovedPreviousChannel()",method)
+        self.assertIn("refresh({},forceRebuild=false)",method)
+        restore=between("private fun restoreSettingsFromText(", "private fun showDiagnosticLogs(")
+        self.assertIn("val previousPlaylists=playlists().toList()",restore)
+        self.assertIn("reconcileRestoredPlaylistState(previousPlaylists)",restore)
+    def test_per_playlist_working_history_not_exported(self):
+        safety=(ROOT/"app/src/main/java/com/softppj/nextv/BackupSafety.kt").read_text()
+        self.assertIn('name.startsWith("last_working_url_")',safety)
+        self.assertIn('putString("last_working_url_"+c.source,c.url)',MAIN)
 
 if __name__=="__main__":unittest.main()

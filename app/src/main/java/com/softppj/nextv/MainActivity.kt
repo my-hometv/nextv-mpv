@@ -5073,6 +5073,29 @@ class MainActivity: Activity() {
             .distinctBy{it.source.lowercase()+"|"+it.name.lowercase()+"|"+it.url}
             .toMutableList()
     }
+    // Sole channel-list publication path: release the OLD playback identity
+    // before any channel indices can move. Unchanged positions keep their
+    // active decoder; moved channels are retuned with a fresh generation.
+    private fun publishChannelsKeepingPlayback(replacement:MutableList<Channel>){
+        val transition=ActiveChannelRefreshPolicy.planTransition(
+            channels,replacement,active,videoScreen!=null,
+            ::channelKey,{it.url},{it.source})
+        val outgoing=channels.getOrNull(active)
+        val relocated=transition.newIndex
+        val foreground=outgoing!=null && videoScreen!=null
+        val needsRetune=transition.mustStop
+        if(needsRetune)stopPlayback()
+        channels=replacement
+        channelIndexOwner=null
+        channelIndexSize=-1
+        invalidateSurfingCache()
+        if(needsRetune){
+            if(relocated>=0 && licenseReady)playIndex(relocated)
+            else showHome()
+        }else if(outgoing!=null && !foreground){
+            active=relocated
+        }
+    }
     private var automaticRefreshGeneration:Int?=null
     private fun refresh(done:()->Unit,forceRebuild:Boolean=false,activeOnly:Boolean=false,automatic:Boolean=false){
         if(!FeatureTogglePolicy.shouldRunAutomaticRefresh(automatic,prefs.getBoolean("auto_playlist_check",FeatureTogglePolicy.DEFAULT_AUTO_PLAYLIST_REFRESH)))return
@@ -5217,43 +5240,18 @@ class MainActivity: Activity() {
                 Toast.makeText(this,"Playlist check complete: "+updated+" updated • "+
                     (checkedCount-updated).coerceAtLeast(0)+" unchanged • "+
                     (sources.size-checkedCount).coerceAtLeast(0)+" failed",Toast.LENGTH_LONG).show()
-                // Capture the current foreground selection at apply-time.
-                val foregroundBeforeReplace=channels.getOrNull(active)
-                val foregroundKey=foregroundBeforeReplace?.let(::channelKey)
-                val foregroundUrl=foregroundBeforeReplace?.url
-                val foregroundSource=foregroundBeforeReplace?.source
                 if(updated==0 && nextChannels.isEmpty()){
                     Toast.makeText(this,"Refresh failed. Existing channels preserved.",Toast.LENGTH_LONG).show()
                 }else{
-                    channels=nextChannels
-                    // A successful playlist replacement is the right time to
-                    // evict old reachability results, not every periodic scan.
+                    // Save VOD progress and cancel native callbacks against the
+                    // outgoing collection before publishing the reordered list.
+                    publishChannelsKeepingPlayback(nextChannels)
                     val validUrls=nextChannels.asSequence().map{it.url}.toHashSet()
                     probeReachable.keys.retainAll(validUrls)
                     media3ProbeObservedAt.keys.retainAll(validUrls)
                     vlcProbeObservedAt.keys.retainAll(validUrls)
                     vlcProbeReachable.keys.retainAll(validUrls)
                     if(forceRebuild)Toast.makeText(this,"Rebuilt "+updated+"/"+sources.size+" playlists • "+actualChannelCount()+" channels",Toast.LENGTH_LONG).show()
-                }
-                // Preserve whichever channel is playing when the refresh finishes,
-                // not whichever channel happened to be playing when the network
-                // request began. The viewer may have changed channels meanwhile.
-                if(active>=0){
-                    val relocated=ActiveChannelRefreshPolicy.findRelocated(
-                        channels,foregroundKey,foregroundUrl,foregroundSource,
-                        ::channelKey,{it.url},{it.source}
-                    )
-                    if(relocated>=0){
-                        val indexChanged=relocated!=active
-                        active=relocated
-                        // Player listeners and delayed recovery callbacks are bound
-                        // to the original channel index. Rebind playback if a refresh
-                        // moved the current channel so those callbacks remain valid.
-                        if(indexChanged && videoScreen!=null)playIndex(relocated)
-                    }else{
-                        stopPlayback()
-                        showHome()
-                    }
                 }
                 startBackgroundChannelChecks()
                 done()
@@ -6110,14 +6108,9 @@ class MainActivity: Activity() {
         if(previous.none{it.name!=name && it.url==removed.url})
             try{cacheFile(removed).delete()}catch(_:Exception){}
         clearPlaylistLocalHistory(name)
-        // Keep other playback indices stable until its next ordinary refresh.
-        // Deleted-source channels are already excluded from all browse/tune paths.
-        if(active !in channels.indices){
-            channels=channels.filter{it.source!=name}.toMutableList()
-            channelIndexOwner=null
-            channelIndexSize=-1
-        }
-        invalidateSurfingCache()
+        // Always evict deleted entries immediately. If removing earlier
+        // entries shifts an unrelated active index, it is safely rebound.
+        publishChannelsKeepingPlayback(channels.filter{it.source!=name}.toMutableList())
         switchAfterPlaylistRemoved(name,previous,wasPlaying,wasSelected)
         if(pinFailure)Toast.makeText(this,
             "Playlist deleted after 3 incorrect PIN attempts",Toast.LENGTH_LONG).show()
@@ -10921,6 +10914,44 @@ class MainActivity: Activity() {
             Toast.makeText(this,"Unable to open the TV file picker: "+e.message,Toast.LENGTH_LONG).show()
         }
     }
+    // Backup restore bypasses the playlist manager's normal disable/delete
+    // callbacks. Reconcile the active source and list before any new tune.
+    private fun reconcileRestoredPlaylistState(previous:List<Playlist>){
+        val enabled=playlists().filter{it.enabled}.map{it.name}.toHashSet()
+        val current=channels.getOrNull(active)
+        val lostCurrent=current!=null && current.source.isNotBlank() &&
+            current.source !in enabled
+        val lostSource=current?.source
+        val selected=prefs.getString("selected_playlist_source",null)
+        val lostSelection=selected!=null && selected !in enabled
+        refreshGeneration++
+        if(lostCurrent)stopPlayback()
+        publishChannelsKeepingPlayback(channels.filter{c->
+            c.source.isBlank() || c.source in enabled
+        }.toMutableList())
+        clearRemovedPreviousChannel()
+        if(lostCurrent && lostSource!=null){
+            val next=nextAvailablePlaylistChannel(lostSource,previous)
+            prefs.edit().apply{
+                putBoolean("myview_browse_all_playlists",false)
+                if(next!=null)putString("selected_playlist_source",next.first)
+                else remove("selected_playlist_source")
+            }.apply()
+            if(next!=null && licenseReady)playIndex(next.second)
+            else if(licenseReady)showHome()
+        }else if(lostSelection){
+            val next=playlists().firstOrNull{it.enabled &&
+                channels.any{c->c.source==it.name}}
+            prefs.edit().apply{
+                if(next==null)remove("selected_playlist_source")
+                else putString("selected_playlist_source",next.name)
+            }.apply()
+        }
+        invalidateSurfingCache()
+        // Rebuild channels for newly enabled/added restored sources.
+        if(licenseReady && enabled.isNotEmpty())
+            refresh({},forceRebuild=false)
+    }
     private fun restoreSettingsFromText(raw:String){
         if(!prefs.getBoolean("nextv_backup_enabled",true))return
         try{
@@ -10929,6 +10960,7 @@ class MainActivity: Activity() {
             AlertDialog.Builder(this).setTitle("Choose restore method")
                 .setItems(arrayOf("Merge with existing settings","Replace existing settings")){_,mode->
                     try{
+                        val previousPlaylists=playlists().toList()
                         val previousToggles=FeatureTogglePolicy.runtimeToggles
                             .mapValues{(key,default)->prefs.getBoolean(key,default)}
                         val edit=prefs.edit()
@@ -10975,6 +11007,10 @@ class MainActivity: Activity() {
                         // short-lived surfing cache.
                         channelIndexOwner=null
                         ensureChannelIndex()
+                        if("playlists" in incomingKeys || (mode==1 &&
+                            previousPlaylists!=playlists())){
+                            reconcileRestoredPlaylistState(previousPlaylists)
+                        }
                         Toast.makeText(this,(if(mode==0)"Merged " else "Replaced with ")+staged.size+
                             " settings. License and parental PIN were kept.",Toast.LENGTH_LONG).show()
                     }catch(e:Exception){
