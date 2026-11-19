@@ -9,7 +9,7 @@
         android:label="@string/app_name"
         android:icon="@drawable/nextv_launcher"
         android:roundIcon="@drawable/nextv_launcher"
-        android:theme="@android:style/Theme.Material.NoActionBar"
+        android:theme="@style/MyViewTheme"
         android:usesCleartextTraffic="true"
         android:banner="@drawable/tv_banner">
         <activity
