@@ -6028,21 +6028,54 @@ class MainActivity: Activity() {
             }else Toast.makeText(this,"Incorrect password",Toast.LENGTH_SHORT).show()
         }.setNegativeButton("Cancel",null).create())
     }
-    private fun showBanner(message:String, error:Boolean=false){
-        val screen=videoScreen ?: return
-        bannerTask?.let{handler.removeCallbacks(it)}
-        banner?.let{screen.removeView(it)}
-        val text=TextView(this).apply {
-            this.text=message
-            textSize=20f
-            setTextColor(android.graphics.Color.WHITE)
-            setBackgroundColor(informationColor(if(error)0x842020 else 0x15283C))
-            setPadding(24,18,24,18)
+    private fun infoPanelBackground(error:Boolean=false):android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                informationColor(if(error)0x51263A else 0x14293F),
+                informationColor(if(error)0x271522 else 0x091827)
+            )
+        ).apply{
+            cornerRadius=tvDp(15).toFloat()
+            setStroke(tvDp(1),if(error)0x99E59A9A.toInt() else 0x6689B5D4)
         }
-        banner=text
-        screen.addView(text,FrameLayout.LayoutParams((resources.displayMetrics.widthPixels*0.52f).toInt(),-2,Gravity.TOP or Gravity.RIGHT))
+
+    private fun showBanner(message:String, error:Boolean=false){
+        val screen=videoScreen ?:return
+        bannerTask?.let{handler.removeCallbacks(it)}
+        banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
+        val panel=LinearLayout(this).apply{
+            orientation=LinearLayout.HORIZONTAL
+            gravity=Gravity.CENTER_VERTICAL
+            background=infoPanelBackground(error)
+            setPadding(tvDp(15),tvDp(12),tvDp(17),tvDp(12))
+            elevation=tvDp(8).toFloat()
+        }
+        panel.addView(View(this).apply{
+            background=android.graphics.drawable.GradientDrawable().apply{
+                setColor(if(error)0xFFFF9B9B.toInt() else 0xFF65DCC5.toInt())
+                cornerRadius=tvDp(3).toFloat()
+            }
+        },LinearLayout.LayoutParams(tvDp(4),tvDp(30)))
+        panel.addView(TextView(this).apply{
+            text=message
+            textSize=17f
+            setTextColor(android.graphics.Color.WHITE)
+            maxLines=3
+            ellipsize=android.text.TextUtils.TruncateAt.END
+            setPadding(tvDp(12),0,0,0)
+        },LinearLayout.LayoutParams(0,-2,1f))
+        banner=panel
+        screen.addView(panel,FrameLayout.LayoutParams(
+            (resources.displayMetrics.widthPixels*0.50f).toInt(),-2,Gravity.TOP or Gravity.RIGHT
+        ).apply{topMargin=tvDp(18);rightMargin=tvDp(18)})
         if(!error){
-            val task=Runnable{if(banner===text){screen.removeView(text);banner=null}}
+            val task=Runnable{
+                if(banner===panel){
+                    (panel.parent as? android.view.ViewGroup)?.removeView(panel)
+                    banner=null
+                }
+            }
             bannerTask=task
             handler.postDelayed(task,2500)
         }
@@ -6089,7 +6122,7 @@ class MainActivity: Activity() {
             window.setGravity(side or Gravity.CENTER_VERTICAL)
             window.setLayout((resources.displayMetrics.widthPixels*0.44f).toInt().coerceAtLeast(320),WindowManager.LayoutParams.WRAP_CONTENT)
             window.setDimAmount(0.06f)
-            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(informationColor(0x202B3A)))
+            window.setBackgroundDrawable(infoPanelBackground())
             dialog.listView?.apply{
                 selector=android.graphics.drawable.StateListDrawable().apply{
                     addState(intArrayOf(android.R.attr.state_pressed),
@@ -7132,10 +7165,16 @@ class MainActivity: Activity() {
         val view=numericOverlay?.takeIf{it.parent===screen} ?:TextView(this).apply{
             textSize=18f
             setTextColor(android.graphics.Color.WHITE)
-            setBackgroundColor(informationColor(0x15283C))
-            setPadding(18,12,18,12)
+            background=infoPanelBackground()
+            setPadding(tvDp(17),tvDp(13),tvDp(17),tvDp(13))
             gravity=Gravity.CENTER_VERTICAL or Gravity.LEFT
-            screen.addView(this,FrameLayout.LayoutParams((resources.displayMetrics.widthPixels*0.62f).toInt(),-2,Gravity.BOTTOM or Gravity.LEFT))
+            maxLines=2
+            ellipsize=android.text.TextUtils.TruncateAt.END
+            elevation=tvDp(7).toFloat()
+            screen.addView(this,FrameLayout.LayoutParams((resources.displayMetrics.widthPixels*0.62f).toInt(),-2,Gravity.BOTTOM or Gravity.LEFT).apply{
+                leftMargin=tvDp(14)
+                bottomMargin=tvDp(14)
+            })
             numericOverlay=this
         }
         val typed=channelDigits.toIntOrNull()
@@ -7237,8 +7276,9 @@ class MainActivity: Activity() {
         // Automatic preparation has no extra on-screen video surface and no
         // automatic audio. Manual preview keeps its small, muted TV overlay.
         val panel=if(automatic)null else FrameLayout(this).apply{
-            setBackgroundColor(0xFF101E31.toInt())
-            elevation=12f
+            background=infoPanelBackground()
+            clipToOutline=true
+            elevation=tvDp(12).toFloat()
         }
         previewPanel=panel
         if(panel!=null){
@@ -7250,10 +7290,13 @@ class MainActivity: Activity() {
             }
             screen.addView(panel,params)
             panel.addView(TextView(this).apply{
-                text="LIVE PREVIEW  •  "+c.name
+                text="◉  PREVIEW  •  "+c.name
                 textSize=13f
-                setTextColor(android.graphics.Color.WHITE)
-                setPadding(8,8,8,8)
+                maxLines=1
+                ellipsize=android.text.TextUtils.TruncateAt.END
+                setTextColor(0xFFD9F1FF.toInt())
+                setBackgroundColor(0xD012283B.toInt())
+                setPadding(tvDp(10),tvDp(8),tvDp(10),tvDp(8))
             },FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM))
         }
         previewSourceIdentity=id(c)
@@ -11044,7 +11087,8 @@ class MainActivity: Activity() {
             orientation=LinearLayout.VERTICAL
             gravity=Gravity.CENTER
             setPadding((15*density).toInt(),(16*density).toInt(),(15*density).toInt(),(16*density).toInt())
-            setBackgroundColor(0xE515283C.toInt())
+            background=infoPanelBackground()
+            elevation=tvDp(7).toFloat()
             isClickable=false
         }
         panel.addView(TextView(this).apply{
