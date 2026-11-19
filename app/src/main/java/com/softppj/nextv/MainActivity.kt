@@ -2817,11 +2817,11 @@ class MainActivity: Activity() {
         }
         val i=active
         if(i !in channels.indices)return
-        loadEpg{success->if(success)showChannelEpg(i) else
+        loadEpg(done={success->if(success)showChannelEpg(i) else
             showSideDialog(AlertDialog.Builder(this).setTitle("EPG unavailable")
                 .setMessage("Could not load your EPG sources.")
                 .setPositiveButton("EPG sources"){_,_->configureEpg()}
-                .setNegativeButton("Close",null).create())}
+                .setNegativeButton("Close",null).create())})
     }
     // Half-hour programme grid: the same guide can be browsed while live TV
     // continues playing. A virtualized ListView avoids creating thousands of rows.
@@ -7624,12 +7624,12 @@ class MainActivity: Activity() {
             prefs.getBoolean("show_channel_epg",true) &&
             epgGuide.isEmpty() && epgUrls().isNotEmpty()){
             val originalScreen=videoScreen
-            loadEpg{success->
+            loadEpg(done={success->
                 // Do not reopen an expired banner or interfere with playback.
                 if(success && active==index && videoScreen===originalScreen &&
                     banner?.parent===originalScreen && previewIndex<0)
                     showChannelInfo(index)
-            }
+            })
         }
     }
     private fun informationAlpha():Int=prefs.getInt("information_opacity",65).coerceIn(20,100)*255/100
