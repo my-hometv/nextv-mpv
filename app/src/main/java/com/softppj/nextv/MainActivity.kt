@@ -4416,7 +4416,7 @@ class MainActivity: Activity() {
         reset("MyView  •  Music")
         root.addView(label("Music  |  "+items.size+" songs"))
         root.addView(button("⌕  Search Songs / Artists / Albums"){mediaSearch("music")})
-        root.addView(button("♫  All Songs"){mediaRows("All Songs",items){mediaMusic()}}
+        root.addView(button("♫  All Songs"){mediaRows("All Songs",items){mediaMusic()}})
         items.groupBy{channels[it].artist.ifBlank{"Unknown Artist"}}.toSortedMap().forEach{(artist,songs)->
             root.addView(button("♫  "+artist+"  ("+songs.size+")"){mediaRows(artist,songs){mediaMusic()}})
         }
