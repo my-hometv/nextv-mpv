@@ -126,6 +126,29 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('savedJsonArray(viewerKey("recent_channels"))', self.activity)
         self.assertNotIn('JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))', self.activity)
 
+    def test_approved_tv_preview_visuals_preserve_playback_controls(self):
+        info = self.activity.split("private fun showChannelInfo(index:Int", 1)[1].split(
+            "private fun clearChannelPreview(", 1
+        )[0]
+        self.assertIn("programmeColumn(\"NOW\"", info)
+        self.assertIn("programmeColumn(\"NEXT\"", info)
+        self.assertIn("R.drawable.tv_banner", info)
+        self.assertIn("logoView(channel,64)", info)
+        self.assertIn("previewInfoPanel=if(isPreview)panel else null", info)
+        self.assertIn("handler.postDelayed(task,4000)", info)
+        volume = self.activity.split("private fun showHomeTvVolume(){", 1)[1].split(
+            "private fun safeRemoteTransport(", 1
+        )[0]
+        self.assertIn("orientation=LinearLayout.HORIZONTAL", volume)
+        self.assertIn("progressBarStyleHorizontal", volume)
+        self.assertIn("handler.postDelayed(task,2500L)", volume)
+        guide = self.activity.split("private fun showEpgGrid(", 1)[1].split(
+            "private fun showEpg(){", 1
+        )[0]
+        self.assertIn("background=infoPanelBackground()", guide)
+        self.assertIn("styledMenuList()", guide)
+        self.assertIn("list.setOnItemClickListener", guide)
+
     def test_visual_menu_theme_and_stale_channel_actions(self):
         manifest = (ROOT / "app/src/main/AndroidManifest.xml").read_text()
         theme = (ROOT / "app/src/main/res/values/myview_theme.xml").read_text()
