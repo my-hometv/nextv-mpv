@@ -23,6 +23,11 @@ internal object EpgGuidePolicy {
         return listOf(exact,punctuation,withoutQuality).filter{it.isNotBlank()}.distinct()
     }
 
+    /** An XMLTV document with no useful programmes must never replace
+     * a previously populated guide or claim a one-hour successful cache. */
+    fun shouldPublishFeed(usableProgrammeCount:Int):Boolean =
+        usableProgrammeCount>0
+
     fun rows(visibleIndices:List<Int>, channelCount:Int):List<Int> =
         visibleIndices.filter { it >= 0 && it < channelCount }
 

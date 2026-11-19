@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class EpgGuidePolicyTest {
+    @Test fun emptyOrExpiredFeedNeverOverwritesExistingGuide() {
+        assertFalse(EpgGuidePolicy.shouldPublishFeed(0))
+        assertFalse(EpgGuidePolicy.shouldPublishFeed(-1))
+        assertTrue(EpgGuidePolicy.shouldPublishFeed(1))
+        assertTrue(EpgGuidePolicy.shouldPublishFeed(500))
+    }
     @Test fun displayNameMatchingIgnoresRepeatedWhitespaceAndCase() {
         assertEquals("surya tv hd",EpgGuidePolicy.normalizeDisplayName("  Surya   TV   HD  "))
         assertEquals("asianet news",EpgGuidePolicy.normalizeDisplayName("ASIANET NEWS"))

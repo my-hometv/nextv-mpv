@@ -2721,6 +2721,14 @@ class MainActivity: Activity() {
                         sourceStatuses.add("EPG time budget reached; incomplete source not merged")
                         break
                     }
+                    val programmeCount=sourceProgrammes.values.sumOf{it.size}
+                    if(!EpgGuidePolicy.shouldPublishFeed(programmeCount)){
+                        val host=runCatching{java.net.URI(url).host ?: "Unknown host"}
+                            .getOrDefault("Unknown host")
+                        sourceStatuses.add(host+": empty feed (0 usable programmes); previous guide preserved")
+                        epgFailedUntil[url]=android.os.SystemClock.elapsedRealtime()+120000L
+                        continue
+                    }
                     sourceProgrammes.forEach{(id,entries)->
                         combined[id]=EpgMergePolicy.merge(combined[id].orEmpty(),entries,
                             {it.start},{it.end})
@@ -2731,7 +2739,6 @@ class MainActivity: Activity() {
                                 namedSchedules[name].orEmpty(),entries,{it.start},{it.end})
                         }
                     }
-                    val programmeCount=sourceProgrammes.values.sumOf{it.size}
                     val host=try{java.net.URI(url).host ?: "Unknown host"}catch(_:Exception){"Unknown host"}
                     sourceStatuses.add(host+": "+sourceProgrammes.size+" channel IDs, "+
                         programmeCount+" programmes")
@@ -2782,7 +2789,7 @@ class MainActivity: Activity() {
                             val incomplete=sourceStatuses.any{status->
                                 status.contains("failed (") || status.contains("temporarily skipped") ||
                                 status.contains("deferred") || status.contains("deadline") ||
-                                status.contains("incomplete source")
+                                status.contains("incomplete source") || status.contains("empty feed")
                             }
                             epgIncompleteRetryAt=if(incomplete)
                                 android.os.SystemClock.elapsedRealtime()+120000L else 0L

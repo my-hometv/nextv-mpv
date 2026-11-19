@@ -174,4 +174,12 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertLess(cached.index("if(!licenseReady)return mutableListOf()"),
                         cached.index("if(sources.isEmpty())return"))
 
+    def test_zero_usable_epg_feed_cannot_replace_last_working_guide(self):
+        loader=between("private fun loadEpg(", "private fun showChannelEpg(")
+        self.assertIn("EpgGuidePolicy.shouldPublishFeed(programmeCount)",loader)
+        self.assertIn("empty feed (0 usable programmes); previous guide preserved",loader)
+        self.assertLess(loader.index("if(!EpgGuidePolicy.shouldPublishFeed(programmeCount))"),
+                        loader.index("sourceProgrammes.forEach{(id,entries)->"))
+        self.assertIn('status.contains("empty feed")',loader)
+
 if __name__=="__main__":unittest.main()
