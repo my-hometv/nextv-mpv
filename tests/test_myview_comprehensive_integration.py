@@ -1,0 +1,45 @@
+"""Source-level integration guards for MyView interactive search and playlist transitions.
+
+These are wiring assertions, not emulator/physical-remote tests. Kotlin unit tests
+cover the underlying identity-resolution policy separately.
+"""
+import pathlib
+import unittest
+
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+MAIN=(ROOT/"app/src/main/java/com/softppj/nextv/MainActivity.kt").read_text(encoding="utf-8")
+
+def section(start,end):
+    return MAIN.split(start,1)[1].split(end,1)[0]
+
+class CrossFeatureSearchIntegrationTest(unittest.TestCase):
+    def test_details_buttons_revalidate_identity_after_playlist_mutation(self):
+        body=section("private fun mediaDetails(","// V6 cinematic Android TV components")
+        self.assertIn("val identity=id(c)",body)
+        self.assertIn("withAuthorizedMedia",body)
+        self.assertIn("val current=resolveListedChannel(identity,true,index)",body)
+        self.assertIn("playIndex(current)",body)
+        self.assertNotIn("playIndex(index)",body)
+    def test_player_drawer_uses_stable_identity_for_selection(self):
+        body=section("private fun showOverlayList(","private fun showLeftNavigation(")
+        self.assertIn("val identities=available.map{ id(channels[it]) }",body)
+        self.assertIn("fun currentIndex(position:Int)",body)
+        self.assertIn("val selected=currentIndex(position)",body)
+        self.assertIn("channels.getOrNull(currentIndex(position))",body)
+        self.assertNotIn("showChannelListQuickActions(available[position]",body)
+    def test_search_uses_a_single_authorization_snapshot(self):
+        body=section("private data class SearchAccess(","private fun youtubeLibrary(")
+        self.assertIn("private fun searchAccessSnapshot()",body)
+        self.assertIn("val access=searchAccessSnapshot()",body)
+        self.assertIn("searchEligible(channels[index],access)",body)
+        self.assertIn("temporaryFailureHidden",body)
+    def test_universal_search_restores_epg_and_search_context(self):
+        body=section("private fun showUniversalSearchResults(","private fun mediaRows(")
+        self.assertIn("programmeList(c).any{it.title.contains(query,true)}",body)
+        self.assertIn("showUniversalSearchResults(query)",body)
+    def test_search_categories_do_not_bypass_enabled_and_lock_gates(self):
+        body=section("private fun searchEligible(","private fun mediaMatches(")
+        self.assertIn("source in access.enabled",body)
+        self.assertIn("source !in access.lockedSources",body)
+        self.assertIn("c.group !in access.lockedGroups",body)
+        self.assertIn("!isManuallyHidden(c)",body)

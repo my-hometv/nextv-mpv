@@ -3583,7 +3583,7 @@ class MainActivity: Activity() {
                 }
             }.setNegativeButton("Back",null).create())
     }
-    private fun channelCollection(title:String,indices:List<Int>){
+    private fun channelCollection(title:String,indices:List<Int>,onBack:()->Unit={showHome()}){
         val indices=orderedChannelIndices(title,indices)
         val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
         val search=title.startsWith("Search:")
@@ -3663,7 +3663,7 @@ class MainActivity: Activity() {
             },{
                 channelCollection(title,identities.mapNotNull{identity->
                     resolveListedChannel(identity,search).takeIf{it>=0}
-                })
+                },onBack)
             })
             true
         }
@@ -3701,7 +3701,7 @@ class MainActivity: Activity() {
         }
         root.addView(label("Long press a channel: Move · Hide / Unhide · Favourite · Lock / Unlock"))
         root.addView(list,LinearLayout.LayoutParams(-1,0,1f))
-        root.addView(button("Back"){showHome()})
+        root.addView(button("Back"){onBack()})
     }
     private val bufferProfiles=arrayOf("Auto","Ultra Fast","Fast","Balanced","Stable","Maximum Buffer")
     private var autoBufferLevel=SmartBufferPolicy.DEFAULT_LEVEL
@@ -4323,21 +4323,28 @@ class MainActivity: Activity() {
             posterLoading.remove(url)
         }
     }
-    private fun searchableMediaIndices():List<Int> =
-        visibleMediaIndices().filter{index->
-            val c=channels[index]
-            !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
-                !isSkipped(c) && channelKey(c) !in unavailableChannels
-        }
-
-    private fun searchEligible(c:Channel):Boolean{
+    // Take a single access snapshot for each search rather than reparsing
+    // playlists and lock settings thousands of times on the UI thread.
+    private data class SearchAccess(
+        val enabled:Set<String>,val lockedSources:Set<String>,val lockedGroups:Set<String>
+    )
+    private fun searchAccessSnapshot()=SearchAccess(
+        playlists().asSequence().filter{it.enabled}.map{it.name}.toSet(),
+        lockedPlaylistNames(),lockedGroupNames()
+    )
+    private fun searchEligible(c:Channel,access:SearchAccess):Boolean{
         val source=c.source
-        return (source.isBlank() || playlists().any{it.enabled && it.name==source}) &&
-            (source !in lockedPlaylistNames() || source in unlockedPlaylistsThisSession) &&
-            (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession) &&
+        return (source.isBlank() || source in access.enabled) &&
+            (source !in access.lockedSources || source in unlockedPlaylistsThisSession) &&
+            (c.group !in access.lockedGroups || c.group in unlockedGroupsThisSession) &&
             !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
             !isSkipped(c) && channelKey(c) !in unavailableChannels &&
             channelKey(c) !in temporaryFailureHidden
+    }
+    private fun searchEligible(c:Channel):Boolean=searchEligible(c,searchAccessSnapshot())
+    private fun searchableMediaIndices():List<Int>{
+        val access=searchAccessSnapshot()
+        return visibleMediaIndices().filter{index->searchEligible(channels[index],access)}
     }
     private fun resolveListedChannel(identity:String,search:Boolean,hint:Int=-1):Int =
         MediaSearchPolicy.resolveIdentity(channels,identity,::id,{c->
@@ -4353,13 +4360,21 @@ class MainActivity: Activity() {
             MediaSearchPolicy.category(c.mediaType,isYoutubeChannel(index))==type &&
                 MediaSearchPolicy.matches(c,query)
         }
+    private fun mediaSection(type:String){
+        when(type){
+            "youtube"->youtubeLibrary()
+            "series"->mediaSeries()
+            "music"->mediaMusic()
+            else->mediaLibrary(type)
+        }
+    }
 
     private fun youtubeLibrary(){
         val items=searchableMediaIndices().filter{isYoutubeChannel(it)}
         reset("MyView  •  YouTube")
         root.addView(label("YouTube  |  "+items.size+" saved entries"))
         root.addView(button("⌕  Search YouTube entries"){mediaSearch("youtube")})
-        root.addView(button("▶  All YouTube entries"){mediaRows("YouTube",items)})
+        root.addView(button("▶  All YouTube entries"){mediaRows("YouTube",items){youtubeLibrary()}})
         root.addView(button("←  Home"){showHome()})
     }
     private fun mediaSeries(){
@@ -4373,7 +4388,7 @@ class MainActivity: Activity() {
                     {channels[it].season.toIntOrNull()?:0},
                     {channels[it].episode.toIntOrNull()?:0}
                 ))
-                mediaRows(name,ordered)
+                mediaRows(name,ordered){mediaSeries()}
             })
         }
         root.addView(button("▶  Continue Watching"){continueMedia()})
@@ -4384,9 +4399,9 @@ class MainActivity: Activity() {
         reset("MyView  •  Music")
         root.addView(label("Music  |  "+items.size+" songs"))
         root.addView(button("⌕  Search Songs / Artists / Albums"){mediaSearch("music")})
-        root.addView(button("♫  All Songs"){mediaRows("All Songs",items)})
+        root.addView(button("♫  All Songs"){mediaRows("All Songs",items){mediaMusic()}}
         items.groupBy{channels[it].artist.ifBlank{"Unknown Artist"}}.toSortedMap().forEach{(artist,songs)->
-            root.addView(button("♫  "+artist+"  ("+songs.size+")"){mediaRows(artist,songs)})
+            root.addView(button("♫  "+artist+"  ("+songs.size+")"){mediaRows(artist,songs){mediaMusic()}})
         }
         root.addView(button("←  Home"){showHome()})
     }
@@ -4460,10 +4475,10 @@ class MainActivity: Activity() {
         if(indices.isEmpty())root.addView(label("No items yet. Add media-type=\""+type+"\" to an EXTINF playlist entry."))
         indices.map{channels[it].group}.distinct().sorted().forEach{group->
             root.addView(button("▸  "+group+"  ("+indices.count{channels[it].group==group}+")"){
-                mediaRows(group,indices.filter{channels[it].group==group})
+                mediaRows(group,indices.filter{channels[it].group==group}){mediaLibrary(type)}
             })
         }
-        root.addView(button("▦  All "+title){mediaRows(title,indices)})
+        root.addView(button("▦  All "+title){mediaRows(title,indices){mediaLibrary(type)}})
         root.addView(button("＋  Manage playlists"){managePlaylists()})
         root.addView(button("←  Home"){showHome()})
     }
@@ -4482,7 +4497,7 @@ class MainActivity: Activity() {
                         "music"->mediaMusic()
                         else->mediaLibrary(type)
                     }
-                }else mediaRows("Search: "+q,mediaMatches(type,q))
+                }else mediaRows("Search: "+q,mediaMatches(type,q)){mediaSection(type)}
             }.setNegativeButton("Cancel",null).show()
     }
     private fun universalSearch(){
@@ -4500,7 +4515,7 @@ class MainActivity: Activity() {
         reset("MyView  •  Search")
         root.addView(label("Search: "+query))
         root.addView(button("⌕  New search"){universalSearch()})
-        val searchable=searchableMediaIndices().filter{searchEligible(channels[it])}
+        val searchable=searchableMediaIndices()
         val matched=searchable.filter{index->
             val c=channels[index]
             MediaSearchPolicy.matches(c,query) ||
@@ -4529,13 +4544,13 @@ class MainActivity: Activity() {
                 val current=savedIdentities.mapNotNull{key->
                     resolveListedChannel(key,true).takeIf{it>=0}
                 }.distinct()
-                if(isLive)channelCollection("Search: "+query,current)
-                else mediaRows("Search: "+query+"  •  "+title,current)
+                if(isLive)channelCollection("Search: "+query,current){showUniversalSearchResults(query)}
+                else mediaRows("Search: "+query+"  •  "+title,current){showUniversalSearchResults(query)}
             })
         }
         root.addView(button("←  Home"){showHome()})
     }
-    private fun mediaRows(title:String,indices:List<Int>){
+    private fun mediaRows(title:String,indices:List<Int>,onBack:()->Unit={showHome()}){
         val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
         val search=title.startsWith("Search:")
         reset("MyView  •  "+title)
@@ -4586,7 +4601,7 @@ class MainActivity: Activity() {
             else Toast.makeText(this,"Item unavailable — refresh search",Toast.LENGTH_SHORT).show()
         }
         root.addView(list,LinearLayout.LayoutParams(-1,(resources.displayMetrics.heightPixels*0.70).toInt()))
-        root.addView(button("←  Home"){showHome()})
+        root.addView(button("←  Back"){onBack()})
     }
     private fun youtubeThumbnail(url:String):String{
         val uri=try{Uri.parse(url)}catch(_:Exception){return ""}
@@ -4602,6 +4617,14 @@ class MainActivity: Activity() {
     private var requestedMediaResumeSeconds=0L
     private fun mediaDetails(index:Int){
         val c=channels.getOrNull(index)?:return
+        val identity=id(c)
+        fun withAuthorizedMedia(action:(Int,Channel)->Unit){
+            val current=resolveListedChannel(identity,true,index)
+            val channel=channels.getOrNull(current)
+            if(channel==null){
+                Toast.makeText(this,"Media unavailable — playlist or access changed",Toast.LENGTH_LONG).show()
+            }else action(current,channel)
+        }
         val position=mediaResumeSeconds(c)
         val details=listOf(c.group,c.genre,c.year,c.artist,c.album,c.description)
             .filter{it.isNotBlank()}.joinToString(" • ")
@@ -4620,24 +4643,39 @@ class MainActivity: Activity() {
         val play=android.widget.Button(this).apply{
             text=if(c.mediaType=="web") "▶  Open Web TV" else "▶  Play from beginning"
             isFocusable=true
-            setOnClickListener{mediaDialog?.dismiss();requestedMediaResumeSeconds=0L;prefs.edit().remove(mediaKey(c)).apply();playIndex(index)}
+            setOnClickListener{
+                withAuthorizedMedia{current,channel->
+                    mediaDialog?.dismiss()
+                    requestedMediaResumeSeconds=0L
+                    prefs.edit().remove(mediaKey(channel)).apply()
+                    playIndex(current)
+                }
+            }
         }
         layout.addView(play)
         if(position>0L){
             layout.addView(android.widget.Button(this).apply{
                 text="↻  Resume from "+(position/60)+"m "+(position%60)+"s"
-                setOnClickListener{mediaDialog?.dismiss();requestedMediaResumeSeconds=position;playIndex(index)}
+                setOnClickListener{
+                    withAuthorizedMedia{current,channel->
+                        mediaDialog?.dismiss()
+                        requestedMediaResumeSeconds=mediaResumeSeconds(channel)
+                        playIndex(current)
+                    }
+                }
             })
         }
         layout.addView(android.widget.Button(this).apply{
             text="★  Add / remove favorite"
-            setOnClickListener{favorite(c)}
+            setOnClickListener{withAuthorizedMedia{_,channel->favorite(channel)}}
         })
         layout.addView(android.widget.Button(this).apply{
             text="Clear saved progress"
             setOnClickListener{
-                prefs.edit().remove(mediaKey(c)).apply()
-                Toast.makeText(this@MainActivity,"Progress cleared",Toast.LENGTH_SHORT).show()
+                withAuthorizedMedia{_,channel->
+                    prefs.edit().remove(mediaKey(channel)).apply()
+                    Toast.makeText(this@MainActivity,"Progress cleared",Toast.LENGTH_SHORT).show()
+                }
             }
         })
         val dialog=AlertDialog.Builder(this).setTitle(c.name).setView(layout)
@@ -8460,12 +8498,22 @@ class MainActivity: Activity() {
                 (searchQuery==null || channels[it].name.contains(searchQuery,true) ||
                     channels[it].group.contains(searchQuery,true))
         }
+        val identities=available.map{ id(channels[it]) }
+        fun currentIndex(position:Int):Int{
+            val key=identities.getOrNull(position)?:return -1
+            return resolveListedChannel(key,false,available[position])
+        }
         list.adapter=object:android.widget.BaseAdapter(){
-            override fun getCount()=available.size
-            override fun getItem(position:Int):Any=channels[available[position]]
-            override fun getItemId(position:Int)=available[position].toLong()
-            override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View=
-                logoRow(channels[available[position]],channelLabel(available[position]),convertView)
+            override fun getCount()=identities.size
+            override fun getItem(position:Int):Any=identities[position]
+            override fun getItemId(position:Int)=position.toLong()
+            override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View{
+                val resolved=currentIndex(position)
+                val channel=channels.getOrNull(resolved)
+                return if(channel==null){
+                    logoRow(Channel("Unavailable — playlist changed","https://invalid.example/","",source=""),"Unavailable — playlist changed",convertView)
+                }else logoRow(channel,channelLabel(resolved),convertView)
+            }
         }
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         val focusedInfo=TextView(this).apply{
@@ -8481,13 +8529,23 @@ class MainActivity: Activity() {
         screen.addView(drawer,FrameLayout.LayoutParams(width,-1,Gravity.START))
         fun close(){if(drawer.parent===screen)screen.removeView(drawer);screen.requestFocus()}
         list.setOnItemClickListener{_,_,position,_->
-            val selected=available[position]
-            close()
-            // Manual selection is permitted even for channels excluded from surfing.
-            playIndex(preferredChannel(selected))
+            val selected=currentIndex(position)
+            if(selected<0){
+                Toast.makeText(this,"Channel unavailable — refresh drawer",Toast.LENGTH_SHORT).show()
+            }else{
+                close()
+                // Manual selection remains permitted for hidden channels.
+                val preferred=preferredChannel(selected)
+                if(preferred in channels.indices)playIndex(preferred)
+            }
         }
         list.setOnItemLongClickListener{_,_,position,_->
-            showChannelListQuickActions(available[position],{
+            val selected=currentIndex(position)
+            if(selected<0){
+                Toast.makeText(this,"Channel unavailable — refresh drawer",Toast.LENGTH_SHORT).show()
+                return@setOnItemLongClickListener true
+            }
+            showChannelListQuickActions(selected,{
                 (list.adapter as android.widget.BaseAdapter).notifyDataSetChanged()
                 list.setSelection(position)
                 list.requestFocus()
@@ -8515,7 +8573,7 @@ class MainActivity: Activity() {
         // D-pad scrolling; the playing picture stays live until OK.
         list.onItemSelectedListener=object:AdapterView.OnItemSelectedListener{
             override fun onItemSelected(parent:AdapterView<*>?,view:View?,position:Int,id:Long){
-                val selected=available.getOrNull(position)?.let{channels.getOrNull(it)} ?:return
+                val selected=channels.getOrNull(currentIndex(position)) ?:return
                 val now=System.currentTimeMillis()
                 val epg=if(prefs.getBoolean("nextv_epg_enabled",true) &&
                     prefs.getBoolean("show_channel_epg",true))programmeList(selected) else emptyList()
