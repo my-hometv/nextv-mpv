@@ -1173,6 +1173,10 @@ class MainActivity: Activity() {
         return (channelByKey[channelKey(c)] ?:emptyList()).any{skippedIds.contains(id(channels[it]))}
     }
     // Combined browsing changes only the list, never the remote-surfing scope.
+    private fun enabledChannelIndices():List<Int>{
+        val enabled=playlists().filter{it.enabled}.map{it.name}.toHashSet()
+        return visibleIndices().filter{channels[it].source in enabled}
+    }
     private fun browsingAllPlaylists():Boolean =
         prefs.getBoolean("myview_browse_all_playlists",false)
     private fun selectedPlaylistSource():String?{
@@ -1222,7 +1226,7 @@ class MainActivity: Activity() {
             surfingCacheSource==source && surfingCacheFavorites==favoritesOnly &&
             surfingCacheGroup==group &&
             now-surfingCacheAt<30000L)return cached
-        val base=(if(group!=null || favoritesOnly)visibleIndices() else playlistIndices()).filter{
+        val base=(if(group!=null || favoritesOnly)enabledChannelIndices() else playlistIndices()).filter{
             !isSkipped(channels[it]) &&
             !isLocked(channels[it]) &&
             !isManuallyHidden(channels[it]) &&
@@ -2218,6 +2222,7 @@ class MainActivity: Activity() {
         // Explicit diagnostics request checks feeds afresh without disrupting
         // playback or launching a separate parser on the UI thread.
         epgLoadedAt=0L
+        epgIncompleteRetryAt=0L
         epgFailedUntil.clear()
         loadEpg({success->
             val now=System.currentTimeMillis()
@@ -2259,6 +2264,7 @@ class MainActivity: Activity() {
         epgWaitingCallbacks.clear()
         // Keep the last working guide visible until a replacement downloads.
         epgLoadedAt=0L
+        epgIncompleteRetryAt=0L
         epgFailedUntil.clear()
     }
 
@@ -2469,6 +2475,7 @@ class MainActivity: Activity() {
     private data class EpgProgramme(val start:Long,val end:Long,val title:String,val description:String)
     @Volatile private var epgGuide:Map<String,List<EpgProgramme>> = emptyMap()
     @Volatile private var epgLoadedAt=0L
+    @Volatile private var epgIncompleteRetryAt=0L
     // Sanitized per-source results for identifying download vs matching issues.
     // Never display complete playlist or XMLTV URLs with access tokens.
     private var epgSourceStatuses:List<String> = emptyList()
@@ -2586,7 +2593,9 @@ class MainActivity: Activity() {
         val generation=epgLoadGeneration
         val urls=epgUrls()
         if(urls.isEmpty()){done(false);return}
-        if(epgLoadedAt>0L && System.currentTimeMillis()-epgLoadedAt<60*60*1000L){
+        val nextIncompleteRetry=epgIncompleteRetryAt
+        if(epgLoadedAt>0L && System.currentTimeMillis()-epgLoadedAt<60*60*1000L &&
+            (nextIncompleteRetry==0L || android.os.SystemClock.elapsedRealtime()<nextIncompleteRetry)){
             done(epgGuide.isNotEmpty());return
         }
         if(epgLoadingGeneration==generation){
@@ -2600,6 +2609,14 @@ class MainActivity: Activity() {
         thread(name="MyView-epg-load"){
             val loadStart=android.os.SystemClock.elapsedRealtime()
             val total=urls.size
+            val reachedDeadline=java.util.concurrent.atomic.AtomicBoolean(false)
+            val deadlineTimer=java.util.Timer("MyView-EPG-deadline",true)
+            deadlineTimer.schedule(object:java.util.TimerTask(){
+                override fun run(){
+                    reachedDeadline.set(true)
+                    cancellation.cancel()
+                }
+            },EpgLoadBudget.MAX_LOAD_MS)
             val combined=mutableMapOf<String,List<EpgProgramme>>()
             val namedSchedules=mutableMapOf<String,List<EpgProgramme>>()
             var loaded=0
@@ -2729,7 +2746,9 @@ class MainActivity: Activity() {
                         epgFailedUntil[url]=android.os.SystemClock.elapsedRealtime()+120000L
                 }
             }
-            if(generation!=epgLoadGeneration || cancellation.isCancelled())return@thread
+            deadlineTimer.cancel()
+            if(generation!=epgLoadGeneration || (cancellation.isCancelled() && !reachedDeadline.get()))return@thread
+            if(reachedDeadline.get())sourceStatuses.add("EPG deadline disconnected a slow source")
             // Construct the replacement schedule off-thread, but publish it
             // only on the UI thread after the final generation/feature check.
             val replacement=if(loaded>0){
@@ -2751,11 +2770,18 @@ class MainActivity: Activity() {
                     if(epgDownloadCancellation===cancellation)epgDownloadCancellation=null
                     val callbacks=epgWaitingCallbacks.toList()
                     epgWaitingCallbacks.clear()
-                    if(generation==epgLoadGeneration && !cancellation.isCancelled() &&
+                    if(generation==epgLoadGeneration && (!cancellation.isCancelled() || reachedDeadline.get()) &&
                         prefs.getBoolean("nextv_epg_enabled",true) &&
                         !isFinishing && !isDestroyed){
                         epgSourceStatuses=sourceStatuses.toList()
                         if(replacement!=null){
+                            val incomplete=sourceStatuses.any{status->
+                                status.contains("failed (") || status.contains("temporarily skipped") ||
+                                status.contains("deferred") || status.contains("deadline") ||
+                                status.contains("incomplete source")
+                            }
+                            epgIncompleteRetryAt=if(incomplete)
+                                android.os.SystemClock.elapsedRealtime()+120000L else 0L
                             epgGuide=replacement
                             epgLoadedAt=System.currentTimeMillis()
                         }
@@ -4213,6 +4239,7 @@ class MainActivity: Activity() {
         return configured
     }
     private fun savePlaylists(list:List<Playlist>) {
+        invalidateSurfingCache()
         val arr=JSONArray(); list.filter{PlaylistSourcePolicy.shouldKeepSavedSource(it.url)}.forEach { arr.put(JSONObject().put("name",it.name).put("url",it.url).put("enabled",it.enabled)) }
         prefs.edit().putString("playlists",arr.toString()).apply()
     }
@@ -5849,7 +5876,7 @@ class MainActivity: Activity() {
         prefs.edit().putBoolean(viewerKey("favorites_surfing"),false).apply()
         reset("Channels (${visibleIndices().size})")
         root.addView(button("Refresh channel groups"){refresh({showChannels()},true)})
-        val groups=(if(browsingAllPlaylists())visibleIndices() else playlistIndicesIncludingLocked())
+        val groups=(if(browsingAllPlaylists())enabledChannelIndices() else playlistIndicesIncludingLocked())
             .map{channels[it].group}.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
         // Virtualize groups too: do not create a Button for every playlist group.
         val list=styledMenuList().apply{
@@ -6994,7 +7021,7 @@ class MainActivity: Activity() {
                 pictureApplied=true
                 dialog.dismiss()
                 if(pending==modes.size){
-                    clearPicturePreview(activeIndex,c)
+                    clearPicturePreview(activeIndex,c,restart=false)
                     configureManualPicture(activeIndex,c)
                 }else applyPictureChoice(activeIndex,c,modes[pending])
             }
@@ -8194,7 +8221,7 @@ class MainActivity: Activity() {
             isDrawSelectorOnTop=false
         }
         val browserIndices=PlaylistBrowsePolicy.displayedIndices(
-            browsingAllPlaylists(),visibleIndices(),playlistIndices())
+            browsingAllPlaylists(),enabledChannelIndices(),playlistIndices())
         val available=applySavedChannelOrder(browserIndices).filter{
             !isGroupHidden(channels[it].group) &&
                 (searchQuery==null || channels[it].name.contains(searchQuery,true) ||
@@ -8277,7 +8304,7 @@ class MainActivity: Activity() {
         val screen=videoScreen ?:return
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
         screen.findViewWithTag<View>("left_navigation")?.let{screen.removeView(it)}
-        val groups=(if(browsingAllPlaylists())visibleIndices() else playlistIndicesIncludingLocked())
+        val groups=(if(browsingAllPlaylists())enabledChannelIndices() else playlistIndicesIncludingLocked())
             .map{channels[it].group}.distinct()
         val drawer=LinearLayout(this).apply{
             tag="left_navigation"
@@ -8443,7 +8470,7 @@ class MainActivity: Activity() {
         prefs.edit().putBoolean(viewerKey("favorites_surfing"),false).apply()
         val screen=videoScreen ?:return
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
-        val indices=(if(browsingAllPlaylists())visibleIndices() else playlistIndices())
+        val indices=(if(browsingAllPlaylists())enabledChannelIndices() else playlistIndices())
             .filter{channels[it].group==group && !isGroupHidden(channels[it].group)}
         val drawer=LinearLayout(this).apply{
             tag="channel_drawer"

@@ -53,4 +53,23 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("showProgress:Boolean=false",loader)
         self.assertIn("epgFailedUntil.clear()",MAIN)
 
+    def test_disabled_playlist_browse_and_surfing_filters(self):
+        self.assertIn("enabledChannelIndices()",between("private fun showOverlayList(", "private fun showLeftNavigation("))
+        self.assertIn("enabledChannelIndices()",between("private fun showLeftNavigation(", "private fun showLeftActions("))
+        self.assertIn("enabledChannelIndices()",between("private fun showGroupDrawerContents(", "private fun channelVolumeKey("))
+        self.assertIn("enabledChannelIndices() else playlistIndices()",MAIN)
+        self.assertIn("invalidateSurfingCache()",between("private fun savePlaylists(", "private fun mediaItems("))
+    def test_manual_picture_custom_transition_avoids_uncommitted_retune(self):
+        body=between("private fun configureChannelPicture(", "private fun showChannelOptions(")
+        self.assertIn("clearPicturePreview(activeIndex,c,restart=false)",body)
+    def test_epg_partial_guide_retry_and_deadline_socket_close(self):
+        loader=between("private fun loadEpg(", "private fun showChannelEpg(")
+        self.assertIn("nextIncompleteRetry",loader)
+        self.assertIn("epgIncompleteRetryAt=if(incomplete)",loader)
+        self.assertIn('java.util.Timer("MyView-EPG-deadline",true)',loader)
+        self.assertIn("cancellation.cancel()",loader)
+        self.assertIn("deadlineTimer.cancel()",loader)
+        self.assertIn("reachedDeadline.get()",loader)
+        self.assertIn("replacement!=null",loader)
+
 if __name__=="__main__":unittest.main()
