@@ -4481,8 +4481,23 @@ class MainActivity: Activity() {
             }
             .setNegativeButton("Close",null).show()
     }
-    private fun mediaKey(c:Channel)=viewerKey("myhometv_progress_"+c.url.hashCode().toString())
-    private fun mediaResumeSeconds(c:Channel):Long=prefs.getLong(mediaKey(c),0L)
+    private fun legacyMediaKey(c:Channel)=viewerKey("myhometv_progress_"+c.url.hashCode().toString())
+    private fun mediaKey(c:Channel)=viewerKey("myhometv_progress_v2_"+MediaProgressPolicy.identityHash(c))
+    private fun clearMediaProgress(c:Channel){
+        prefs.edit().remove(mediaKey(c)).remove(legacyMediaKey(c)).apply()
+    }
+    private fun mediaResumeSeconds(c:Channel):Long{
+        val key=mediaKey(c)
+        if(prefs.contains(key))return prefs.getLong(key,0L)
+        val oldKey=legacyMediaKey(c)
+        if(!prefs.contains(oldKey))return 0L
+        // An old URL-only position cannot be assigned safely when two
+        // different media entries share that URL. Leave it unmigrated.
+        if(!MediaProgressPolicy.canMigrateLegacy(channels,c))return 0L
+        val seconds=prefs.getLong(oldKey,0L).coerceAtLeast(0L)
+        prefs.edit().putLong(key,seconds).remove(oldKey).apply()
+        return seconds
+    }
     private fun saveCurrentMediaProgress(){
         val c=channels.getOrNull(active)?:return
         if(c.mediaType !in setOf("movie","series","music"))return
@@ -4692,7 +4707,7 @@ class MainActivity: Activity() {
                 withAuthorizedMedia{current,channel->
                     mediaDialog?.dismiss()
                     requestedMediaResumeSeconds=0L
-                    prefs.edit().remove(mediaKey(channel)).apply()
+                    clearMediaProgress(channel)
                     playIndex(current)
                 }
             }
@@ -4718,7 +4733,7 @@ class MainActivity: Activity() {
             text="Clear saved progress"
             setOnClickListener{
                 withAuthorizedMedia{_,channel->
-                    prefs.edit().remove(mediaKey(channel)).apply()
+                    clearMediaProgress(channel)
                     Toast.makeText(this@MainActivity,"Progress cleared",Toast.LENGTH_SHORT).show()
                 }
             }
