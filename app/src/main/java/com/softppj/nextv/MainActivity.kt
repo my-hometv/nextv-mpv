@@ -6062,13 +6062,13 @@ class MainActivity: Activity() {
         val candidates=eligible(source)
         val confirmed=prefs.getString("last_working_url_"+source,null)
         val attempted=prefs.getString("last_url_"+source,null)
-        val candidateSet=candidates.toHashSet()
+        val eligibleIdentities=candidates.mapTo(hashSetOf<String>()){id(channels[it])}
         val target=LastChannelPolicy.findEligibleSavedChannel(
             channels,prefs.getString("last_working_identity_"+source,null),confirmed,::id
-        ){c->c.source==source && channels.indexOfFirst{it===c} in candidateSet}.takeIf{it>=0}
+        ){c->c.source==source && id(c) in eligibleIdentities}.takeIf{it>=0}
             ?:LastChannelPolicy.findEligibleSavedChannel(
                 channels,prefs.getString("last_identity_"+source,null),attempted,::id
-            ){c->c.source==source && channels.indexOfFirst{it===c} in candidateSet}.takeIf{it>=0}
+            ){c->c.source==source && id(c) in eligibleIdentities}.takeIf{it>=0}
             ?:candidates.firstOrNull{channels[it].mediaType=="live"}
             ?:candidates.firstOrNull() ?:return null
         return source to target
