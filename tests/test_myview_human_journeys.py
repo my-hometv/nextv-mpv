@@ -76,4 +76,23 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("reachedDeadline.get()",loader)
         self.assertIn("replacement!=null",loader)
 
+    def test_playlist_disable_and_deletion_switch_immediately(self):
+        manager=between("private fun managePlaylists()", "private fun startAddedPlaylist(")
+        drawer=between("private fun showPlaylistDrawer()", "private fun showGroupDrawer(")
+        self.assertIn("disablePlaylistSource(p.name)",manager)
+        self.assertIn("deletePlaylistSource(p.name)",manager)
+        self.assertIn("disablePlaylistSource(source)",drawer)
+        self.assertIn("switchAfterPlaylistRemoved(name,previous)",MAIN)
+        self.assertIn('prefs.getString("last_url_"+ordered,null)',MAIN)
+    def test_last_channel_and_startup_reject_disabled_sources(self):
+        last=between("private fun returnToPreviousChannel()", "private fun routeHttpChannel(")
+        self.assertIn("candidate.source in enabled",last)
+        self.assertIn('showBanner("Previous channel is unavailable")',last)
+        self.assertIn('showBanner("This playlist is disabled or deleted",true)',MAIN)
+        startup=between("private fun resumeLast()", "private fun liveSettings(")
+        self.assertIn("it.enabled && it.name==source",startup)
+    def test_pin_failure_delete_uses_same_next_playlist_handoff(self):
+        deletion=between("private fun deletePlaylistAfterPinFailures(", "private fun deleteGroupAfterPinFailures(")
+        self.assertIn("switchAfterPlaylistRemoved(name,previous)",deletion)
+
 if __name__=="__main__":unittest.main()

@@ -4933,11 +4933,17 @@ class MainActivity: Activity() {
                     val opts=arrayOf("Enable / Disable","Edit","Delete",if(isLocked)"Unlock playlist" else "Lock playlist")
                     AlertDialog.Builder(this).setTitle(p.name).setItems(opts){_,which->
                         when(which){
-                            0->{list[index]=p.copy(enabled=!p.enabled);savePlaylists(list);managePlaylists()}
+                            0->{
+                                if(p.enabled)disablePlaylistSource(p.name)
+                                else{
+                                    list[index]=p.copy(enabled=true)
+                                    savePlaylists(list)
+                                    managePlaylists()
+                                }
+                            }
                             1->editPlaylist(index)
                             2->AlertDialog.Builder(this).setMessage("Delete playlist?").setPositiveButton("Delete"){_,_->
-                                val removed=list.removeAt(index)
-                                deletePlaylistSource(removed.name)
+                                deletePlaylistSource(p.name)
                             }.setNegativeButton("Cancel",null).show()
                             3->{
                                 val current=prefs.getStringSet("locked_playlists",emptySet())?.toMutableSet() ?: mutableSetOf()
@@ -6003,43 +6009,82 @@ class MainActivity: Activity() {
     }
     // Shared deletion path for Playlist Manager and the in-player playlist drawer.
     // Remove a source's channels from memory immediately, not only after refresh.
-    private fun deletePlaylistSource(name:String){
-        // Invalidate an in-flight network refresh so it cannot re-add this source.
+    private fun nextAvailablePlaylistChannel(removedName:String,previous:List<Playlist>):Pair<String,Int>?{
+        val oldIndex=previous.indexOfFirst{it.name==removedName}
+        if(oldIndex<0)return null
+        val availableNames=channels.map{it.source}.toHashSet()
+        val ordered=PlaylistTransitionPolicy.nextEnabledPlaylist(
+            previous.map{it.name},
+            previous.map{it.enabled && it.name in availableNames},
+            removedName
+        ) ?: return null
+        // Last viewed URL is per playlist. Never navigate into a hidden/locked
+        // channel automatically when the old playlist is disabled or removed.
+        val saved=prefs.getString("last_url_"+ordered,null)
+        val options=channels.indices.filter{candidate->
+            val c=channels[candidate]
+            c.source==ordered && !isLocked(c) && !isManuallyHidden(c) &&
+                !isGroupHidden(c.group) &&
+                (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession) &&
+                (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession)
+        }
+        val target=options.firstOrNull{channels[it].url==saved}
+            ?: options.firstOrNull{channels[it].mediaType=="live"}
+            ?: options.firstOrNull()
+            ?: return null
+        return ordered to target
+    }
+    private fun switchAfterPlaylistRemoved(name:String,previous:List<Playlist>){
+        val next=nextAvailablePlaylistChannel(name,previous)
+        previousChannelUrl?.let{url->
+            if(channels.none{it.url==url && (it.source.isBlank() ||
+                    playlists().any{p->p.enabled && p.name==it.source})}){
+                previousChannelUrl=null
+                previousChannelIdentity=null
+            }
+        }
+        prefs.edit().apply{
+            putBoolean("myview_browse_all_playlists",false)
+            putBoolean(viewerKey("favorites_surfing"),false)
+            if(next==null)remove("selected_playlist_source")
+            else putString("selected_playlist_source",next.first)
+        }.apply()
+        setActiveFavoriteGroup(null)
+        invalidateSurfingCache()
+        if(next==null){
+            stopPlayback()
+            showHome()
+        }else{
+            // playIndex performs normal generation cancellation and decoder
+            // handoff; do not retain the deleted playlist as previous channel.
+            if(licenseReady)playIndex(next.second) else showLicenseScreen("Please activate your license")
+        }
+    }
+    private fun disablePlaylistSource(name:String){
+        val previous=playlists()
+        val item=previous.indexOfFirst{it.name==name}
+        if(item<0 || !previous[item].enabled)return
         refreshGeneration++
-        val items=playlists()
-        val removedIndex=items.indexOfFirst{it.name==name}
-        if(removedIndex<0)return
-        val removed=items[removedIndex]
-        val wasPlaying=channels.getOrNull(active)?.source==name
-        if(wasPlaying)stopPlayback()
-        savePlaylists(items.filterNot{it.name==name})
-        if(items.none{it.name!=name && it.url==removed.url})
+        val updated=previous.toMutableList()
+        updated[item]=updated[item].copy(enabled=false)
+        savePlaylists(updated)
+        switchAfterPlaylistRemoved(name,previous)
+        Toast.makeText(this,"Playlist disabled. Switched to next available playlist.",Toast.LENGTH_LONG).show()
+    }
+    private fun deletePlaylistSource(name:String){
+        // Do not re-add a deleted source from an in-flight refresh.
+        refreshGeneration++
+        val previous=playlists()
+        val removed=previous.firstOrNull{it.name==name} ?:return
+        savePlaylists(previous.filterNot{it.name==name})
+        if(previous.none{it.name!=name && it.url==removed.url})
             try{cacheFile(removed).delete()}catch(_:Exception){}
         clearPlaylistLocalHistory(name)
         channels=channels.filter{it.source!=name}.toMutableList()
         channelIndexOwner=null
         channelIndexSize=-1
         invalidateSurfingCache()
-        val selected=prefs.getString("selected_playlist_source",null)
-        // Continue forward from the deleted playlist's former position, wrapping
-        // once, and skip disabled/empty playlists. This preserves playlist order.
-        val next=(1 until items.size).asSequence()
-            .map{items[(removedIndex+it)%items.size]}
-            .firstOrNull{it.enabled && channels.any{c->c.source==it.name}}?.name
-        if(selected==name || wasPlaying){
-            prefs.edit().apply{
-                if(next==null)remove("selected_playlist_source") else putString("selected_playlist_source",next)
-            }.apply()
-        }
-        if(wasPlaying){
-            active=-1
-            val last=next?.let{prefs.getString("last_url_"+it,null)}
-            val target=channels.indexOfFirst{it.source==next && it.url==last}
-            val fallback=channels.indexOfFirst{it.source==next && it.mediaType=="live"}
-            if(target>=0)playIndex(target) else if(fallback>=0)playIndex(fallback) else showHome()
-        }else{
-            if(videoScreen!=null && active>=0)showOverlayList() else managePlaylists()
-        }
+        switchAfterPlaylistRemoved(name,previous)
     }
     private fun clearPlaylistLocalHistory(name:String){
         val groupNames=channels.filter{it.source==name}.map{it.group}.toSet()
@@ -6063,34 +6108,19 @@ class MainActivity: Activity() {
         unlockedGroupsThisSession.removeAll(groupsToClear)
     }
     private fun deletePlaylistAfterPinFailures(name:String){
-        // Invalidate an in-flight network refresh so it cannot re-add this source.
         refreshGeneration++
-        val items=playlists().toMutableList()
-        val removed=items.firstOrNull{it.name==name}
-        if(removed==null)return
-        val wasPlaying=channels.getOrNull(active)?.source==name
-        if(wasPlaying)stopPlayback()
-        savePlaylists(items.filterNot{it.name==name})
-        if(items.none{it.name!=name && it.url==removed.url})
+        val previous=playlists()
+        val removed=previous.firstOrNull{it.name==name} ?:return
+        savePlaylists(previous.filterNot{it.name==name})
+        if(previous.none{it.name!=name && it.url==removed.url})
             try{cacheFile(removed).delete()}catch(_:Exception){}
         clearPlaylistLocalHistory(name)
         channels=channels.filter{it.source!=name}.toMutableList()
-        channelIndexOwner=null;channelIndexSize=-1
-        val selected=prefs.getString("selected_playlist_source",null)
-        val next=items.firstOrNull{it.name!=name && it.enabled && channels.any{c->c.source==it.name}}?.name
-        val edit=prefs.edit()
-        if(selected==name){if(next==null)edit.remove("selected_playlist_source") else edit.putString("selected_playlist_source",next)}
-        edit.apply()
-        if(wasPlaying){
-            active=-1
-            val last=next?.let{prefs.getString("last_url_"+it,null)}
-            val target=channels.indexOfFirst{it.source==next && it.url==last}
-            val fallback=channels.indexOfFirst{it.source==next && it.mediaType=="live"}
-            if(target>=0)playIndex(target) else if(fallback>=0)playIndex(fallback) else showHome()
-        }else{
-            Toast.makeText(this,"Playlist deleted after 3 incorrect PIN attempts",Toast.LENGTH_LONG).show()
-            showPlaylistDrawer()
-        }
+        channelIndexOwner=null
+        channelIndexSize=-1
+        invalidateSurfingCache()
+        switchAfterPlaylistRemoved(name,previous)
+        Toast.makeText(this,"Playlist deleted after 3 incorrect PIN attempts",Toast.LENGTH_LONG).show()
     }
     private fun deleteGroupAfterPinFailures(group:String){
         val sources=channels.filter{it.group==group}.map{it.source}.toSet()
@@ -8444,7 +8474,7 @@ class MainActivity: Activity() {
             AlertDialog.Builder(this).setTitle(source).setItems(choices){_,action->
                 when(action){
                     0->if(entry>=0)editPlaylist(entry)
-                    1->{val items=playlists();if(entry>=0){items[entry]=items[entry].copy(enabled=false);savePlaylists(items);Toast.makeText(this,"Playlist disabled",Toast.LENGTH_SHORT).show()};close();showOverlayList()}
+                    1->{close();disablePlaylistSource(source)}
                     2->if(entry>=0)AlertDialog.Builder(this).setTitle("Delete "+source+"?").setMessage("Remove this playlist and its channels from MyView?").setPositiveButton("Delete"){_,_->close();deletePlaylistSource(source)}.setNegativeButton("Cancel",null).show()
                     3->{close();managePlaylists()}
                 }
@@ -9119,9 +9149,18 @@ class MainActivity: Activity() {
     }
     private fun returnToPreviousChannel(){
         val url=previousChannelUrl ?:run{showBanner("No previous channel");return}
-        val index=channels.indexOfFirst{it.url==url && (previousChannelIdentity==null || id(it)==previousChannelIdentity)}
+        val enabled=playlists().filter{it.enabled}.map{it.name}.toHashSet()
+        val index=channels.indexOfFirst{candidate->
+            candidate.url==url &&
+                (previousChannelIdentity==null || id(candidate)==previousChannelIdentity) &&
+                (candidate.source.isBlank() || candidate.source in enabled)
+        }
         if(index>=0 && index!=active)playIndex(index)
-        else showBanner("Previous channel is unavailable")
+        else{
+            previousChannelUrl=null
+            previousChannelIdentity=null
+            showBanner("Previous channel is unavailable")
+        }
     }
 
     // My Home TV: dedicated website-video controls. No changes to YouTube or native players.
@@ -9442,6 +9481,10 @@ class MainActivity: Activity() {
         if(!licenseReady)return
         if(index !in channels.indices)return
         val c=channels[index]
+        if(c.source.isNotBlank() && playlists().none{it.enabled && it.name==c.source}){
+            showBanner("This playlist is disabled or deleted",true)
+            return
+        }
         if(pendingPlaybackDrawerChannelKey!=null && pendingPlaybackDrawerChannelKey!=channelKey(c))
             pendingPlaybackDrawerChannelKey=null
         if(youtubeNativeAttemptedUrl!=null && youtubeNativeAttemptedUrl!=c.url){
@@ -10687,7 +10730,9 @@ class MainActivity: Activity() {
         val index=LastChannelPolicy.findSavedChannel(channels,savedIdentity,url){id(it)}
         // Avoid building and sorting the full surfing list on the common
         // startup path when the saved channel is already present and unlocked.
-        if(index>=0 && !isLocked(channels[index]) &&
+        if(index>=0 && channels[index].source.let{source->
+                source.isBlank() || playlists().any{it.enabled && it.name==source}
+            } && !isLocked(channels[index]) &&
             (channels[index].source !in lockedPlaylistNames() ||
                 channels[index].source in unlockedPlaylistsThisSession) &&
             (channels[index].group !in lockedGroupNames() ||
