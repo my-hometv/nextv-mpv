@@ -181,7 +181,8 @@ class MyViewIntegrationContracts(unittest.TestCase):
         )[0]
         self.assertIn("nextSurfingIndex(index,surfingDirection,surfingIndices())", hiding)
         self.assertIn("playIndex(preferredChannel(next))", hiding)
-        self.assertIn("stopPlayback()", hiding)
+        self.assertNotIn("showHome()", hiding)
+        self.assertIn('showBanner("No other visible channel in this playlist",true)', hiding)
 
     def test_new_playlists_start_their_own_first_channel(self):
         start = self.activity.split("private fun startAddedPlaylist(", 1)[1].split(
