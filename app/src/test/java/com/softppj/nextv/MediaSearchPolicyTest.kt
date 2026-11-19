@@ -25,12 +25,12 @@ class MediaSearchPolicyTest {
         val old=Channel("Old","https://example.org/old","News",source="Removed")
         val current=Channel("New","https://example.org/new","News",source="Enabled")
         val identity={c:Channel->c.source+"|"+c.name+"|"+c.url}
-        assertEquals(-1,MediaSearchPolicy.resolveIdentity(listOf(current),identity(old),identity){true})
-        assertEquals(0,MediaSearchPolicy.resolveIdentity(listOf(current),identity(current),identity){true})
+        assertEquals(-1,MediaSearchPolicy.resolveIdentity(listOf(current),identity(old),identity,{true}))
+        assertEquals(0,MediaSearchPolicy.resolveIdentity(listOf(current),identity(current),identity,{true}))
         val rearranged=listOf(current,old)
         assertEquals(1,MediaSearchPolicy.resolveIdentity(rearranged,identity(old),identity,{true},0))
         assertEquals(0,MediaSearchPolicy.resolveIdentity(rearranged,identity(current),identity,{true},0))
-        assertEquals(-1,MediaSearchPolicy.resolveIdentity(listOf(current),identity(current),identity){false})
+        assertEquals(-1,MediaSearchPolicy.resolveIdentity(listOf(current),identity(current),identity,{false}))
     }
     @Test fun emptyQueriesDoNotMatchEverything(){
         assertFalse(MediaSearchPolicy.matches(song,"   "))
