@@ -9,8 +9,12 @@ internal object MediaSearchPolicy {
         }
 
     fun resolveIdentity(channels:List<Channel>,savedIdentity:String,
-                        identity:(Channel)->String,allowed:(Channel)->Boolean):Int =
-        channels.indexOfFirst{identity(it)==savedIdentity && allowed(it)}
+                        identity:(Channel)->String,allowed:(Channel)->Boolean,
+                        hint:Int=-1):Int {
+        if(hint in channels.indices && identity(channels[hint])==savedIdentity &&
+            allowed(channels[hint]))return hint
+        return channels.indexOfFirst{identity(it)==savedIdentity && allowed(it)}
+    }
 
     fun matches(channel:Channel,query:String):Boolean{
         val q=query.trim()

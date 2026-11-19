@@ -3623,7 +3623,7 @@ class MainActivity: Activity() {
                     isSingleLine=true
                     ellipsize=android.text.TextUtils.TruncateAt.END
                 }
-                val index=resolveListedChannel(identities[position],search)
+                val index=resolveListedChannel(identities[position],search,indices[position])
                 val channel=channels.getOrNull(index)
                 if(channel==null){
                     view.text="Unavailable — playlist changed"
@@ -3643,7 +3643,7 @@ class MainActivity: Activity() {
         }
         list.setOnItemClickListener{_,_,position,_->
             list.setItemChecked(position,true)
-            val selected=resolveListedChannel(identities[position],search)
+            val selected=resolveListedChannel(identities[position],search,indices[position])
             if(selected>=0){
                 // Manual lists may select hidden channels; PIN checks stay in playIndex().
                 val preferred=preferredChannel(selected)
@@ -3651,7 +3651,7 @@ class MainActivity: Activity() {
             }else Toast.makeText(this,"Channel unavailable — refresh list",Toast.LENGTH_SHORT).show()
         }
         list.setOnItemLongClickListener{_,_,position,_->
-            val selected=resolveListedChannel(identities[position],search)
+            val selected=resolveListedChannel(identities[position],search,indices[position])
             if(selected<0){
                 Toast.makeText(this,"Channel unavailable — refresh list",Toast.LENGTH_SHORT).show()
                 return@setOnItemLongClickListener true
@@ -4339,13 +4339,13 @@ class MainActivity: Activity() {
             !isSkipped(c) && channelKey(c) !in unavailableChannels &&
             channelKey(c) !in temporaryFailureHidden
     }
-    private fun resolveListedChannel(identity:String,search:Boolean):Int =
-        MediaSearchPolicy.resolveIdentity(channels,identity,::id){c->
+    private fun resolveListedChannel(identity:String,search:Boolean,hint:Int=-1):Int =
+        MediaSearchPolicy.resolveIdentity(channels,identity,::id,{c->
             if(search)searchEligible(c) else
                 (c.source.isBlank() || playlists().any{it.enabled && it.name==c.source}) &&
                 (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession) &&
                 (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
-        }
+        },hint)
 
     private fun mediaMatches(type:String,query:String):List<Int> =
         searchableMediaIndices().filter{index->
@@ -4563,7 +4563,7 @@ class MainActivity: Activity() {
                         setPadding(20,12,8,12)
                     },LinearLayout.LayoutParams(0,-2,1f))
                 }
-                val index=resolveListedChannel(identities[position],search)
+                val index=resolveListedChannel(identities[position],search,indices[position])
                 val c=channels.getOrNull(index)
                 if(c==null){
                     (row.getChildAt(1) as TextView).text="Unavailable — playlist changed"
@@ -4581,7 +4581,7 @@ class MainActivity: Activity() {
             }
         }
         list.setOnItemClickListener{_,_,position,_->
-            val index=resolveListedChannel(identities[position],search)
+            val index=resolveListedChannel(identities[position],search,indices[position])
             if(index>=0)mediaDetails(index)
             else Toast.makeText(this,"Item unavailable — refresh search",Toast.LENGTH_SHORT).show()
         }
