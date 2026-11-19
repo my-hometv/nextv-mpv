@@ -37,6 +37,14 @@ class CrossFeatureSearchIntegrationTest(unittest.TestCase):
         body=section("private fun showUniversalSearchResults(","private fun mediaRows(")
         self.assertIn("programmeList(c).any{it.title.contains(query,true)}",body)
         self.assertIn("showUniversalSearchResults(query)",body)
+    def test_hardware_back_uses_same_search_return_destination(self):
+        actions=section("override fun onBackPressed(){","private fun stopPlayback(){")
+        self.assertIn("val destination=searchResultBack",actions)
+        self.assertIn("destination()",actions)
+        rows=section("private fun mediaRows(","private fun youtubeThumbnail(")
+        self.assertIn("if(search)searchResultBack=onBack",rows)
+        collection=section("private fun channelCollection(","private val bufferProfiles")
+        self.assertIn("if(search)searchResultBack=onBack",collection)
     def test_search_categories_do_not_bypass_enabled_and_lock_gates(self):
         body=section("private fun searchEligible(","private fun mediaMatches(")
         self.assertIn("source in access.enabled",body)
