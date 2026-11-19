@@ -1,6 +1,9 @@
 # MyView source audit — consolidated defect register
 Baseline: `myview-full-app` at `0e6e38837531665cf6036cc526c5d36369fb0666` (2026-11-19).
 
+Verified correction commit: `3c0532a542312c14b3fc076d4bdf258591118f3d`.
+Source-only workflow: https://github.com/my-hometv/nextv-mpv/actions/runs/44496001556 — **success** (Kotlin compilation, unit tests, Python security/integration tests, Android Lint, and no-APK assertion).
+
 ## Scope and evidence
 This is a living **source-level integration register**, not proof that every
 Android TV, network, decoder, or remote interaction has been exercised. Review
@@ -13,14 +16,14 @@ There is no physical-TV or Android Activity instrumentation verdict here.
 
 | ID | Priority | Confirmed code-level defect | Planned code path | Status |
 |---|---|---|---|---|
-| MV-INT-01 | P1 | Media-details buttons used stale index after playlist change | MainActivity.mediaDetails | Corrected; CI pending |
-| MV-INT-02 | P1 | In-player channel drawer held stale numeric indices | MainActivity.showOverlayList | Corrected; CI pending |
-| MV-INT-03 | P1 | Search reparsed playlists/locks for each candidate | MainActivity.searchEligible/searchableMediaIndices | Corrected; CI pending |
-| MV-INT-04 | P2 | Separate media search omitted temporary failure exclusion | MainActivity.searchableMediaIndices | Corrected; CI pending |
-| MV-INT-05 | P2 | Search result Back button lost originating category | MainActivity.mediaRows/channelCollection | Corrected; CI pending |
-| MV-INT-06 | P2 | Media-details favorite/progress actions could outlive deleted source | MainActivity.mediaDetails | Corrected; CI pending |
-| MV-INT-07 | P2 | Hardware BACK ignored the search/category return destination | MainActivity.onBackPressed | Corrected; CI pending |
-| MV-INT-08 | P1 | Scheduled EPG auto-tune could fall back to an unrelated channel sharing a URL; reminder retained an old index | MainActivity.checkEpgTune | Corrected; CI pending |
+| MV-INT-01 | P1 | Media-details buttons used stale index after playlist change | MainActivity.mediaDetails | Source-verified — run 44496001556 |
+| MV-INT-02 | P1 | In-player channel drawer held stale numeric indices | MainActivity.showOverlayList | Source-verified — run 44496001556 |
+| MV-INT-03 | P1 | Search reparsed playlists/locks for each candidate | MainActivity.searchEligible/searchableMediaIndices | Source-verified — run 44496001556 |
+| MV-INT-04 | P2 | Separate media search omitted temporary failure exclusion | MainActivity.searchableMediaIndices | Source-verified — run 44496001556 |
+| MV-INT-05 | P2 | Search result Back button lost originating category | MainActivity.mediaRows/channelCollection | Source-verified — run 44496001556 |
+| MV-INT-06 | P2 | Media-details favorite/progress actions could outlive deleted source | MainActivity.mediaDetails | Source-verified — run 44496001556 |
+| MV-INT-07 | P2 | Hardware BACK ignored the search/category return destination | MainActivity.onBackPressed | Source-verified — run 44496001556 |
+| MV-INT-08 | P1 | Scheduled EPG auto-tune could fall back to an unrelated channel sharing a URL; reminder retained an old index | MainActivity.checkEpgTune | Source-verified — run 44496001556 |
 
 ## Cross-feature review matrix
 - **Playlist, channel history, hidden/lock, source deletion:** reviewed
@@ -41,7 +44,7 @@ There is no physical-TV or Android Activity instrumentation verdict here.
   key-repeat/focus behavior requires Android TV testing.
 
 ## Verification discipline
-Only label an item verified after successful **latest-commit** source-only CI.
+Only label an item source-verified after successful CI against the relevant code commit; documentation-only updates do not alter tested source.
 Do not build or publish APKs as part of this audit. Never infer physical-device
 success from a source-only result. Future findings should be appended here with
 reproducible source evidence and automated test when possible.
