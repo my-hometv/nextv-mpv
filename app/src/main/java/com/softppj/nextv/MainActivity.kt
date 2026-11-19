@@ -1501,12 +1501,29 @@ class MainActivity: Activity() {
             playIndex(preferredChannel(next))
             return
         }
-        showHome() // No other surfable channel remains.
+        // The channel may have been hidden BEFORE engine checks finished.
+        // It was never in previousSequence, so resolve its neighbour from the
+        // complete ordered playlist instead of returning to Home.
+        val fallback=nextSurfingIndex(index,surfingDirection,surfingIndices())
+        if(fallback in channels.indices && fallback!=index){
+            playIndex(preferredChannel(fallback))
+            return
+        }
+        // A playlist with no other eligible channels should not throw the
+        // viewer out of playback simply for choosing Hide.
+        showBanner("No other visible channel in this playlist",true)
     }
     private fun promptFailedChannel(index:Int,screen:FrameLayout){
         if(index !in channels.indices || active!=index || videoScreen!==screen)return
         val c=channels[index]
         val key=channelKey(c)
+        // Manual hiding is an explicit viewer choice. Failed engine/URL checks
+        // must never offer to hide it again or replace that choice.
+        if(isManuallyHidden(c) || isGroupHidden(c.group)){
+            failurePromptKey=null
+            showBanner("This hidden channel has no playable stream",true)
+            return
+        }
         if(prefs.contains("confirmed_engine_"+key) &&
             !prefs.getString("working_url_"+key,null).isNullOrBlank())return
         if(failurePromptKey==key || prefs.getBoolean("first_failure_prompted_"+key,false))return
@@ -1526,16 +1543,20 @@ class MainActivity: Activity() {
             }
             .setNeutralButton("Hide until restart"){_,_->
                 failurePromptKey=null
+                if(active!=index || videoScreen!==screen || channels.getOrNull(index)?.let{channelKey(it)}!=key)return@setNeutralButton
                 val previousSequence=surfingIndices()
-                temporaryFailureHidden.add(key)
-                unavailableChannels.add(key)
-                invalidateSurfingCache()
+                if(!isManuallyHidden(c) && !isGroupHidden(c.group)){
+                    temporaryFailureHidden.add(key)
+                    unavailableChannels.add(key)
+                    invalidateSurfingCache()
+                }
                 moveAfterFailedChannelHidden(index,screen,previousSequence)
             }
             .setNegativeButton("Hide permanently"){_,_->
                 failurePromptKey=null
+                if(active!=index || videoScreen!==screen || channels.getOrNull(index)?.let{channelKey(it)}!=key)return@setNegativeButton
                 val previousSequence=surfingIndices()
-                if(!isManuallyHidden(c))toggleManualHide(c)
+                if(!isManuallyHidden(c) && !isGroupHidden(c.group))toggleManualHide(c)
                 moveAfterFailedChannelHidden(index,screen,previousSequence)
             }
             .setOnCancelListener{failurePromptKey=null}
@@ -2034,6 +2055,11 @@ class MainActivity: Activity() {
             unavailableChannels.add(key)
             invalidateSurfingCache()
             moveAfterFailedChannelHidden(index,screen,previousSequence)
+        }else if(isManuallyHidden(c) || isGroupHidden(c.group)){
+            // Viewer-selected hidden channels can still be played explicitly.
+            // Exhausted engine checks should report a failure, not show a
+            // redundant Hide prompt or navigate away from the TV screen.
+            showBanner("No playable stream for this hidden channel",true)
         }else if(!prefs.getBoolean("first_failure_prompted_"+key,false)){
             promptFailedChannel(index,screen)
         }
