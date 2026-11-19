@@ -120,6 +120,34 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('savedJsonArray(viewerKey("recent_channels"))', self.activity)
         self.assertNotIn('JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))', self.activity)
 
+    def test_visual_menu_theme_and_stale_channel_actions(self):
+        manifest = (ROOT / "app/src/main/AndroidManifest.xml").read_text()
+        theme = (ROOT / "app/src/main/res/values/myview_theme.xml").read_text()
+        dialog_background = (ROOT / "app/src/main/res/drawable/myview_dialog_background.xml").read_text()
+        self.assertIn('android:theme="@style/MyViewTheme"', manifest)
+        self.assertIn('android:alertDialogTheme', theme)
+        self.assertIn('android:dialogTheme', theme)
+        self.assertIn('android:colorAccent', theme)
+        self.assertIn('corners android:radius="16dp"', dialog_background)
+        self.assertIn("private fun styledMenuList():ListView", self.activity)
+        for name in (
+            "showEpgGrid", "channelCollection", "mediaRows", "showChannels",
+            "showGroupContents", "showLeftNavigation", "showLeftActions",
+            "showPlaylistDrawer", "showGroupDrawerContents", "showPlaybackSettings"
+        ):
+            with self.subTest(name=name):
+                start = self.activity.index("private fun " + name + "(")
+                end = self.activity.find("\\n    private fun ", start + 12)
+                content = self.activity[start:] if end < 0 else self.activity[start:end]
+                self.assertIn("styledMenuList()", content)
+        actions = self.activity.split("private fun showChannelInfoActions(", 1)[1].split(
+            "private fun showChannelInfo(", 1
+        )[0]
+        self.assertIn("return@setItems", actions)
+        self.assertIn("return@setPositiveButton", actions)
+        self.assertNotIn("showHome()", actions)
+        self.assertIn("No other visible channel in this playlist", actions)
+
     def test_manual_hide_is_not_reprompted_after_engine_failure(self):
         failure = self.activity.split("private fun handleEngineFailure(", 1)[1].split(
             "private fun isLocked(", 1
