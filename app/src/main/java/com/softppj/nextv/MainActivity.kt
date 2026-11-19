@@ -3678,7 +3678,7 @@ class MainActivity: Activity() {
                     val resolved=resolveListedChannel(previousIdentity,false)
                     if(resolved>=0)playIndex(resolved)
                     else Toast.makeText(this,"Previous channel unavailable",Toast.LENGTH_SHORT).show()
-                }
+                })
                 val position=indices.indexOf(previous)
                 list.setSelection(position)
                 list.post{list.setSelection(position)}
