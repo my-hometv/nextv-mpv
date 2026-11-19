@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Use one TV-friendly palette for Activity menus AND plain AlertDialogs. -->
+    <style name="MyViewTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorAccent">#5FE6CC</item>
+        <item name="android:dialogTheme">@style/MyViewDialogTheme</item>
+        <item name="android:alertDialogTheme">@style/MyViewDialogTheme</item>
+    </style>
+    <style name="MyViewDialogTheme" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#5FE6CC</item>
+        <item name="android:windowBackground">@drawable/myview_dialog_background</item>
+    </style>
+</resources>
