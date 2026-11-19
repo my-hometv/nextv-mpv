@@ -9,6 +9,15 @@ class EpgGuidePolicyTest {
         assertEquals("asianet news",EpgGuidePolicy.normalizeDisplayName("ASIANET NEWS"))
     }
 
+    @Test fun xmltvNameAliasesMatchQualitySuffixButKeepExactFirst() {
+        assertEquals(listOf("surya tv hd", "surya tv"),
+            EpgGuidePolicy.matchNames("Surya TV HD"))
+        assertEquals(listOf("sun.tv-fhd", "sun tv fhd", "sun tv"),
+            EpgGuidePolicy.matchNames("Sun.TV-FHD"))
+        assertEquals(listOf("asianet news"),
+            EpgGuidePolicy.matchNames("Asianet News"))
+    }
+
     @Test fun dueReminderBacksOffWhenLicenceNotReadyOrAppBackgrounded() {
         assertEquals(60_000L,EpgGuidePolicy.nextReminderDelayMs(1000L,2000L,false))
         assertEquals(0L,EpgGuidePolicy.nextReminderDelayMs(1000L,2000L,true))
