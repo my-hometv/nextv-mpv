@@ -2229,36 +2229,115 @@ class MainActivity: Activity() {
                 .setNegativeButton("Close",null).create())
         }
     }
-    private fun configureEpg(){
-        val input=EditText(this).apply{
-            hint="One XMLTV URL per line"
-            setSingleLine(false)
-            minLines=4
-            maxLines=10
-            // Edit only manually configured URLs. Playlist-announced url-tvg
-            // entries remain lower priority and must not be promoted on Save.
-            setText((prefs.getString("epg_xmltv_urls",null)
-                ?:prefs.getString("epg_xmltv_url",null).orEmpty()).trim())
+    private fun savedManualEpgSources():List<String> =
+        EpgSourceEditorPolicy.read(prefs.getString("epg_xmltv_urls",null)
+            ?:prefs.getString("epg_xmltv_url",null))
+
+    private fun saveManualEpgSources(updated:List<String>){
+        if(updated==savedManualEpgSources())return
+        // Existing newline-backed preferences and backups stay compatible.
+        // Never edit provider-announced EPG URLs when saving manual sources.
+        prefs.edit().putString("epg_xmltv_urls",updated.joinToString("\n")).apply()
+        epgLoadGeneration++
+        epgDownloadCancellation?.cancel()
+        epgDownloadCancellation=null
+        epgLoadingGeneration=null
+        epgWaitingCallbacks.clear()
+        // Keep the last working guide visible until a replacement downloads.
+        epgLoadedAt=0L
+    }
+
+    private fun editSingleEpgSource(index:Int?){
+        val sources=savedManualEpgSources()
+        if(index!=null && index !in sources.indices){configureEpg();return}
+        if(index==null && sources.size>=EpgSourceEditorPolicy.MAX_MANUAL_SOURCES){
+            Toast.makeText(this,"Maximum 16 manual EPG sources",Toast.LENGTH_LONG).show()
+            configureEpg()
+            return
         }
-        showSideDialog(AlertDialog.Builder(this).setTitle("EPG sources (priority order)")
-            .setMessage("Manual EPG sources, highest priority first. Playlist url-tvg sources are included automatically after these URLs.")
-            .setView(input).setPositiveButton("Save"){_,_->
-                val urls=input.text.toString().lineSequence().map{it.trim()}.filter{it.isNotBlank()}.distinct().toList()
-                if(urls.any{!it.startsWith("https://",true) && !it.startsWith("http://",true)}){
-                    Toast.makeText(this,"Use HTTP or HTTPS EPG URLs",Toast.LENGTH_LONG).show()
+        val input=EditText(this).apply{
+            hint="https://example.com/guide.xml.gz"
+            setSingleLine(true)
+            setText(index?.let{sources[it]}.orEmpty())
+            selectAll()
+        }
+        val dialog=AlertDialog.Builder(this)
+            .setTitle(if(index==null)"Add EPG source" else "Edit EPG source "+(index+1))
+            .setMessage("Enter one XMLTV URL. Each source saves separately.")
+            .setView(input)
+            .setPositiveButton("Save",null)
+            .setNegativeButton("Cancel"){_,_->configureEpg()}
+            .create()
+        dialog.setOnShowListener{
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.setOnClickListener{
+                val url=input.text.toString().trim()
+                val latest=savedManualEpgSources()
+                val updated=if(index==null)EpgSourceEditorPolicy.add(latest,url)
+                    else EpgSourceEditorPolicy.edit(latest,index,url)
+                if(updated==null){
+                    input.error="Invalid or duplicate HTTP(S) source (maximum 16)"
                 }else{
-                    prefs.edit().putString("epg_xmltv_urls",urls.joinToString("\n")).apply()
-                    epgLoadGeneration++
-                    epgDownloadCancellation?.cancel()
-                    epgDownloadCancellation=null
-                    epgLoadingGeneration=null
-                    epgWaitingCallbacks.clear()
-                    // Continue showing the last working programme schedule
-                    // until a complete replacement has been fetched and parsed.
-                    epgLoadedAt=0L
-                    showEpg()
+                    saveManualEpgSources(updated)
+                    dialog.dismiss()
+                    Toast.makeText(this,"EPG source saved",Toast.LENGTH_SHORT).show()
+                    configureEpg()
                 }
-            }.setNegativeButton("Cancel",null).create())
+            }
+            input.requestFocus()
+        }
+        dialog.show()
+    }
+
+    private fun epgSourceActions(index:Int){
+        val sources=savedManualEpgSources()
+        if(index !in sources.indices){configureEpg();return}
+        val actions=listOf("Edit URL","Move up (higher priority)",
+            "Move down (lower priority)","Delete source")
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("EPG source "+(index+1)+" of "+sources.size)
+            .setMessage(sources[index].take(220))
+            .setItems(actions.toTypedArray()){_,choice->
+                when(choice){
+                    0->editSingleEpgSource(index)
+                    1,2->{
+                        val reordered=EpgSourceEditorPolicy.move(sources,index,if(choice==1)-1 else 1)
+                        if(reordered!=null)saveManualEpgSources(reordered)
+                        configureEpg()
+                    }
+                    3->showSideDialog(AlertDialog.Builder(this)
+                        .setTitle("Delete EPG source?")
+                        .setMessage("Remove this XMLTV URL? Other sources and playlists are unchanged.")
+                        .setPositiveButton("Delete"){_,_->
+                            EpgSourceEditorPolicy.remove(savedManualEpgSources(),index)
+                                ?.let(::saveManualEpgSources)
+                            configureEpg()
+                        }
+                        .setNegativeButton("Cancel"){_,_->configureEpg()}
+                        .create())
+                }
+            }
+            .setNegativeButton("Back"){_,_->configureEpg()}
+            .create())
+    }
+
+    private fun configureEpg(){
+        val sources=savedManualEpgSources()
+        val entries=listOf("＋ Add EPG source")+
+            sources.mapIndexed{index,url->
+                val host=try{java.net.URI(url).host ?:url}catch(_:Exception){url}
+                val suffix=if(url.length>75)url.take(72)+"…" else url
+                (index+1).toString()+".  "+host+"\n"+suffix
+            }
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("EPG sources • priority order")
+            .setMessage("Select a source to edit, move or delete. Each change saves immediately. Playlist-provided EPG sources are included automatically after manual sources.")
+            .setItems(entries.toTypedArray()){_,position->
+                if(position==0)editSingleEpgSource(null)
+                else epgSourceActions(position-1)
+            }
+            .setPositiveButton("Load / Check EPG"){_,_->showEpgSourceDiagnostics()}
+            .setNegativeButton("Close",null)
+            .create())
     }
     private var epgTuneTask:Runnable?=null
     private var appInForeground=false
