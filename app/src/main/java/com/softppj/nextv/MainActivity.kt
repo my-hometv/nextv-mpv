@@ -11252,7 +11252,7 @@ class MainActivity: Activity() {
             setTextColor(0xFF5FE6CC.toInt())
         },LinearLayout.LayoutParams(-2,-2).apply{marginEnd=tvDp(12)})
         val track=android.widget.ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{
-            max=1000
+            this.max=1000
             progress=(1000L*current/max).toInt()
             isIndeterminate=false
             progressTintList=android.content.res.ColorStateList.valueOf(0xFF5FE6CC.toInt())
