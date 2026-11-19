@@ -157,4 +157,21 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn('!isManuallyHidden(c)',group)
         self.assertIn('!isLocked(c)',group)
 
+    def test_enabling_playlist_immediately_reloads_channels(self):
+        manager=between("private fun managePlaylists()", "private fun startAddedPlaylist(")
+        self.assertIn("savePlaylists(list)",manager)
+        self.assertIn("refresh({managePlaylists()})",manager)
+    def test_standalone_saved_web_survives_cache_and_refresh(self):
+        cached=between("private fun cachedChannels()", "private fun publishChannelsKeepingPlayback(")
+        self.assertIn('if(sources.isEmpty())return mutableListOf<Channel>().also(::addSavedWebTv)',cached)
+        self.assertIn('addSavedWebTv(combined)',cached)
+        refresh=between("private fun refresh(", "private var backgroundProbeGeneration")
+        self.assertIn("addSavedWebTv(combined)",refresh)
+        self.assertIn("publishChannelsKeepingPlayback(standalone)",refresh)
+        self.assertIn("addSavedWebTv(standalone)",refresh)
+    def test_standalone_web_still_respects_license_gate(self):
+        cached=between("private fun cachedChannels()", "private fun publishChannelsKeepingPlayback(")
+        self.assertLess(cached.index("if(!licenseReady)return mutableListOf()"),
+                        cached.index("if(sources.isEmpty())return"))
+
 if __name__=="__main__":unittest.main()

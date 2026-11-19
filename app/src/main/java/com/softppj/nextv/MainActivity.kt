@@ -4939,7 +4939,11 @@ class MainActivity: Activity() {
                                 else{
                                     list[index]=p.copy(enabled=true)
                                     savePlaylists(list)
-                                    managePlaylists()
+                                    // Re-enabling a playlist must restore its
+                                    // channels immediately from the source/cache.
+                                    // The identity-safe publisher preserves a
+                                    // different foreground channel where possible.
+                                    refresh({managePlaylists()})
                                 }
                             }
                             1->editPlaylist(index)
@@ -5049,7 +5053,7 @@ class MainActivity: Activity() {
     private fun cachedChannels():MutableList<Channel>{
         if(!licenseReady)return mutableListOf()
         val sources=playlists().filter{it.enabled}
-        if(sources.isEmpty())return mutableListOf()
+        if(sources.isEmpty())return mutableListOf<Channel>().also(::addSavedWebTv)
         // Parse cached playlists concurrently on a small bounded pool. The TV
         // UI stays free, and startup never waits for network playlist refreshes.
         val results=Array(sources.size){emptyList<Channel>()}
@@ -5069,9 +5073,11 @@ class MainActivity: Activity() {
         }finally{
             pool.shutdown()
         }
-        return results.asSequence().flatten()
-            .distinctBy{it.source.lowercase()+"|"+it.name.lowercase()+"|"+it.url}
-            .toMutableList()
+        val combined=results.asSequence().flatten().toMutableList()
+        addSavedWebTv(combined)
+        return combined.distinctBy{
+            it.source.lowercase()+"|"+it.name.lowercase()+"|"+it.url
+        }.toMutableList()
     }
     // Sole channel-list publication path: release the OLD playback identity
     // before any channel indices can move. Unchanged positions keep their
@@ -5106,7 +5112,11 @@ class MainActivity: Activity() {
             ?:configured.firstOrNull()?.name
         val sources=configured.filter{!activeOnly || it.name==activeSource}
         if(sources.isEmpty()){
-            Toast.makeText(this,"No enabled playlists. Existing channels preserved.",Toast.LENGTH_LONG).show()
+            // A viewer may still have independent saved Web TV channels.
+            val standalone=mutableListOf<Channel>()
+            addSavedWebTv(standalone)
+            publishChannelsKeepingPlayback(standalone)
+            Toast.makeText(this,"No enabled playlists; saved Web TV remains available.",Toast.LENGTH_LONG).show()
             done()
             return
         }
@@ -5229,6 +5239,9 @@ class MainActivity: Activity() {
                     combined.addAll(previousBySource[p.name].orEmpty())
                 }
             }
+            // Saved Web TV entries are independent of provider playlists.
+            // Keep them available even if all provider downloads fail.
+            addSavedWebTv(combined)
             val nextChannels=combined.distinctBy{
                 it.mediaType+"|"+it.source.lowercase(java.util.Locale.ROOT)+"|"+
                     it.name.lowercase(java.util.Locale.ROOT)+"|"+it.url
