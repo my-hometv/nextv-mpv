@@ -25,12 +25,32 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("Live channels with current or upcoming programme",MAIN)
     def test_picture_preview_and_cancel(self):
         dialog=between("private fun configureChannelPicture(", "private fun showChannelOptions(")
-        self.assertIn("previewPictureChoice(activeIndex,c,modes[position])",dialog)
+        self.assertIn("previewPictureChoice(activeIndex,c,mode)",dialog)
+        self.assertIn('.setNeutralButton("Preview",null)',dialog)
+        self.assertNotIn("previewPictureChoice(activeIndex,c,modes[position])",dialog)
         self.assertIn("if(!pictureApplied)clearPicturePreview(activeIndex,c)",dialog)
         self.assertIn("handler.postDelayed(task,650L)",MAIN)
+        self.assertIn("clearPicturePreview(index,c,restart=false)",MAIN)
     def test_brand_and_app_untouched(self):
         self.assertIn('reset("MyView  •  HOME")',MAIN)
         self.assertIn("private fun signedLicenseCache(",MAIN)
         self.assertIn("private fun playIndex(",MAIN)
+
+    def test_home_settings_back_matches_myview_title(self):
+        reset=between("private fun reset(title:String)", "private fun playlists():")
+        self.assertIn('title=="MyView  •  HOME"',reset)
+        self.assertNotIn('title.startsWith("My Home TV',reset)
+    def test_media_headings_show_myview(self):
+        self.assertNotIn('reset("My Home TV',MAIN)
+        self.assertIn('reset("MyView  •  Series")',MAIN)
+        self.assertIn('reset("MyView  •  Music")',MAIN)
+    def test_epg_budget_and_failing_feed_backoff(self):
+        loader=between("private fun loadEpg(", "private fun showChannelEpg(")
+        self.assertIn("EpgLoadBudget.remainingMs(",loader)
+        self.assertIn("EpgLoadBudget.connectionTimeoutMs(remaining)",loader)
+        self.assertIn("EpgLoadBudget.readTimeoutMs(remaining)",loader)
+        self.assertIn("temporarily skipped after recent failure",loader)
+        self.assertIn("showProgress:Boolean=false",loader)
+        self.assertIn("epgFailedUntil.clear()",MAIN)
 
 if __name__=="__main__":unittest.main()

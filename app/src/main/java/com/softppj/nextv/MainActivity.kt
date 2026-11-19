@@ -2180,6 +2180,8 @@ class MainActivity: Activity() {
     private val defaultEpgUrl="https://avkb.short.gy/epg.xml.gz"
     private fun configuredEpgUrl():String=prefs.getString("epg_xmltv_url",null)?.trim()?.takeIf{it.isNotEmpty()} ?:defaultEpgUrl
     private val maxActiveEpgFeeds=32
+    // Monotonic time-based temporary retry limit for unreachable feeds.
+    private val epgFailedUntil=java.util.concurrent.ConcurrentHashMap<String,Long>()
     private fun epgCandidates():List<String>{
         // Explicitly configured XMLTV URLs have priority. Each enabled M3U
         // playlist may also announce url-tvg / x-tvg-url in its #EXTM3U header.
@@ -2216,7 +2218,8 @@ class MainActivity: Activity() {
         // Explicit diagnostics request checks feeds afresh without disrupting
         // playback or launching a separate parser on the UI thread.
         epgLoadedAt=0L
-        loadEpg{
+        epgFailedUntil.clear()
+        loadEpg({success->
             val now=System.currentTimeMillis()
             val live=channelNumbers().filter{channels[it].mediaType=="live"}
             val matched=live.count{index->programmeList(channels[index]).any{it.end>now}}
@@ -2238,7 +2241,7 @@ class MainActivity: Activity() {
                 .setMessage(message)
                 .setPositiveButton("EPG URLs"){_,_->configureEpg()}
                 .setNegativeButton("Close",null).create())
-        }
+        },showProgress=true)
     }
     private fun savedManualEpgSources():List<String> =
         EpgSourceEditorPolicy.read(prefs.getString("epg_xmltv_urls",null)
@@ -2256,6 +2259,7 @@ class MainActivity: Activity() {
         epgWaitingCallbacks.clear()
         // Keep the last working guide visible until a replacement downloads.
         epgLoadedAt=0L
+        epgFailedUntil.clear()
     }
 
     private fun editSingleEpgSource(index:Int?){
@@ -2577,7 +2581,7 @@ class MainActivity: Activity() {
             if(next!=null)append("\nNEXT  ").append(programmeTime(next.start)).append("  ").append(next.title)
         }
     }
-    private fun loadEpg(done:(Boolean)->Unit){
+    private fun loadEpg(done:(Boolean)->Unit,showProgress:Boolean=false){
         if(!prefs.getBoolean("nextv_epg_enabled",true)){done(false);return}
         val generation=epgLoadGeneration
         val urls=epgUrls()
@@ -2594,19 +2598,41 @@ class MainActivity: Activity() {
         val cancellation=EpgDownloadCancellation()
         epgDownloadCancellation=cancellation
         thread(name="MyView-epg-load"){
+            val loadStart=android.os.SystemClock.elapsedRealtime()
+            val total=urls.size
             val combined=mutableMapOf<String,List<EpgProgramme>>()
             val namedSchedules=mutableMapOf<String,List<EpgProgramme>>()
             var loaded=0
             val sourceStatuses=mutableListOf<String>()
-            for(url in urls){
+            for((position,url) in urls.withIndex()){
                 if(generation!=epgLoadGeneration || cancellation.isCancelled())break
+                val remaining=EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())
+                if(remaining<=0){
+                    sourceStatuses.add("60-second EPG budget reached; "+(total-position)+" sources deferred")
+                    break
+                }
+                val retryAfter=epgFailedUntil[url] ?: 0L
+                if(android.os.SystemClock.elapsedRealtime()<retryAfter){
+                    val host=runCatching{java.net.URI(url).host ?: "Unknown host"}.getOrDefault("Unknown host")
+                    sourceStatuses.add(host+": temporarily skipped after recent failure")
+                    continue
+                }
+                if(showProgress && (position==0 || position%8==0)){
+                    val step=position+1
+                    runOnUiThread{
+                        if(generation==epgLoadGeneration && appInForeground && !isFinishing && !isDestroyed)
+                            Toast.makeText(this,"Loading EPG source "+step+" of "+total,Toast.LENGTH_SHORT).show()
+                    }
+                }
                 try{
                     // Stage each feed independently: one malformed XMLTV source
                     // must not partially replace the last successful schedule.
                     val sourceProgrammes=mutableMapOf<String,MutableList<EpgProgramme>>()
                     val sourceNames=mutableMapOf<String,String>()
                     val connection=(URL(url).openConnection() as java.net.HttpURLConnection).apply{
-                        connectTimeout=8000;readTimeout=20000;useCaches=false
+                        connectTimeout=EpgLoadBudget.connectionTimeoutMs(remaining)
+                        readTimeout=EpgLoadBudget.readTimeoutMs(remaining)
+                        useCaches=false
                     }
                     if(!cancellation.attachConnection(connection))break
                     try {
@@ -2630,7 +2656,8 @@ class MainActivity: Activity() {
                         var definitionId=""
                         var event=parser.eventType
                         while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT){
-                            if(generation!=epgLoadGeneration || cancellation.isCancelled())break
+                            if(generation!=epgLoadGeneration || cancellation.isCancelled() ||
+                                EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())<=0)break
                             if(event==org.xmlpull.v1.XmlPullParser.START_TAG){
                                 when(parser.name){
                                     "channel"->{
@@ -2669,6 +2696,10 @@ class MainActivity: Activity() {
                         }
                     }
                     if(generation!=epgLoadGeneration || cancellation.isCancelled())break
+                    if(EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())<=0){
+                        sourceStatuses.add("EPG time budget reached; incomplete source not merged")
+                        break
+                    }
                     sourceProgrammes.forEach{(id,entries)->
                         combined[id]=EpgMergePolicy.merge(combined[id].orEmpty(),entries,
                             {it.start},{it.end})
@@ -2684,6 +2715,7 @@ class MainActivity: Activity() {
                     sourceStatuses.add(host+": "+sourceProgrammes.size+" channel IDs, "+
                         programmeCount+" programmes")
                     loaded++
+                    epgFailedUntil.remove(url)
                     } finally {
                         cancellation.releaseConnection(connection)
                         connection.disconnect()
@@ -2693,6 +2725,8 @@ class MainActivity: Activity() {
                         HomeTvDiagnostics.w("HomeTV","EPG source failed",e)
                     val host=try{java.net.URI(url).host ?: "Unknown host"}catch(_:Exception){"Unknown host"}
                     sourceStatuses.add(host+": failed ("+e.javaClass.simpleName+")")
+                    if(!cancellation.isCancelled() && generation==epgLoadGeneration)
+                        epgFailedUntil[url]=android.os.SystemClock.elapsedRealtime()+120000L
                 }
             }
             if(generation!=epgLoadGeneration || cancellation.isCancelled())return@thread
@@ -2877,15 +2911,15 @@ class MainActivity: Activity() {
     private fun showEpg(){
         if(!prefs.getBoolean("nextv_epg_enabled",true))return
         if(epgUrls().isEmpty()){configureEpg();return}
-        Toast.makeText(this,"Loading TV guide…",Toast.LENGTH_SHORT).show()
-        loadEpg{success->
+        Toast.makeText(this,"Loading TV guide (up to 60 seconds)…",Toast.LENGTH_SHORT).show()
+        loadEpg({success->
             if(!success){
                 showSideDialog(AlertDialog.Builder(this).setTitle("EPG unavailable")
                     .setMessage("Unable to load XMLTV guide.")
                     .setPositiveButton("Change EPG URL"){_,_->configureEpg()}
                     .setNegativeButton("Close",null).create())
             }else showEpgGrid()
-        }
+        },showProgress=true)
     }
     private val manuallyHiddenIds get()=prefs.getStringSet("manually_hidden_channels",emptySet()) ?: emptySet()
     // Persist a channel identity rather than its stream URL. Playlist refreshes and
@@ -4129,7 +4163,7 @@ class MainActivity: Activity() {
     private fun reset(title:String) {
         homeScreenVisible=false
         val destination:(()->Unit)?=when{
-            title.startsWith("My Home TV  •")->({showHome()})
+            title=="MyView  •  HOME"->({showHome()})
             title=="MyView Settings"->({settings()})
             else->null
         }
@@ -4229,7 +4263,7 @@ class MainActivity: Activity() {
     }
     private fun mediaSeries(){
         val items=mediaItems("series")
-        reset("My Home TV  •  Series")
+        reset("MyView  •  Series")
         root.addView(label("Series  |  "+items.size+" episodes"))
         items.groupBy{channels[it].group}.toSortedMap().forEach{(name,episodes)->
             root.addView(button("▣  "+name+"  •  "+episodes.size+" episodes"){
@@ -4245,7 +4279,7 @@ class MainActivity: Activity() {
     }
     private fun mediaMusic(){
         val items=mediaItems("music")
-        reset("My Home TV  •  Music")
+        reset("MyView  •  Music")
         root.addView(label("Music  |  "+items.size+" songs"))
         root.addView(button("♫  All Songs"){mediaRows("All Songs",items)})
         items.groupBy{channels[it].artist.ifBlank{"Unknown Artist"}}.toSortedMap().forEach{(artist,songs)->
@@ -4312,7 +4346,7 @@ class MainActivity: Activity() {
     }
     private fun mediaLibrary(type:String){
         val title=when(type){"movie"->"Movies";"series"->"Series";"music"->"Music";else->"Web TV"}
-        reset("My Home TV  •  "+title)
+        reset("MyView  •  "+title)
         val indices=mediaItems(type)
         root.addView(label(title+"  |  "+indices.size+" items"))
         root.addView(button("⌕  Search "+title){mediaSearch(type)})
@@ -4339,7 +4373,7 @@ class MainActivity: Activity() {
         }.setNegativeButton("Cancel",null).show()
     }
     private fun mediaRows(title:String,indices:List<Int>){
-        reset("My Home TV  •  "+title)
+        reset("MyView  •  "+title)
         root.addView(label(indices.size.toString()+" items"))
         val list=styledMenuList().apply{
             dividerHeight=2
@@ -6760,15 +6794,20 @@ class MainActivity: Activity() {
         previewPictureMode=mode
         if(active==index)restartCurrentChannelForPicturePreset(index,c)
     }
-    private fun clearPicturePreview(index:Int,c:Channel){
+    private fun clearPicturePreview(index:Int,c:Channel,restart:Boolean=true){
         if(previewPictureChannelKey==channelKey(c)){
+            val pending=picturePreviewRestartTask
+            pending?.let{handler.removeCallbacks(it)}
+            picturePreviewRestartTask=null
             previewPictureChannelKey=null
             previewPictureMode=null
-            if(active==index)restartCurrentChannelForPicturePreset(index,c)
+            // No rollback restart when preview was still waiting in the queue.
+            if(restart && pending==null && active==index)
+                restartCurrentChannelForPicturePreset(index,c)
         }
     }
     private fun applyPictureChoice(index:Int,c:Channel,mode:String){
-        clearPicturePreview(index,c)
+        clearPicturePreview(index,c,restart=false)
         prefs.edit().putString(picturePresetKey(c),mode)
             .remove(pictureCustomKey(c,"brightness")).remove(pictureCustomKey(c,"contrast"))
             .remove(pictureCustomKey(c,"saturation")).apply()
@@ -6914,22 +6953,13 @@ class MainActivity: Activity() {
         val selected=if(current=="Custom")modes.size else modes.indexOf(current).coerceAtLeast(0)
         var pending=selected
         var pictureApplied=false
-        fun preview(position:Int){
-            if(position !in labels.indices)return
-            if(position==pending && previewPictureChannelKey==null && position==selected)return
-            if(position==pending && previewPictureChannelKey==channelKey(c) &&
-                previewPictureMode==modes.getOrNull(position))return
-            pending=position
-            if(active!=activeIndex ||
-                channels.getOrNull(activeIndex)?.let{channelKey(it)}!=channelKey(c))return
-            // Reuse the existing 650ms debounced preview and rollback helpers.
-            if(position==modes.size)clearPicturePreview(activeIndex,c)
-            else previewPictureChoice(activeIndex,c,modes[position])
-        }
+        // Focus changes only the selected row, never the native decoder.
+        fun select(position:Int){if(position in labels.indices)pending=position}
         val dialog=AlertDialog.Builder(this)
             .setTitle(c.name+" — Color Presets")
-            .setSingleChoiceItems(labels,selected){_,position->preview(position)}
+            .setSingleChoiceItems(labels,selected){_,position->select(position)}
             .setPositiveButton("Apply",null)
+            .setNeutralButton("Preview",null)
             .setNegativeButton("Cancel",null).create()
         dialog.setOnShowListener{
             dialog.listView?.let{list->
@@ -6938,18 +6968,35 @@ class MainActivity: Activity() {
                 list.setSelection(selected)
                 list.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{
                     override fun onItemSelected(parent:android.widget.AdapterView<*>?,view:View?,position:Int,id:Long){
-                        preview(position)
+                        select(position)
                         list.setItemChecked(position,true)
                     }
                     override fun onNothingSelected(parent:android.widget.AdapterView<*>?){}
                 }
                 list.requestFocus()
             }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener{
+                if(active!=activeIndex ||
+                    channels.getOrNull(activeIndex)?.let{channelKey(it)}!=channelKey(c)){
+                    Toast.makeText(this,"Channel changed; reopen Color Presets",Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+                val mode=if(pending==modes.size)"Custom" else modes[pending]
+                previewPictureChoice(activeIndex,c,mode)
+                Toast.makeText(this,"Previewing "+mode+" • Cancel restores original",Toast.LENGTH_SHORT).show()
+            }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener{
+                if(active!=activeIndex ||
+                    channels.getOrNull(activeIndex)?.let{channelKey(it)}!=channelKey(c)){
+                    dialog.dismiss()
+                    return@setOnClickListener
+                }
                 pictureApplied=true
                 dialog.dismiss()
-                if(pending==modes.size)configureManualPicture(activeIndex,c)
-                else applyPictureChoice(activeIndex,c,modes[pending])
+                if(pending==modes.size){
+                    clearPicturePreview(activeIndex,c)
+                    configureManualPicture(activeIndex,c)
+                }else applyPictureChoice(activeIndex,c,modes[pending])
             }
         }
         dialog.setOnDismissListener{
