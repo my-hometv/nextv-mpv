@@ -1,0 +1,89 @@
+name: MyView RC 2026-11-19 - One-time Test APK
+# One-time push gate on the dedicated RC build branch.
+# Original verified RC branch remains unchanged and no release is published.
+on:
+  push:
+    branches:
+      - myview-rc-build-2026-11-19
+    paths:
+      - '.github/workflows/myview-rc-build-once.yml'
+permissions:
+  contents: read
+jobs:
+  build-rc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Confirm exact frozen RC application sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "myview-rc-build-2026-11-19"
+          BASE="7a5ac3a31b9e6e2f1e2c386d33c497d89002c089"
+          test "$(git diff --name-only "$BASE" HEAD)" = ".github/workflows/myview-rc-build-once.yml"
+          grep -Fq 'applicationId = "com.softppj.myview"' app/build.gradle.kts
+          grep -Fq 'name="app_name">MyView' app/src/main/res/values/strings.xml
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Android SDK and native tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          test -d "$SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;27.2.12479018"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Verify original branding and release contract
+        run: |
+          python3 tools/verify_myview_branding.py
+          python3 tools/verify_myview_source_contract.py
+      - name: Security and source integration regression tests
+        run: |
+          python3 -m unittest discover -s tools -p 'test_*.py' -v
+          python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Compile Kotlin and run Android unit tests
+        run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Android Lint gate
+        run: gradle --no-daemon --stacktrace :app:lintDebug
+      - name: Assemble RC test APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Verify application identity and calculate checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk > /tmp/myview-rc-badging.txt
+          grep -E "^package: name='com.softppj.myview' " /tmp/myview-rc-badging.txt
+          grep -F "application-label:'MyView'" /tmp/myview-rc-badging.txt
+          cp app/build/outputs/apk/debug/app-debug.apk MyView-RC-2026-11-19-Test.apk
+          sha256sum MyView-RC-2026-11-19-Test.apk
+      - name: Upload private test APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-RC-2026-11-19-Test
+          path: MyView-RC-2026-11-19-Test.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyView-RC-2026-11-19-Reports
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+            app/build/reports/lint-results-*.html
+          if-no-files-found: ignore
+          retention-days: 7
