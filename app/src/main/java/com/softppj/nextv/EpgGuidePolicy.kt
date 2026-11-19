@@ -17,8 +17,8 @@ internal object EpgGuidePolicy {
     fun matchNames(value:String):List<String> {
         val exact=normalizeDisplayName(value)
         if(exact.isEmpty())return emptyList()
-        val punctuation=normalizeDisplayName(exact.replace(Regex("[._|\\\\-]+")," "))
-        val suffix=Regex("""(?:\\s+(?:hd|fhd|uhd|sd|4k|1080p|720p|hevc|h265|h264))+$""")
+        val punctuation=normalizeDisplayName(exact.replace(Regex("[._|]+")," ").replace('-', ' '))
+        val suffix=Regex("""(?:\s+(?:hd|fhd|uhd|sd|4k|1080p|720p|hevc|h265|h264))+$""")
         val withoutQuality=punctuation.replace(suffix,"").trim()
         return listOf(exact,punctuation,withoutQuality).filter{it.isNotBlank()}.distinct()
     }
