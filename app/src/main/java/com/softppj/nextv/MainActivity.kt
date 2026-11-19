@@ -2125,8 +2125,11 @@ class MainActivity: Activity() {
     private fun visibleIndices():List<Int>{
         val lockedSources=lockedPlaylistNames()
         val lockedGroupsNow=lockedGroupNames()
+        val enabledSources=playlists().filter{it.enabled}.map{it.name}.toHashSet()
         return channelNumbers().filter{index->
             val channel=channels[index]
+            // Preserve independent saved Web TV entries with no playlist source.
+            (channel.source.isBlank() || channel.source in enabledSources) &&
             (channel.source !in lockedSources || channel.source in unlockedPlaylistsThisSession) &&
                 (channel.group !in lockedGroupsNow || channel.group in unlockedGroupsThisSession)
         }
