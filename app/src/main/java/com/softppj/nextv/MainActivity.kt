@@ -7504,6 +7504,10 @@ class MainActivity: Activity() {
         showSideDialog(AlertDialog.Builder(this)
             .setTitle(numberFor(index).toString()+". "+channel.name+" — Info actions")
             .setItems(labels.toTypedArray()){_,position->
+                // An old channel-info dialog can outlive a fast remote switch.
+                // Never apply its actions to a channel no longer on screen.
+                if(active!=index || channels.getOrNull(index)?.let{channelKey(it)}!=channelKey(channel))
+                    return@setItems
                 val action=position-(if(withGuide)1 else 0)
                 when {
                     withGuide && position==0->openCurrentChannelEpg()
@@ -7520,17 +7524,14 @@ class MainActivity: Activity() {
                                 .setTitle("Hide "+channel.name+"?")
                                 .setMessage("Hide this channel and switch to the next visible channel in the last remote direction? Restore it from Hidden Channels.")
                                 .setPositiveButton("Hide Channel"){_,_->
+                                    if(active!=index || channels.getOrNull(index)?.let{channelKey(it)}!=channelKey(channel))
+                                        return@setPositiveButton
+                                    if(isManuallyHidden(channel))return@setPositiveButton
                                     toggleManualHide(channel)
-                                    if(active==index){
-                                        val next=nextSurfingIndex(index,surfingDirection,surfingIndices())
-                                        if(next in channels.indices && next!=index)
-                                            playIndex(preferredChannel(next))
-                                        else{
-                                            stopPlayback()
-                                            showHome()
-                                            Toast.makeText(this,"No other visible channel available",Toast.LENGTH_LONG).show()
-                                        }
-                                    }
+                                    val next=nextSurfingIndex(index,surfingDirection,surfingIndices())
+                                    if(next in channels.indices && next!=index)
+                                        playIndex(preferredChannel(next))
+                                    else showBanner("No other visible channel in this playlist",true)
                                 }
                                 .setNegativeButton("Cancel",null).create())
                         }
