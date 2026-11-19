@@ -61,19 +61,25 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('withNames.putIfAbsent(name,entries)', self.activity)
 
     def test_epg_source_editor_preserves_manual_priority_and_live_schedule(self):
-        # Editing sources must not silently promote playlist url-tvg feeds
-        # into manual sources or erase a working guide before reload succeeds.
-        editor = self.activity.split("private fun configureEpg(){", 1)[1].split(
+        # Migrates existing multi-line entries into individually editable rows.
+        # Saving one URL never changes playlist-announced sources or wipes EPG.
+        editor = self.activity.split("private fun savedManualEpgSources():", 1)[1].split(
             "private var epgTuneTask:", 1
         )[0]
         self.assertIn('prefs.getString("epg_xmltv_urls",null)', editor)
         self.assertIn('prefs.getString("epg_xmltv_url",null)', editor)
+        self.assertIn('putString("epg_xmltv_urls",updated.joinToString', editor)
+        self.assertIn("EpgSourceEditorPolicy.add(", editor)
+        self.assertIn("EpgSourceEditorPolicy.edit(", editor)
+        self.assertIn("EpgSourceEditorPolicy.move(", editor)
+        self.assertIn("EpgSourceEditorPolicy.remove(", editor)
+        self.assertIn("showEpgSourceDiagnostics()", editor)
         self.assertNotIn('setText(epgUrls().joinToString', editor)
         self.assertNotIn('epgGuide=emptyMap()', editor)
         self.assertIn('epgLoadedAt=0L', editor)
 
     def test_epg_off_and_source_change_cancel_the_active_download(self):
-        editor = self.activity.split("private fun configureEpg(){", 1)[1].split(
+        editor = self.activity.split("private fun savedManualEpgSources():", 1)[1].split(
             "private var epgTuneTask:", 1
         )[0]
         off = self.activity.split('"nextv_epg_enabled"->{', 1)[1].split(
