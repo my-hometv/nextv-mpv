@@ -5,7 +5,7 @@ internal object EpgSourceEditorPolicy {
     const val MAX_MANUAL_SOURCES=16
 
     fun read(stored:String?):List<String> = stored.orEmpty().lineSequence()
-        .map{it.trim()}.filter{it.isNotEmpty()}.distinct().take(MAX_MANUAL_SOURCES).toList()
+        .map{it.trim()}.filter{it.isNotEmpty()}.distinct().toList()
 
     fun valid(url:String):Boolean {
         val clean=url.trim()

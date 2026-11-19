@@ -1172,6 +1172,9 @@ class MainActivity: Activity() {
         ensureChannelIndex()
         return (channelByKey[channelKey(c)] ?:emptyList()).any{skippedIds.contains(id(channels[it]))}
     }
+    // Combined browsing changes only the list, never the remote-surfing scope.
+    private fun browsingAllPlaylists():Boolean =
+        prefs.getBoolean("myview_browse_all_playlists",false)
     private fun selectedPlaylistSource():String?{
         ensureChannelIndex()
         val enabled=playlists().filter{it.enabled}.map{it.name}
@@ -2176,7 +2179,8 @@ class MainActivity: Activity() {
     }
     private val defaultEpgUrl="https://avkb.short.gy/epg.xml.gz"
     private fun configuredEpgUrl():String=prefs.getString("epg_xmltv_url",null)?.trim()?.takeIf{it.isNotEmpty()} ?:defaultEpgUrl
-    private fun epgUrls():List<String>{
+    private val maxActiveEpgFeeds=32
+    private fun epgCandidates():List<String>{
         // Explicitly configured XMLTV URLs have priority. Each enabled M3U
         // playlist may also announce url-tvg / x-tvg-url in its #EXTM3U header.
         // Never overwrite a manually saved guide or force a network request
@@ -2190,15 +2194,17 @@ class MainActivity: Activity() {
         val candidates=manual.lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()+
             announced+if(manual.isBlank() && announced.isEmpty() &&
                 !prefs.contains("epg_xmltv_urls"))listOf(defaultEpgUrl) else emptyList()
-        return candidates.filter{it.startsWith("https://",true) || it.startsWith("http://",true)}
-            .distinct().take(16)
+        return candidates.filter{EpgSourceEditorPolicy.valid(it)}.distinct()
     }
+    private fun epgUrls():List<String> = epgCandidates().take(maxActiveEpgFeeds)
     private fun showEpgSourceDiagnostics(){
         if(!prefs.getBoolean("nextv_epg_enabled",true)){
             Toast.makeText(this,"Enable the EPG feature first",Toast.LENGTH_LONG).show()
             return
         }
         val configured=epgUrls()
+        val allCandidates=epgCandidates()
+        val omitted=(allCandidates.size-configured.size).coerceAtLeast(0)
         if(configured.isEmpty()){
             showSideDialog(AlertDialog.Builder(this)
                 .setTitle("EPG diagnostics")
@@ -2216,7 +2222,12 @@ class MainActivity: Activity() {
             val matched=live.count{index->programmeList(channels[index]).any{it.end>now}}
             val lines=epgSourceStatuses.ifEmpty{listOf("No completed EPG download yet")}
             val message=buildString{
-                append("Sources configured: ").append(configured.size)
+                append("XMLTV feeds configured: ").append(allCandidates.size)
+                append("\nActive feeds: ").append(configured.size)
+                append("\nOmitted by ").append(maxActiveEpgFeeds).append("-feed limit: ").append(omitted)
+                append("\nManual EPG entries: ").append(savedManualEpgSources().size)
+                append("\nChannel matches use tvg-id first, then aliases")
+                append("\nCheck source status and programme times below")
                 append("\nProgramme IDs / alias entries: ").append(epgGuide.size)
                 append("\nLive channels with current or upcoming programme: ")
                     .append(matched).append(" / ").append(live.size)
@@ -2321,7 +2332,8 @@ class MainActivity: Activity() {
 
     private fun configureEpg(){
         val sources=savedManualEpgSources()
-        val entries=listOf("＋ Add EPG source")+
+        val excess=(sources.size-EpgSourceEditorPolicy.MAX_MANUAL_SOURCES).coerceAtLeast(0)
+        val entries=listOf(if(excess>0)"⚠ $excess legacy sources beyond the new limit (preserved)" else "＋ Add EPG source")+
             sources.mapIndexed{index,url->
                 val host=try{java.net.URI(url).host ?:url}catch(_:Exception){url}
                 val suffix=if(url.length>75)url.take(72)+"…" else url
@@ -2330,8 +2342,13 @@ class MainActivity: Activity() {
         showSideDialog(AlertDialog.Builder(this)
             .setTitle("EPG sources • edit / reorder")
             .setItems(entries.toTypedArray()){_,position->
-                if(position==0)editSingleEpgSource(null)
-                else epgSourceActions(position-1)
+                if(position==0){
+                    if(excess>0)showSideDialog(AlertDialog.Builder(this)
+                        .setTitle("Legacy XMLTV sources preserved")
+                        .setMessage("Existing sources are preserved. To add a new source, first reduce the manual list below 16; editing and reordering remain available.")
+                        .setPositiveButton("OK"){_,_->configureEpg()}.create())
+                    else editSingleEpgSource(null)
+                }else epgSourceActions(position-1)
             }
             .setPositiveButton("Load / Check EPG"){_,_->showEpgSourceDiagnostics()}
             .setNegativeButton("Close",null)
@@ -4460,7 +4477,7 @@ class MainActivity: Activity() {
             allChannels()
             return
         }
-        reset("My Home TV  •  HOME")
+        reset("MyView  •  HOME")
         homeScreenVisible=true
 
         // A fixed navigation rail stays visible while the cinematic home rows scroll.
@@ -5798,7 +5815,8 @@ class MainActivity: Activity() {
         prefs.edit().putBoolean(viewerKey("favorites_surfing"),false).apply()
         reset("Channels (${visibleIndices().size})")
         root.addView(button("Refresh channel groups"){refresh({showChannels()},true)})
-        val groups=playlistIndicesIncludingLocked().map{channels[it].group}.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
+        val groups=(if(browsingAllPlaylists())visibleIndices() else playlistIndicesIncludingLocked())
+            .map{channels[it].group}.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
         // Virtualize groups too: do not create a Button for every playlist group.
         val list=styledMenuList().apply{
             dividerHeight=1
@@ -6898,11 +6916,15 @@ class MainActivity: Activity() {
         var pictureApplied=false
         fun preview(position:Int){
             if(position !in labels.indices)return
+            if(position==pending && previewPictureChannelKey==null && position==selected)return
+            if(position==pending && previewPictureChannelKey==channelKey(c) &&
+                previewPictureMode==modes.getOrNull(position))return
             pending=position
-            if(active!=activeIndex || position==modes.size)return
-        // Do not recreate an active
-            // Media3/LibVLC decoder merely because a remote focus moved.
-            val values=picturePresets[modes[position]] ?: return
+            if(active!=activeIndex ||
+                channels.getOrNull(activeIndex)?.let{channelKey(it)}!=channelKey(c))return
+            // Reuse the existing 650ms debounced preview and rollback helpers.
+            if(position==modes.size)clearPicturePreview(activeIndex,c)
+            else previewPictureChoice(activeIndex,c,modes[position])
         }
         val dialog=AlertDialog.Builder(this)
             .setTitle(c.name+" — Color Presets")
@@ -6931,9 +6953,7 @@ class MainActivity: Activity() {
             }
         }
         dialog.setOnDismissListener{
-            if(!pictureApplied && active==activeIndex){
-                val original=selectedPictureValues(c)
-            }
+            if(!pictureApplied)clearPicturePreview(activeIndex,c)
         }
         showSideDialog(dialog)
     }
@@ -8093,7 +8113,7 @@ class MainActivity: Activity() {
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
-            text="MYVIEW LIVE  •  "+(selectedPlaylistSource() ?: "ALL PLAYLISTS")+"  •  LEFT: Groups"
+            text="MYVIEW LIVE  •  "+(if(browsingAllPlaylists())"ALL PLAYLISTS" else selectedPlaylistSource().orEmpty())+"  •  LEFT: Groups"
             textSize=19f
             setTextColor(android.graphics.Color.WHITE)
             setPadding(16,16,8,12)
@@ -8126,7 +8146,9 @@ class MainActivity: Activity() {
             selector=highlight
             isDrawSelectorOnTop=false
         }
-        val available=applySavedChannelOrder(playlistIndices()).filter{
+        val browserIndices=PlaylistBrowsePolicy.displayedIndices(
+            browsingAllPlaylists(),visibleIndices(),playlistIndices())
+        val available=applySavedChannelOrder(browserIndices).filter{
             !isGroupHidden(channels[it].group) &&
                 (searchQuery==null || channels[it].name.contains(searchQuery,true) ||
                     channels[it].group.contains(searchQuery,true))
@@ -8208,7 +8230,8 @@ class MainActivity: Activity() {
         val screen=videoScreen ?:return
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
         screen.findViewWithTag<View>("left_navigation")?.let{screen.removeView(it)}
-        val groups=playlistIndicesIncludingLocked().map{channels[it].group}.distinct()
+        val groups=(if(browsingAllPlaylists())visibleIndices() else playlistIndicesIncludingLocked())
+            .map{channels[it].group}.distinct()
         val drawer=LinearLayout(this).apply{
             tag="left_navigation"
             orientation=LinearLayout.VERTICAL
@@ -8327,9 +8350,11 @@ class MainActivity: Activity() {
             close()
             val open={
                 prefs.edit().apply{
+                    putBoolean("myview_browse_all_playlists",selected==null)
                     if(selected==null)remove("selected_playlist_source")
                     else putString("selected_playlist_source",selected)
                 }.apply()
+                invalidateSurfingCache()
                 showOverlayList()
             }
             if(selected!=null)openLockedPlaylist(selected,open) else open()
@@ -8356,10 +8381,12 @@ class MainActivity: Activity() {
             }else false
         }
         val selected=selectedPlaylistSource()
-        list.setSelection(if(selected==null)2 else (sources.indexOf(selected)+3).coerceAtLeast(2))
-        focusRemoteList(list,if(selected==null)2 else (sources.indexOf(selected)+3).coerceAtLeast(2))
+        val initial=if(browsingAllPlaylists())2 else (sources.indexOf(selected)+3).coerceAtLeast(2)
+        list.setSelection(initial)
+        focusRemoteList(list,initial)
     }
     private fun showGroupDrawer(group:String){
+        if(browsingAllPlaylists()){showGroupDrawerContents(group);return}
         val source=selectedPlaylistSource() ?: channels.firstOrNull{it.group==group}?.source
         val open={openLockedGroup(group){showGroupDrawerContents(group)}}
         if(source!=null)openLockedPlaylist(source,open) else open()
@@ -8369,7 +8396,8 @@ class MainActivity: Activity() {
         prefs.edit().putBoolean(viewerKey("favorites_surfing"),false).apply()
         val screen=videoScreen ?:return
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
-        val indices=playlistIndices().filter{channels[it].group==group}
+        val indices=(if(browsingAllPlaylists())visibleIndices() else playlistIndices())
+            .filter{channels[it].group==group && !isGroupHidden(channels[it].group)}
         val drawer=LinearLayout(this).apply{
             tag="channel_drawer"
             orientation=LinearLayout.VERTICAL
@@ -9358,6 +9386,11 @@ class MainActivity: Activity() {
         if(unlockedChannel!=id(c) && isLocked(c)){
             requirePin {unlockedChannel=id(c);playIndex(index)}
             return
+        }
+        // Combined browser tunes a source explicitly; remote surfing stays scoped.
+        if(browsingAllPlaylists() && selectedPlaylistSource()!=c.source){
+            prefs.edit().putString("selected_playlist_source",c.source).apply()
+            invalidateSurfingCache()
         }
         // Explicit and known stream URLs bypass classification. Unknown HTTP
         // URLs get a short bounded content-type check before choosing WebView.

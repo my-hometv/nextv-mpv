@@ -33,10 +33,11 @@ class EpgSourceEditorPolicyTest {
         assertEquals(listOf(a,c),EpgSourceEditorPolicy.remove(listOf(a,b,c),1))
     }
 
-    @Test fun legacyStoredSourceCountIsBoundedWithoutChangingPriority(){
+    @Test fun legacyStoredSourcesRemainIntactUntilExplicitDeletion(){
         val urls=(0 until 20).map{"https://guide$it.example.org/epg.xml"}
-        assertEquals(urls.take(EpgSourceEditorPolicy.MAX_MANUAL_SOURCES),
-            EpgSourceEditorPolicy.read(urls.joinToString("\n")))
+        assertEquals(urls,EpgSourceEditorPolicy.read(urls.joinToString("\n")))
+        assertEquals(urls.size,EpgSourceEditorPolicy.edit(urls,0,"https://new.example.org/guide")?.size)
+        assertNull(EpgSourceEditorPolicy.add(urls,a))
     }
 
     @Test fun sourceCountIsBounded(){
