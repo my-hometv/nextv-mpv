@@ -6036,6 +6036,9 @@ class MainActivity: Activity() {
     }
     private fun switchAfterPlaylistRemoved(name:String,previous:List<Playlist>){
         val next=nextAvailablePlaylistChannel(name,previous)
+        // Stop the old decoder before tuning the replacement; otherwise
+        // playIndex() records the now-disabled stream as "Last Channel".
+        stopPlayback()
         previousChannelUrl?.let{url->
             if(channels.none{it.url==url && (it.source.isBlank() ||
                     playlists().any{p->p.enabled && p.name==it.source})}){
