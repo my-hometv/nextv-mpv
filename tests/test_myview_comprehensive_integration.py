@@ -45,6 +45,14 @@ class CrossFeatureSearchIntegrationTest(unittest.TestCase):
         self.assertIn("if(search)searchResultBack=onBack",rows)
         collection=section("private fun channelCollection(","private val bufferProfiles")
         self.assertIn("if(search)searchResultBack=onBack",collection)
+    def test_epg_schedules_do_not_fall_back_across_playlist_by_url(self):
+        schedule=section("private fun checkEpgTune(){","private fun showEpgSchedules(){")
+        self.assertIn('entry.optString("channel_identity")',schedule)
+        self.assertIn('identity.isNotBlank()',schedule)
+        self.assertIn('key.isNotBlank()',schedule)
+        self.assertNotIn('channels.indexOfFirst{it.url==url}',schedule)
+        self.assertIn("canAutoRestoreChannel(selected)",schedule)
+        self.assertIn("resolveListedChannel(targetIdentity,true,index)",schedule)
     def test_search_categories_do_not_bypass_enabled_and_lock_gates(self):
         body=section("private fun searchEligible(","private fun mediaMatches(")
         self.assertIn("source in access.enabled",body)

@@ -20,6 +20,7 @@ There is no physical-TV or Android Activity instrumentation verdict here.
 | MV-INT-05 | P2 | Search result Back button lost originating category | MainActivity.mediaRows/channelCollection | Corrected; CI pending |
 | MV-INT-06 | P2 | Media-details favorite/progress actions could outlive deleted source | MainActivity.mediaDetails | Corrected; CI pending |
 | MV-INT-07 | P2 | Hardware BACK ignored the search/category return destination | MainActivity.onBackPressed | Corrected; CI pending |
+| MV-INT-08 | P1 | Scheduled EPG auto-tune could fall back to an unrelated channel sharing a URL; reminder retained an old index | MainActivity.checkEpgTune | Corrected; CI pending |
 
 ## Cross-feature review matrix
 - **Playlist, channel history, hidden/lock, source deletion:** reviewed

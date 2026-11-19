@@ -2385,7 +2385,8 @@ class MainActivity: Activity() {
         }
         saved.put(JSONObject().put("key",key).put("url",channel.url)
             .put("start",programme.start).put("title",programme.title)
-            .put("mode",mode).put("channel_key",channelKey(channel)))
+            .put("mode",mode).put("channel_key",channelKey(channel))
+            .put("channel_identity",id(channel)))
         prefs.edit().putString("epg_tune_schedules",saved.toString()).apply()
         armEpgTune()
         Toast.makeText(this,(if(mode=="auto")"Auto-switch" else "Reminder")+
@@ -2431,22 +2432,34 @@ class MainActivity: Activity() {
         val entry=due.lastOrNull()
         if(entry!=null){
             val key=entry.optString("channel_key")
+            val identity=entry.optString("channel_identity")
             val url=entry.optString("url")
-            val index=channels.indexOfFirst{channelKey(it)==key}.takeIf{it>=0}
-                ?:channels.indexOfFirst{it.url==url}
-            if(index>=0 && licenseReady && appInForeground && !isFinishing && !isDestroyed){
-                val channelName=channels[index].name
-                val target=preferredChannel(index)
+            // Never allow stale scheduled history to jump to an unrelated
+            // playlist merely because it reused the same stream URL.
+            val index=when{
+                identity.isNotBlank()->channels.indexOfFirst{id(it)==identity}
+                key.isNotBlank()->channels.indexOfFirst{
+                    channelKey(it)==key && (url.isBlank() || it.url==url)
+                }.takeIf{it>=0} ?:channels.indexOfFirst{channelKey(it)==key}
+                else->-1
+            }
+            val selected=channels.getOrNull(index)
+            if(selected!=null && canAutoRestoreChannel(selected) &&
+                licenseReady && appInForeground && !isFinishing && !isDestroyed){
+                val channelName=selected.name
+                val targetIdentity=id(selected)
                 if(entry.optString("mode","reminder")=="auto"){
-                    // Auto-switch only when HomeTV is active; do not start
-                    // playback in the background or bypass channel locks.
-                    playIndex(target)
+                    // Scheduled tuning has no user interaction for PIN prompts.
+                    val live=resolveListedChannel(targetIdentity,true,index)
+                    if(live>=0)playIndex(live)
                 }else{
                     showSideDialog(AlertDialog.Builder(this)
                         .setTitle("Programme reminder")
                         .setMessage("The scheduled programme on "+channelName+" is starting. Switch to this channel?")
                         .setPositiveButton("Watch"){_,_->
-                            playIndex(target)
+                            val current=resolveListedChannel(targetIdentity,true,index)
+                            if(current>=0)playIndex(current)
+                            else showBanner("Scheduled channel is no longer available",true)
                         }
                         .setNegativeButton("Stay here",null).create())
                 }
