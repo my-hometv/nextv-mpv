@@ -2167,6 +2167,42 @@ class MainActivity: Activity() {
         return candidates.filter{it.startsWith("https://",true) || it.startsWith("http://",true)}
             .distinct().take(16)
     }
+    private fun showEpgSourceDiagnostics(){
+        if(!prefs.getBoolean("nextv_epg_enabled",true)){
+            Toast.makeText(this,"Enable the EPG feature first",Toast.LENGTH_LONG).show()
+            return
+        }
+        val configured=epgUrls()
+        if(configured.isEmpty()){
+            showSideDialog(AlertDialog.Builder(this)
+                .setTitle("EPG diagnostics")
+                .setMessage("No XMLTV source URLs are configured.")
+                .setPositiveButton("Configure sources"){_,_->configureEpg()}
+                .setNegativeButton("Close",null).create())
+            return
+        }
+        // Explicit diagnostics request checks feeds afresh without disrupting
+        // playback or launching a separate parser on the UI thread.
+        epgLoadedAt=0L
+        loadEpg{
+            val now=System.currentTimeMillis()
+            val live=channelNumbers().filter{channels[it].mediaType=="live"}
+            val matched=live.count{index->programmeList(channels[index]).any{it.end>now}}
+            val lines=epgSourceStatuses.ifEmpty{listOf("No completed EPG download yet")}
+            val message=buildString{
+                append("Sources configured: ").append(configured.size)
+                append("\nProgramme IDs / alias entries: ").append(epgGuide.size)
+                append("\nLive channels with current or upcoming programme: ")
+                    .append(matched).append(" / ").append(live.size)
+                append("\n\n").append(lines.joinToString("\n"))
+                if(matched==0)append("\n\nNo programme matched. Check your channel tvg-id values and the XMLTV channel IDs, or source download errors above.")
+            }
+            showSideDialog(AlertDialog.Builder(this).setTitle("EPG source diagnostics")
+                .setMessage(message)
+                .setPositiveButton("EPG URLs"){_,_->configureEpg()}
+                .setNegativeButton("Close",null).create())
+        }
+    }
     private fun configureEpg(){
         val input=EditText(this).apply{
             hint="One XMLTV URL per line"
@@ -2309,6 +2345,9 @@ class MainActivity: Activity() {
     private data class EpgProgramme(val start:Long,val end:Long,val title:String,val description:String)
     @Volatile private var epgGuide:Map<String,List<EpgProgramme>> = emptyMap()
     @Volatile private var epgLoadedAt=0L
+    // Sanitized per-source results for identifying download vs matching issues.
+    // Never display complete playlist or XMLTV URLs with access tokens.
+    private var epgSourceStatuses:List<String> = emptyList()
     // Reject stale parsing results and callbacks after EPG is disabled.
     @Volatile private var epgLoadGeneration=0
     // XMLTV can take seconds to fetch. Coalesce simultaneous channel-info
@@ -2331,7 +2370,11 @@ class MainActivity: Activity() {
     private fun programmeList(c:Channel):List<EpgProgramme> {
         val id=c.epgId.trim().lowercase(java.util.Locale.ROOT)
         val name=EpgGuidePolicy.normalizeDisplayName(c.name)
-        val raw=HomeTvPolicies.matchEpg(epgGuide,id,name)
+        val exact=HomeTvPolicies.matchEpg(epgGuide,id,name)
+        val raw=if(exact.isNotEmpty())exact else
+            EpgGuidePolicy.matchNames(c.name).asSequence()
+                .mapNotNull{epgGuide[it]?.takeIf{rows->rows.isNotEmpty()}}
+                .firstOrNull() ?:emptyList()
         val global=prefs.getInt("epg_offset_minutes",0)
         val source=prefs.getInt("epg_offset_source_"+c.source.hashCode(),0)
         val shift=(global+source).coerceIn(-1440,1440)*60000L
@@ -2434,6 +2477,7 @@ class MainActivity: Activity() {
             val combined=mutableMapOf<String,List<EpgProgramme>>()
             val namedSchedules=mutableMapOf<String,List<EpgProgramme>>()
             var loaded=0
+            val sourceStatuses=mutableListOf<String>()
             for(url in urls){
                 if(generation!=epgLoadGeneration || cancellation.isCancelled())break
                 try{
@@ -2515,6 +2559,10 @@ class MainActivity: Activity() {
                                 namedSchedules[name].orEmpty(),entries,{it.start},{it.end})
                         }
                     }
+                    val programmeCount=sourceProgrammes.values.sumOf{it.size}
+                    val host=try{java.net.URI(url).host ?: "Unknown host"}catch(_:Exception){"Unknown host"}
+                    sourceStatuses.add(host+": "+sourceProgrammes.size+" channel IDs, "+
+                        programmeCount+" programmes")
                     loaded++
                     } finally {
                         cancellation.releaseConnection(connection)
@@ -2522,7 +2570,9 @@ class MainActivity: Activity() {
                     }
                 }catch(e:Exception){
                     if(!cancellation.isCancelled() && generation==epgLoadGeneration)
-                        HomeTvDiagnostics.w("HomeTV","EPG source failed: "+url,e)
+                        HomeTvDiagnostics.w("HomeTV","EPG source failed",e)
+                    val host=try{java.net.URI(url).host ?: "Unknown host"}catch(_:Exception){"Unknown host"}
+                    sourceStatuses.add(host+": failed ("+e.javaClass.simpleName+")")
                 }
             }
             if(generation!=epgLoadGeneration || cancellation.isCancelled())return@thread
@@ -2532,7 +2582,12 @@ class MainActivity: Activity() {
                 // ID matching wins; display-name aliases cover different XMLTV IDs.
                 val withNames=combined.toMutableMap()
                 namedSchedules.forEach{(name,entries)->
-                    if(entries.isNotEmpty())withNames.putIfAbsent(name,entries)
+                    if(entries.isNotEmpty()){
+                        withNames.putIfAbsent(name,entries)
+                        EpgGuidePolicy.matchNames(name).forEach{alias->
+                            withNames.putIfAbsent(alias,entries)
+                        }
+                    }
                 }
                 withNames.toMap()
             }else null
@@ -2545,6 +2600,7 @@ class MainActivity: Activity() {
                     if(generation==epgLoadGeneration && !cancellation.isCancelled() &&
                         prefs.getBoolean("nextv_epg_enabled",true) &&
                         !isFinishing && !isDestroyed){
+                        epgSourceStatuses=sourceStatuses.toList()
                         if(replacement!=null){
                             epgGuide=replacement
                             epgLoadedAt=System.currentTimeMillis()
@@ -10844,7 +10900,10 @@ class MainActivity: Activity() {
         root.addView(label("When you leave MyView after playback, a low-priority check continues while the app process remains alive. Results are saved and shown when you return. Android may stop background work if it kills the app."))
         root.addView(settingsToggle("Automatically restore working channels","auto_unhide_working_channels",false))
         root.addView(label("OFF by default. When ON, a channel is restored only after actual playback succeeds. URL checks alone never unhide channels."))
-        if(prefs.getBoolean("nextv_epg_enabled",true))root.addView(button("TV guide (EPG)"){configureEpg()})
+        if(prefs.getBoolean("nextv_epg_enabled",true)){
+            root.addView(button("TV guide (EPG)"){configureEpg()})
+            root.addView(button("Check EPG source and channel matching"){showEpgSourceDiagnostics()})
+        }
         if(prefs.getBoolean("nextv_epg_enabled",true))root.addView(button("TV guide time adjustment"){configureEpgOffset()})
         if(prefs.getBoolean("nextv_profiles_enabled",true))root.addView(button("User profile: "+profileLabel()){manageViewerProfiles()})
         root.addView(tvSection("MYVIEW FEATURE CONTROLS"))
