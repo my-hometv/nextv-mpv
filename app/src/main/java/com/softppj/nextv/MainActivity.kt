@@ -2781,15 +2781,16 @@ class MainActivity: Activity() {
         val dialog=AlertDialog.Builder(this).create()
         val layout=LinearLayout(this).apply{
             orientation=LinearLayout.VERTICAL
-            setPadding(12,12,12,12)
-            setBackgroundColor(0xFF101E31.toInt())
+            setPadding(tvDp(14),tvDp(14),tvDp(14),tvDp(14))
+            background=infoPanelBackground()
         }
         val header=TextView(this).apply{
             text="TV GUIDE  •  "+java.text.SimpleDateFormat("EEE dd MMM, HH:mm",java.util.Locale.getDefault())
                 .format(java.util.Date(selectedTime))
             textSize=20f
-            setTextColor(android.graphics.Color.WHITE)
-            setPadding(10,8,10,12)
+            setTypeface(null,android.graphics.Typeface.BOLD)
+            setTextColor(0xFFB8F5F0.toInt())
+            setPadding(tvDp(12),tvDp(8),tvDp(12),tvDp(14))
         }
         layout.addView(header)
         val list=styledMenuList().apply{
@@ -2807,7 +2808,7 @@ class MainActivity: Activity() {
                 val row=(convertView as? TextView) ?:TextView(this@MainActivity).apply{
                     textSize=17f
                     setTextColor(android.graphics.Color.WHITE)
-                    setPadding(18,15,14,15)
+                    setPadding(tvDp(18),tvDp(13),tvDp(14),tvDp(13))
                     maxLines=3
                     ellipsize=android.text.TextUtils.TruncateAt.END
                 }
@@ -7756,7 +7757,7 @@ class MainActivity: Activity() {
         val isPreview=previewIndex==index && index!=active
         panel.addView(TextView(this).apply{
             text=if(isPreview)"OK  Select channel    •    BACK  Close preview"
-                else "OK  Channel actions    •    EPG  Programme guide"
+                else "OK  Channel actions    •    BACK  Close info"
             textSize=12f
             maxLines=1
             ellipsize=android.text.TextUtils.TruncateAt.END
