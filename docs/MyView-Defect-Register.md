@@ -59,8 +59,8 @@ The additional PIN, media-category and per-item VOD resume-history corrections p
 ## Final integration follow-up — 2026-11-19
 | ID | Priority | Confirmed defect or risk | Correction | Status |
 |---|---|---|---|---|
-| MV-INT-12 | P1 | Simultaneous due EPG reminders were removed but only the last was presented | EpgDuePolicy and checkEpgTune grouped reminder chooser; latest automatic tune wins | Corrected; CI pending |
-| MV-INT-13 | P2 | Seek/Pause dialogs held stale player references after channel switch | Playback generation and player-ownership guard | Corrected; CI pending |
-| MV-INT-14 | P2 | Clearing one shared-URL media progress entry removed another entry's ambiguous legacy history | Preserve ambiguous legacy record with a migration-block marker | Corrected; CI pending |
+| MV-INT-12 | P1 | Simultaneous due EPG reminders were removed but only the last was presented | EpgDuePolicy and checkEpgTune grouped reminder chooser; latest automatic tune wins | Source-verified — run 44503475312 |
+| MV-INT-13 | P2 | Seek/Pause dialogs held stale player references after channel switch | Playback generation and player-ownership guard | Source-verified — run 44503475312 |
+| MV-INT-14 | P2 | Clearing one shared-URL media progress entry removed another entry's ambiguous legacy history | Preserve ambiguous legacy record with a migration-block marker | Source-verified — run 44503475312 |
 
-This follow-up retains the original engine and licensing design, does not build an APK, and needs latest-commit CI verification before any source-only sign-off.
+This follow-up retains the original engine and licensing design. Source-only CI passed on code commit `7a5ac3a31b9e6e2f1e2c386d33c497d89002c089`: https://github.com/my-hometv/nextv-mpv/actions/runs/44503475312. No APK was generated. Physical-TV playback remains unverified.
