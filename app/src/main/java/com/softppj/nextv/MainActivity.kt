@@ -11235,37 +11235,48 @@ class MainActivity: Activity() {
         val current=audio.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
         volumeOverlayTask?.let{handler.removeCallbacks(it)}
         volumeOverlay?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
-        val density=resources.displayMetrics.density
-        val height=(220*density).toInt()
-        val width=(12*density).toInt()
-        val filled=(height*current/max).coerceIn(0,height)
+        // Compact horizontal volume capsule. No remote-focus or audio behavior
+        // changes; keep the previous 2.5-second dismissal.
         val panel=LinearLayout(this).apply{
-            orientation=LinearLayout.VERTICAL
-            gravity=Gravity.CENTER
-            setPadding((15*density).toInt(),(16*density).toInt(),(15*density).toInt(),(16*density).toInt())
+            orientation=LinearLayout.HORIZONTAL
+            gravity=Gravity.CENTER_VERTICAL
+            setPadding(tvDp(17),tvDp(13),tvDp(17),tvDp(13))
             background=infoPanelBackground()
             elevation=tvDp(7).toFloat()
             isClickable=false
         }
         panel.addView(TextView(this).apply{
-            text="VOL"
-            textSize=12f
-            gravity=Gravity.CENTER
-            setTextColor(0xFFFFB900.toInt())
+            text="◖))"
+            textSize=20f
+            setTextColor(0xFF5FE6CC.toInt())
+        },LinearLayout.LayoutParams(-2,-2).apply{marginEnd=tvDp(12)})
+        val track=android.widget.ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply{
+            max=1000
+            progress=(1000L*current/max).toInt()
+            isIndeterminate=false
+            progressTintList=android.content.res.ColorStateList.valueOf(0xFF5FE6CC.toInt())
+            progressBackgroundTintList=android.content.res.ColorStateList.valueOf(0xFF344B63.toInt())
+        }
+        panel.addView(track,LinearLayout.LayoutParams(0,tvDp(12),1f).apply{
+            marginEnd=tvDp(12)
         })
-        val track=FrameLayout(this).apply{setBackgroundColor(0xFF344B63.toInt())}
-        val fill=View(this).apply{setBackgroundColor(0xFFFFB900.toInt())}
-        track.addView(fill,FrameLayout.LayoutParams(width,filled,Gravity.BOTTOM))
-        panel.addView(track,LinearLayout.LayoutParams(width,height).apply{topMargin=(10*density).toInt();bottomMargin=(10*density).toInt()})
         panel.addView(TextView(this).apply{
             text="${current*100/max}%"
-            textSize=14f
-            gravity=Gravity.CENTER
+            textSize=17f
+            setTypeface(null,android.graphics.Typeface.BOLD)
             setTextColor(android.graphics.Color.WHITE)
         })
-        screen.addView(panel,FrameLayout.LayoutParams(-2,-2,Gravity.RIGHT or Gravity.CENTER_VERTICAL).apply{rightMargin=(20*density).toInt()})
+        screen.addView(panel,FrameLayout.LayoutParams(
+            (resources.displayMetrics.widthPixels*0.29f).toInt().coerceAtLeast(tvDp(230)),
+            -2,Gravity.RIGHT or Gravity.CENTER_VERTICAL
+        ).apply{rightMargin=tvDp(22)})
         volumeOverlay=panel
-        val task=Runnable{if(volumeOverlay===panel){(panel.parent as? android.view.ViewGroup)?.removeView(panel);volumeOverlay=null}}
+        val task=Runnable{
+            if(volumeOverlay===panel){
+                (panel.parent as? android.view.ViewGroup)?.removeView(panel)
+                volumeOverlay=null
+            }
+        }
         volumeOverlayTask=task
         handler.postDelayed(task,2500L)
     }
