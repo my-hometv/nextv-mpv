@@ -91,7 +91,8 @@ class CrossFeatureSearchIntegrationTest(unittest.TestCase):
         self.assertIn('key.isNotBlank()',schedule)
         self.assertNotIn('channels.indexOfFirst{it.url==url}',schedule)
         self.assertIn("canAutoRestoreChannel(channel)",schedule)
-        self.assertIn("resolveListedChannel(targetIdentity,true,index)",schedule)
+        self.assertIn("resolveListedChannel(identity,true,index)",schedule)
+        self.assertIn("resolveListedChannel(identity,true)",schedule)
     def test_search_categories_do_not_bypass_enabled_and_lock_gates(self):
         body=section("private fun searchEligible(","private fun mediaMatches(")
         self.assertIn("source in access.enabled",body)
