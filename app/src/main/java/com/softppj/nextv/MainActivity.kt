@@ -3926,9 +3926,11 @@ class MainActivity: Activity() {
                             // playback session must invalidate this delayed
                             // engine-switch restart.
                             if(!isFinishing && !isDestroyed && licenseReady &&
-                                playbackGeneration==switchGeneration &&
-                                active==channel && channels === playlistSnapshot &&
-                                channels.getOrNull(channel) === selectedChannel)
+                                PlaybackEnginePolicy.mayRetuneAfterEngineShutdown(
+                                    switchGeneration,playbackGeneration,active,
+                                    channels === playlistSnapshot &&
+                                        channels.getOrNull(channel) === selectedChannel
+                                ))
                                 playIndex(channel)
                         }
                     }

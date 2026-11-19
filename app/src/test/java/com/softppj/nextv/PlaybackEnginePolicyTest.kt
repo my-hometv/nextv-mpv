@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackEnginePolicyTest {
+    @Test fun disabledActiveEngineRetunesAfterTeardownResetsActiveIndex() {
+        assertTrue(PlaybackEnginePolicy.mayRetuneAfterEngineShutdown(10,10,-1,true))
+        assertFalse(PlaybackEnginePolicy.mayRetuneAfterEngineShutdown(10,10,3,true))
+        assertFalse(PlaybackEnginePolicy.mayRetuneAfterEngineShutdown(10,11,-1,true))
+        assertFalse(PlaybackEnginePolicy.mayRetuneAfterEngineShutdown(10,10,-1,false))
+    }
+
     @Test fun versionedEnginesRequireBothPackagingAndRuntimeVerification() {
         val all=setOf("LibVLC-3.5.1","LibVLC-3.7.7","LibVLC-4.0.0-eap29")
         assertEquals(emptyList<String>(),

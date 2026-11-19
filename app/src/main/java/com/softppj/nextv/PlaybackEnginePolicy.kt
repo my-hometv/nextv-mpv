@@ -62,6 +62,16 @@ internal object PlaybackEnginePolicy {
 
     fun isEnabled(name: String, enabled: List<String>): Boolean =
         name.trim() in normalized(enabled)
+    /** stopPlayback() resets active to -1. A delayed handoff must check the
+     * stopped state, not the old channel index, to avoid leaving a black screen.
+     */
+    fun mayRetuneAfterEngineShutdown(
+        expectedGeneration:Int,currentGeneration:Int,currentActiveIndex:Int,
+        sameChannelCollection:Boolean
+    ):Boolean =
+        expectedGeneration==currentGeneration &&
+            currentActiveIndex == -1 && sameChannelCollection
+
     fun firstEnabled(preferred: List<String>): String =
         preferred.map { it.trim() }.firstOrNull { it in supported || it in versionIds.values } ?: "Media3"
 }

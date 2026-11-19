@@ -182,4 +182,11 @@ class HumanJourneyTest(unittest.TestCase):
                         loader.index("sourceProgrammes.forEach{(id,entries)->"))
         self.assertIn('status.contains("empty feed")',loader)
 
+    def test_disabling_active_engine_restarts_after_stop_resets_index(self):
+        engine=between("private fun configureEnabledEngines(", "private fun initialEngines(")
+        self.assertIn("stopPlayback()",engine)
+        self.assertIn("PlaybackEnginePolicy.mayRetuneAfterEngineShutdown(",engine)
+        self.assertNotIn("active==channel && channels === playlistSnapshot",engine)
+        self.assertIn("channels.getOrNull(channel) === selectedChannel",engine)
+
 if __name__=="__main__":unittest.main()
