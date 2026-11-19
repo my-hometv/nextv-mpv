@@ -4516,16 +4516,18 @@ class MainActivity: Activity() {
         root.addView(button("←  Home"){showHome()})
     }
     private fun mediaRows(title:String,indices:List<Int>){
+        val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
+        val search=title.startsWith("Search:")
         reset("MyView  •  "+title)
-        root.addView(label(indices.size.toString()+" items"))
+        root.addView(label(identities.size.toString()+" items"))
         val list=styledMenuList().apply{
             dividerHeight=2
             isFocusable=true
             setBackgroundColor(0xFF101E31.toInt())
         }
         list.adapter=object:android.widget.BaseAdapter(){
-            override fun getCount()=indices.size
-            override fun getItem(position:Int):Any=channels[indices[position]]
+            override fun getCount()=identities.size
+            override fun getItem(position:Int):Any=identities[position]
             override fun getItemId(position:Int)=position.toLong()
             override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View{
                 val row=(convertView as? LinearLayout)?:LinearLayout(this@MainActivity).apply{
@@ -4541,7 +4543,13 @@ class MainActivity: Activity() {
                         setPadding(20,12,8,12)
                     },LinearLayout.LayoutParams(0,-2,1f))
                 }
-                val c=channels[indices[position]]
+                val index=resolveListedChannel(identities[position],search)
+                val c=channels.getOrNull(index)
+                if(c==null){
+                    (row.getChildAt(1) as TextView).text="Unavailable — playlist changed"
+                    (row.getChildAt(0) as android.widget.ImageView).setImageDrawable(null)
+                    return row
+                }
                 val progress=mediaResumeSeconds(c)
                 (row.getChildAt(1) as TextView).text=c.name+
                     (if(c.artist.isNotBlank())"\n"+c.artist else "")+
@@ -4552,7 +4560,11 @@ class MainActivity: Activity() {
                 return row
             }
         }
-        list.setOnItemClickListener{_,_,position,_->mediaDetails(indices[position])}
+        list.setOnItemClickListener{_,_,position,_->
+            val index=resolveListedChannel(identities[position],search)
+            if(index>=0)mediaDetails(index)
+            else Toast.makeText(this,"Item unavailable — refresh search",Toast.LENGTH_SHORT).show()
+        }
         root.addView(list,LinearLayout.LayoutParams(-1,(resources.displayMetrics.heightPixels*0.70).toInt()))
         root.addView(button("←  Home"){showHome()})
     }
