@@ -117,4 +117,38 @@ class MyViewActionScenarioTest {
         assertNull(FrameRateMatchPolicy.select(false,true,24f,current,modes))
         assertNull(FrameRateMatchPolicy.select(true,false,24f,current,modes))
     }
+
+    @Test fun hiddenPreviousChannelCannotReturnViaRemoteLastKey(){
+        val saved=listOf(
+            com.softppj.nextv.Channel("Old","https://example.org/shared","News",source="One"),
+            com.softppj.nextv.Channel("Current","https://example.org/now","News",source="One"))
+        val identity={c:com.softppj.nextv.Channel->c.source+"|"+c.name+"|"+c.url}
+        val target=LastChannelPolicy.findEligibleSavedChannel(
+            saved,identity(saved[0]),saved[0].url,identity){it.name!="Old"}
+        assertEquals(-1,target)
+    }
+
+    @Test fun backgroundResumeAfterPlaylistDeleteNeverJumpsAcrossSharedUrl(){
+        val channels=listOf(
+            com.softppj.nextv.Channel("Shared","https://example.org/live","News",source="Replacement"),
+            com.softppj.nextv.Channel("Safe","https://example.org/safe","News",source="Replacement"))
+        val identity={c:com.softppj.nextv.Channel->c.source+"|"+c.name+"|"+c.url}
+        val removedIdentity="Deleted|Shared|https://example.org/live"
+        val resumed=LastChannelPolicy.findEligibleSavedChannel(
+            channels,removedIdentity,"https://example.org/live",identity){true}
+        assertEquals(-1,resumed)
+        val safe=LastChannelPolicy.findEligibleSavedChannel(
+            channels,identity(channels[1]),channels[1].url,identity){true}
+        assertEquals(1,safe)
+    }
+
+    @Test fun playlistHandoffWithDuplicateUrlsRestoresExactWorkingChannel(){
+        val channels=listOf(
+            com.softppj.nextv.Channel("News A","https://example.org/shared","News",source="Backup"),
+            com.softppj.nextv.Channel("News B","https://example.org/shared","News",source="Backup"))
+        val identity={c:com.softppj.nextv.Channel->c.source+"|"+c.name+"|"+c.url}
+        val chosen=LastChannelPolicy.findEligibleSavedChannel(
+            channels,identity(channels[1]),channels[1].url,identity){it.source=="Backup"}
+        assertEquals(1,chosen)
+    }
 }
