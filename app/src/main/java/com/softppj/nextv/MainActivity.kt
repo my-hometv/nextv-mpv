@@ -4258,7 +4258,16 @@ class MainActivity: Activity() {
     }
 
     // My Home TV media library. Unmarked EXTINF entries are always Live TV.
-    private fun mediaItems(type:String)=visibleIndices().filter{channels[it].mediaType==type}
+    private fun visibleMediaIndices():List<Int>{
+        ensureChannelIndex()
+        return MediaLibraryPolicy.allowedRepresentatives(
+            channels,channelRepresentatives,
+            playlists().filter{it.enabled}.map{it.name}.toSet(),
+            lockedPlaylistNames(),unlockedPlaylistsThisSession,
+            lockedGroupNames(),unlockedGroupsThisSession)
+    }
+    private fun mediaItems(type:String)=
+        visibleMediaIndices().filter{channels[it].mediaType==type}
     // Resource-limited TVs cannot safely cache 48 unscaled full-HD posters.
     // Byte accounting bounds pixel memory independently of image count.
     private val posterCache=object:android.util.LruCache<String,android.graphics.Bitmap>(12*1024*1024){
@@ -4381,7 +4390,10 @@ class MainActivity: Activity() {
         if(seconds>0L)prefs.edit().putLong(mediaKey(c),seconds).apply()
     }
     private fun continueMedia(){
-        val indices=visibleIndices().filter{channels[it].mediaType in setOf("movie","series") && mediaResumeSeconds(channels[it])>0}
+        val indices=visibleMediaIndices().filter{
+            channels[it].mediaType in setOf("movie","series") &&
+                mediaResumeSeconds(channels[it])>0
+        }
         mediaRows("Continue Watching",indices)
     }
     private fun mediaLibrary(type:String){
@@ -9506,7 +9518,7 @@ class MainActivity: Activity() {
         array.put(obj)
         prefs.edit().putString("myhometv_saved_web",array.toString()).apply()
         if(channels.none{it.url==url}){
-            channels.add(Channel(name,url,"Web TV",webChannel="auto"))
+            channels.add(Channel(name,url,"Web TV",webChannel="auto",mediaType="web"))
         }
         showBanner("Saved web channel: "+name)
     }
@@ -9516,7 +9528,7 @@ class MainActivity: Activity() {
             val obj=array.optJSONObject(i)?:continue
             val url=obj.optString("url")
             if((url.startsWith("https://")||url.startsWith("http://")) && out.none{it.url==url})
-                out.add(Channel(obj.optString("name","Web TV"),url,"Web TV",webChannel="auto"))
+                out.add(Channel(obj.optString("name","Web TV"),url,"Web TV",webChannel="auto",mediaType="web"))
         }
     }
 

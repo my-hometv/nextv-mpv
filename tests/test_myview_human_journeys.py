@@ -189,4 +189,16 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertNotIn("active==channel && channels === playlistSnapshot",engine)
         self.assertIn("channels.getOrNull(channel) === selectedChannel",engine)
 
+    def test_movies_series_music_and_web_do_not_use_live_only_indices(self):
+        media=between("private fun visibleMediaIndices(", "private val posterCache")
+        self.assertIn("channelRepresentatives",media)
+        self.assertIn("MediaLibraryPolicy.allowedRepresentatives(",media)
+        self.assertIn("visibleMediaIndices().filter{channels[it].mediaType==type}",media)
+        continuing=between("private fun continueMedia(", "private fun mediaLibrary(")
+        self.assertIn("visibleMediaIndices()",continuing)
+    def test_saved_web_tv_is_not_incorrectly_tagged_live(self):
+        saved=between("private fun saveWebTvChannel(", "private fun playIndex(")
+        self.assertIn('webChannel="auto",mediaType="web"',saved)
+        self.assertNotIn('Channel(name,url,"Web TV",webChannel="auto")',saved)
+
 if __name__=="__main__":unittest.main()
