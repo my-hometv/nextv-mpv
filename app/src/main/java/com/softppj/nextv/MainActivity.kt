@@ -2427,15 +2427,12 @@ class MainActivity: Activity() {
             }else if(start>now)keep.put(entry)
         }
         prefs.edit().putString("epg_tune_schedules",keep.toString()).apply()
-        // If several programmes begin together, use the most recently added
-        // one. Resolve by logical channel identity first, then original URL.
-        val entry=due.lastOrNull()
-        if(entry!=null){
+        // All due reminders must remain visible. For simultaneous automatic
+        // tunes, only the most recently scheduled event can own the decoder.
+        fun scheduledIndex(entry:JSONObject):Int{
             val key=entry.optString("channel_key")
             val identity=entry.optString("channel_identity")
             val url=entry.optString("url")
-            // Never allow stale scheduled history to jump to an unrelated
-            // playlist merely because it reused the same stream URL.
             val index=when{
                 identity.isNotBlank()->channels.indexOfFirst{id(it)==identity}
                 key.isNotBlank()->channels.indexOfFirst{
@@ -2443,26 +2440,43 @@ class MainActivity: Activity() {
                 }.takeIf{it>=0} ?:channels.indexOfFirst{channelKey(it)==key}
                 else->-1
             }
-            val selected=channels.getOrNull(index)
-            if(selected!=null && canAutoRestoreChannel(selected) &&
-                licenseReady && appInForeground && !isFinishing && !isDestroyed){
-                val channelName=selected.name
-                val targetIdentity=id(selected)
-                if(entry.optString("mode","reminder")=="auto"){
-                    // Scheduled tuning has no user interaction for PIN prompts.
-                    val live=resolveListedChannel(targetIdentity,true,index)
-                    if(live>=0)playIndex(live)
-                }else{
-                    showSideDialog(AlertDialog.Builder(this)
-                        .setTitle("Programme reminder")
-                        .setMessage("The scheduled programme on "+channelName+" is starting. Switch to this channel?")
-                        .setPositiveButton("Watch"){_,_->
-                            val current=resolveListedChannel(targetIdentity,true,index)
-                            if(current>=0)playIndex(current)
-                            else showBanner("Scheduled channel is no longer available",true)
-                        }
-                        .setNegativeButton("Stay here",null).create())
+            val channel=channels.getOrNull(index) ?:return -1
+            return index.takeIf{canAutoRestoreChannel(channel)} ?: -1
+        }
+        if(canDeliver){
+            val auto=due.filter{it.optString("mode","reminder")=="auto"}
+            val chosen=EpgDuePolicy.lastAutomatic(auto){true}
+            if(chosen!=null){
+                val index=scheduledIndex(chosen)
+                if(index>=0){
+                    val identity=id(channels[index])
+                    val current=resolveListedChannel(identity,true,index)
+                    if(current>=0)playIndex(current)
                 }
+                if(auto.size>1)showBanner(
+                    auto.size.toString()+" automatic EPG events due; latest selection used")
+            }
+            val reminders=due.filter{it.optString("mode","reminder")!="auto"}
+                .mapNotNull{entry->
+                    val index=scheduledIndex(entry)
+                    channels.getOrNull(index)?.let{channel->
+                        Triple(id(channel),channel.name,entry.optString("title"))
+                    }
+                }
+            if(reminders.isNotEmpty()){
+                // One chooser preserves every due reminder, unlike displaying
+                // multiple side dialogs that replace one another.
+                showSideDialog(AlertDialog.Builder(this)
+                    .setTitle("Programme reminders ("+reminders.size+")")
+                    .setItems(reminders.map{(_,name,title)->
+                        name+"  •  "+title
+                    }.toTypedArray()){_,position->
+                        val identity=reminders[position].first
+                        val index=resolveListedChannel(identity,true)
+                        if(index>=0)playIndex(index)
+                        else showBanner("Scheduled channel is no longer available",true)
+                    }
+                    .setNegativeButton("Stay here",null).create())
             }
         }
         armEpgTune()
@@ -4449,6 +4463,21 @@ class MainActivity: Activity() {
         if(c.mediaType !in setOf("movie","series","music"))return
         val exo=player
         val vlc=vlcPlayer
+        val owningGeneration=playbackGeneration
+        val owningChannel=id(c)
+        fun controlsOwnActivePlayer():Boolean =
+            licenseReady && playbackGeneration==owningGeneration &&
+                channels.getOrNull(active)?.let(::id)==owningChannel &&
+                ((exo!=null && player===exo) || (vlc!=null && vlcPlayer===vlc))
+        fun withCurrentPlayer(action:()->Unit){
+            if(!controlsOwnActivePlayer()){
+                Toast.makeText(this,"Playback changed — reopen controls",Toast.LENGTH_SHORT).show()
+                return
+            }
+            try{action()}catch(e:Exception){
+                HomeTvDiagnostics.w("Playback","Media control no longer available",e)
+            }
+        }
         if(exo==null && vlc==null){
             Toast.makeText(this,"This web player controls seeking on its own",Toast.LENGTH_SHORT).show()
             return
@@ -4473,27 +4502,43 @@ class MainActivity: Activity() {
             .setView(layout)
             .setPositiveButton("▶  Play here"){_,_->
                 val target=bar.progress.toLong()*1000L
-                if(exo!=null)exo.seekTo(target) else vlc?.time=target
+                withCurrentPlayer{
+                    if(exo!=null)exo.seekTo(target) else vlc?.time=target
+                }
             }
             .setNeutralButton(if(exo?.isPlaying==true || vlc?.isPlaying==true) "Pause" else "Play"){_,_->
-                if(exo!=null){if(exo.isPlaying)exo.pause() else exo.play()}
-                else if(vlc!=null){if(vlc.isPlaying)vlc.pause() else vlc.play()}
+                withCurrentPlayer{
+                    if(exo!=null){if(exo.isPlaying)exo.pause() else exo.play()}
+                    else if(vlc!=null){if(vlc.isPlaying)vlc.pause() else vlc.play()}
+                }
             }
             .setNegativeButton("Close",null).show()
     }
     private fun legacyMediaKey(c:Channel)=viewerKey("myhometv_progress_"+c.url.hashCode().toString())
     private fun mediaKey(c:Channel)=viewerKey("myhometv_progress_v2_"+MediaProgressPolicy.identityHash(c))
+    private fun legacyMediaAmbiguousKey(c:Channel)=viewerKey("myhometv_progress_ambiguous_"+c.url.hashCode())
     private fun clearMediaProgress(c:Channel){
-        prefs.edit().remove(mediaKey(c)).remove(legacyMediaKey(c)).apply()
+        val editor=prefs.edit().remove(mediaKey(c))
+        if(MediaProgressPolicy.canMigrateLegacy(channels,c)){
+            editor.remove(legacyMediaKey(c))
+        }else{
+            // Retain ambiguous legacy data without assigning or deleting it
+            // on behalf of a different entry sharing the same stream URL.
+            editor.putBoolean(legacyMediaAmbiguousKey(c),true)
+        }
+        editor.apply()
     }
     private fun mediaResumeSeconds(c:Channel):Long{
         val key=mediaKey(c)
         if(prefs.contains(key))return prefs.getLong(key,0L)
         val oldKey=legacyMediaKey(c)
-        if(!prefs.contains(oldKey))return 0L
+        if(!prefs.contains(oldKey) || prefs.getBoolean(legacyMediaAmbiguousKey(c),false))return 0L
         // An old URL-only position cannot be assigned safely when two
         // different media entries share that URL. Leave it unmigrated.
-        if(!MediaProgressPolicy.canMigrateLegacy(channels,c))return 0L
+        if(!MediaProgressPolicy.canMigrateLegacy(channels,c)){
+            prefs.edit().putBoolean(legacyMediaAmbiguousKey(c),true).apply()
+            return 0L
+        }
         val seconds=prefs.getLong(oldKey,0L).coerceAtLeast(0L)
         prefs.edit().putLong(key,seconds).remove(oldKey).apply()
         return seconds
