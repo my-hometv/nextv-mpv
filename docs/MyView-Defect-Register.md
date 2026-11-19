@@ -25,9 +25,9 @@ There is no physical-TV or Android Activity instrumentation verdict here.
 | MV-INT-07 | P2 | Hardware BACK ignored the search/category return destination | MainActivity.onBackPressed | Source-verified — run 44496001556 |
 | MV-INT-08 | P1 | Scheduled EPG auto-tune could fall back to an unrelated channel sharing a URL; reminder retained an old index | MainActivity.checkEpgTune | Source-verified — run 44496001556 |
 
-| MV-INT-09 | P1 | PIN callback could retune a different channel after refresh | MainActivity.playIndex/resumeAuthorizedChannel | Corrected; CI pending |
-| MV-INT-10 | P1 | Media category and artist buttons captured stale channel indexes | MainActivity.mediaLibrary/mediaMusic/mediaSeries/youtubeLibrary | Corrected; CI pending |
-| MV-INT-11 | P2 | URL-hash resume history combined unrelated movie/song entries | MediaProgressPolicy and MainActivity.mediaKey | Corrected; CI pending |
+| MV-INT-09 | P1 | PIN callback could retune a different channel after refresh | MainActivity.playIndex/resumeAuthorizedChannel | Source-verified — run 44500817304 |
+| MV-INT-10 | P1 | Media category and artist buttons captured stale channel indexes | MainActivity.mediaLibrary/mediaMusic/mediaSeries/youtubeLibrary | Source-verified — run 44500817304 |
+| MV-INT-11 | P2 | URL-hash resume history combined unrelated movie/song entries | MediaProgressPolicy and MainActivity.mediaKey | Source-verified — run 44500817304 |
 
 ## Cross-feature review matrix
 - **Playlist, channel history, hidden/lock, source deletion:** reviewed
@@ -54,4 +54,13 @@ success from a source-only result. Future findings should be appended here with
 reproducible source evidence and automated test when possible.
 
 ## Follow-up audit 2026-11-19
-The additional PIN, media-category and per-item VOD resume-history corrections are pending the latest-commit Kotlin/Python/Lint checks. Migration from the original URL-only progress key is attempted only for unambiguous media URLs; ambiguous shared URLs cannot be safely attributed to a specific historical item and are intentionally not copied.
+The additional PIN, media-category and per-item VOD resume-history corrections passed source-only CI run 44500817304. Migration from the original URL-only progress key is attempted only for unambiguous media URLs; ambiguous shared URLs cannot be safely attributed to a specific historical item and are intentionally not copied.
+
+## Final integration follow-up — 2026-11-19
+| ID | Priority | Confirmed defect or risk | Correction | Status |
+|---|---|---|---|---|
+| MV-INT-12 | P1 | Simultaneous due EPG reminders were removed but only the last was presented | EpgDuePolicy and checkEpgTune grouped reminder chooser; latest automatic tune wins | Corrected; CI pending |
+| MV-INT-13 | P2 | Seek/Pause dialogs held stale player references after channel switch | Playback generation and player-ownership guard | Corrected; CI pending |
+| MV-INT-14 | P2 | Clearing one shared-URL media progress entry removed another entry's ambiguous legacy history | Preserve ambiguous legacy record with a migration-block marker | Corrected; CI pending |
+
+This follow-up retains the original engine and licensing design, does not build an APK, and needs latest-commit CI verification before any source-only sign-off.

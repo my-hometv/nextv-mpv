@@ -13,6 +13,25 @@ def section(start,end):
     return MAIN.split(start,1)[1].split(end,1)[0]
 
 class CrossFeatureSearchIntegrationTest(unittest.TestCase):
+    def test_all_due_epg_reminders_are_presented_without_loss(self):
+        body=section("private fun checkEpgTune(){","private fun showEpgSchedules(){")
+        self.assertIn("EpgDuePolicy.partition(due)",body)
+        self.assertIn("val reminders=batch.reminders.mapNotNull",body)
+        self.assertIn('setItems(reminders.map{(_,name,title)->',body)
+        self.assertIn("val chosen=batch.automatic",body)
+        self.assertNotIn("val entry=due.lastOrNull()",body)
+    def test_media_controls_validate_current_generation_and_player(self):
+        body=section("private fun mediaPlaybackControls(){","private fun legacyMediaKey(")
+        self.assertIn("owningGeneration=playbackGeneration",body)
+        self.assertIn("controlsOwnActivePlayer()",body)
+        self.assertIn("player===exo",body)
+        self.assertIn("vlcPlayer===vlc",body)
+        self.assertGreaterEqual(body.count("withCurrentPlayer{"),2)
+    def test_ambiguous_legacy_progress_is_never_migrated_after_deletion(self):
+        body=section("private fun legacyMediaAmbiguousKey(","private fun saveCurrentMediaProgress(")
+        self.assertIn("putBoolean(legacyMediaAmbiguousKey(c),true)",body)
+        self.assertIn("prefs.getBoolean(legacyMediaAmbiguousKey(c),false)",body)
+        self.assertIn("MediaProgressPolicy.canMigrateLegacy(channels,c)",body)
     def test_pin_callbacks_resolve_original_identity(self):
         body=section("private fun resumeAuthorizedChannel(","private fun playIndex(")
         self.assertIn("resolveListedChannel(identity,false,hint)",body)
