@@ -9,6 +9,20 @@ internal object EpgGuidePolicy {
     fun normalizeDisplayName(value:String):String =
         value.trim().lowercase(java.util.Locale.ROOT).replace(Regex("\\s+")," ")
 
+    /**
+     * IPTV display names often append a quality suffix absent from XMLTV.
+     * Prefer exact tvg-id and display-name matches; use these conservative
+     * aliases only when exact matching has failed.
+     */
+    fun matchNames(value:String):List<String> {
+        val exact=normalizeDisplayName(value)
+        if(exact.isEmpty())return emptyList()
+        val punctuation=normalizeDisplayName(exact.replace(Regex("[._|\\\\-]+")," "))
+        val suffix=Regex("""(?:\\s+(?:hd|fhd|uhd|sd|4k|1080p|720p|hevc|h265|h264))+$""")
+        val withoutQuality=punctuation.replace(suffix,"").trim()
+        return listOf(exact,punctuation,withoutQuality).filter{it.isNotBlank()}.distinct()
+    }
+
     fun rows(visibleIndices:List<Int>, channelCount:Int):List<Int> =
         visibleIndices.filter { it >= 0 && it < channelCount }
 
