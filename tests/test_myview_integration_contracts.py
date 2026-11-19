@@ -45,7 +45,9 @@ class MyViewIntegrationContracts(unittest.TestCase):
             self.activity.index("setContentView(screen)", self.activity.index("private fun playIndex(index:Int)")),
             self.activity.index("screenInfoOnStart(index)", self.activity.index("private fun playIndex(index:Int)")),
         )
-        self.assertIn('append("\\nEPG: ").append(if(epgLoadingGeneration!=null)', self.activity)
+        self.assertIn('if(epgLoadingGeneration!=null)"Loading guide…"', self.activity)
+        self.assertIn('"No current programme"', self.activity)
+        self.assertIn('"No upcoming programme"', self.activity)
 
     def test_epg_downloads_are_deduplicated_and_display_names_matched(self):
         self.assertIn('if(epgLoadingGeneration==generation)', self.activity)
