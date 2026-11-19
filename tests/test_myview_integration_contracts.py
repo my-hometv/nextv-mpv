@@ -120,6 +120,27 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('savedJsonArray(viewerKey("recent_channels"))', self.activity)
         self.assertNotIn('JSONArray(prefs.getString(viewerKey("recent_channels"),"[]"))', self.activity)
 
+    def test_manual_hide_is_not_reprompted_after_engine_failure(self):
+        failure = self.activity.split("private fun handleEngineFailure(", 1)[1].split(
+            "private fun isLocked(", 1
+        )[0]
+        self.assertIn('}else if(isManuallyHidden(c) || isGroupHidden(c.group)){', failure)
+        self.assertIn('showBanner("No playable stream for this hidden channel",true)', failure)
+
+        prompt = self.activity.split("private fun promptFailedChannel(", 1)[1].split(
+            "private val recoveryPending=", 1
+        )[0]
+        self.assertIn("if(isManuallyHidden(c) || isGroupHidden(c.group)){", prompt)
+        self.assertIn('failurePromptKey=null', prompt)
+        self.assertIn("channels.getOrNull(index)?.let{channelKey(it)}!=key", prompt)
+
+        skip = self.activity.split("private fun moveAfterFailedChannelHidden(", 1)[1].split(
+            "private fun promptFailedChannel(", 1
+        )[0]
+        self.assertIn("nextSurfingIndex(index,surfingDirection,surfingIndices())", skip)
+        self.assertNotIn("showHome()", skip)
+        self.assertIn('showBanner("No other visible channel in this playlist",true)', skip)
+
     def test_hidden_channel_remotes_respect_original_order_and_direction(self):
         switching = self.activity.split("private fun nextSurfingIndex(", 1)[1].split(
             "private var rapidSurfTask:", 1
