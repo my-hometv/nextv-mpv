@@ -58,6 +58,10 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("enabledChannelIndices()",between("private fun showLeftNavigation(", "private fun showLeftActions("))
         self.assertIn("enabledChannelIndices()",between("private fun showGroupDrawerContents(", "private fun channelVolumeKey("))
         self.assertIn("enabledChannelIndices() else playlistIndices()",MAIN)
+        visible=between("private fun visibleIndices()", "private fun channelLabel(")
+        self.assertIn("channel.source in enabledSources",visible)
+        self.assertIn("channel.source.isBlank()",visible)
+        self.assertIn("val enabledSources=playlists().filter{it.enabled}",visible)
         self.assertIn("invalidateSurfingCache()",between("private fun savePlaylists(", "private fun mediaItems("))
     def test_manual_picture_custom_transition_avoids_uncommitted_retune(self):
         body=between("private fun configureChannelPicture(", "private fun showChannelOptions(")
