@@ -8405,7 +8405,7 @@ class MainActivity: Activity() {
                 channels,channelNumbers(),
                 playlists().filter{it.enabled}.map{it.name}.toSet(),
                 lockedPlaylistNames(),unlockedPlaylistsThisSession,
-                hiddenGroupNames()
+                manuallyHiddenGroups
             )
             else playlistIndicesIncludingLocked().map{channels[it].group}.distinct())
         val drawer=LinearLayout(this).apply{
