@@ -4310,11 +4310,27 @@ class MainActivity: Activity() {
                 !isSkipped(c) && channelKey(c) !in unavailableChannels
         }
 
+    private fun searchEligible(c:Channel):Boolean{
+        val source=c.source
+        return (source.isBlank() || playlists().any{it.enabled && it.name==source}) &&
+            (source !in lockedPlaylistNames() || source in unlockedPlaylistsThisSession) &&
+            (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession) &&
+            !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
+            !isSkipped(c) && channelKey(c) !in unavailableChannels &&
+            channelKey(c) !in temporaryFailureHidden
+    }
+    private fun resolveListedChannel(identity:String,search:Boolean):Int =
+        MediaSearchPolicy.resolveIdentity(channels,identity,::id){c->
+            if(search)searchEligible(c) else
+                (c.source.isBlank() || playlists().any{it.enabled && it.name==c.source}) &&
+                (c.source !in lockedPlaylistNames() || c.source in unlockedPlaylistsThisSession) &&
+                (c.group !in lockedGroupNames() || c.group in unlockedGroupsThisSession)
+        }
+
     private fun mediaMatches(type:String,query:String):List<Int> =
         searchableMediaIndices().filter{index->
             val c=channels[index]
-            (if(type=="youtube")isYoutubeChannel(index)
-             else c.mediaType==type && !isYoutubeChannel(index)) &&
+            MediaSearchPolicy.category(c.mediaType,isYoutubeChannel(index))==type &&
                 MediaSearchPolicy.matches(c,query)
         }
 
@@ -4440,7 +4456,12 @@ class MainActivity: Activity() {
             .setPositiveButton("Search"){_,_->
                 val q=input.text.toString().trim()
                 if(q.isBlank()){
-                    if(type=="youtube")youtubeLibrary() else mediaLibrary(type)
+                    when(type){
+                        "youtube"->youtubeLibrary()
+                        "series"->mediaSeries()
+                        "music"->mediaMusic()
+                        else->mediaLibrary(type)
+                    }
                 }else mediaRows("Search: "+q,mediaMatches(type,q))
             }.setNegativeButton("Cancel",null).show()
     }
@@ -4459,33 +4480,37 @@ class MainActivity: Activity() {
         reset("MyView  •  Search")
         root.addView(label("Search: "+query))
         root.addView(button("⌕  New search"){universalSearch()})
-        val searchable=searchableMediaIndices()
-        val live=visibleIndices().filter{index->
+        val searchable=searchableMediaIndices().filter{searchEligible(channels[it])}
+        val matched=searchable.filter{index->
             val c=channels[index]
-            c.mediaType=="live" && !isYoutubeChannel(index) &&
-                !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
-                !isSkipped(c) && MediaSearchPolicy.matches(c,query)
+            MediaSearchPolicy.matches(c,query) ||
+                (MediaSearchPolicy.category(c.mediaType,isYoutubeChannel(index))=="live" &&
+                 prefs.getBoolean("nextv_epg_enabled",true) &&
+                 programmeList(c).any{it.title.contains(query,true)})
         }
         val categories=listOf(
-            Triple("Live TV",live,true),
-            Triple("Movies",searchable.filter{channels[it].mediaType=="movie" &&
-                MediaSearchPolicy.matches(channels[it],query)},false),
-            Triple("Series",searchable.filter{channels[it].mediaType=="series" &&
-                MediaSearchPolicy.matches(channels[it],query)},false),
-            Triple("Music",searchable.filter{channels[it].mediaType=="music" &&
-                MediaSearchPolicy.matches(channels[it],query)},false),
-            Triple("Web TV",searchable.filter{channels[it].mediaType=="web" &&
-                !isYoutubeChannel(it) && MediaSearchPolicy.matches(channels[it],query)},false),
-            Triple("YouTube",searchable.filter{isYoutubeChannel(it) &&
-                MediaSearchPolicy.matches(channels[it],query)},false)
-        )
+            Triple("Live TV","live",true),
+            Triple("Movies","movie",false),
+            Triple("Series","series",false),
+            Triple("Music","music",false),
+            Triple("Web TV","web",false),
+            Triple("YouTube","youtube",false)
+        ).map{(name,category,isLive)->
+            Triple(name,matched.filter{index->
+                MediaSearchPolicy.category(channels[index].mediaType,isYoutubeChannel(index))==category
+            },isLive)
+        }
         val count=categories.sumOf{it.second.size}
         root.addView(label("$count matching entries across saved playlists"))
         if(count==0)root.addView(label("No matching items in enabled and unlocked playlists."))
         categories.filter{it.second.isNotEmpty()}.forEach{(title,indices,isLive)->
+            val savedIdentities=indices.map{ id(channels[it]) }
             root.addView(button("▸  "+title+"  ("+indices.size+")"){
-                if(isLive)channelCollection("Search: "+query,indices)
-                else mediaRows("Search: "+query+"  •  "+title,indices)
+                val current=savedIdentities.mapNotNull{key->
+                    resolveListedChannel(key,true).takeIf{it>=0}
+                }.distinct()
+                if(isLive)channelCollection("Search: "+query,current)
+                else mediaRows("Search: "+query+"  •  "+title,current)
             })
         }
         root.addView(button("←  Home"){showHome()})
