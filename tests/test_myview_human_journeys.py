@@ -82,8 +82,8 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("disablePlaylistSource(p.name)",manager)
         self.assertIn("deletePlaylistSource(p.name)",manager)
         self.assertIn("disablePlaylistSource(source)",drawer)
-        self.assertIn("switchAfterPlaylistRemoved(name,previous)",MAIN)
-        self.assertIn('prefs.getString("last_url_"+ordered,null)',MAIN)
+        self.assertIn("switchAfterPlaylistRemoved(name,previous,wasPlaying,wasSelected)",MAIN)
+        self.assertIn('prefs.getString("last_working_url_"+source,null)',MAIN)
     def test_last_channel_and_startup_reject_disabled_sources(self):
         last=between("private fun returnToPreviousChannel()", "private fun routeHttpChannel(")
         self.assertIn("candidate.source in enabled",last)
@@ -93,6 +93,31 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("it.enabled && it.name==source",startup)
     def test_pin_failure_delete_uses_same_next_playlist_handoff(self):
         deletion=between("private fun deletePlaylistAfterPinFailures(", "private fun deleteGroupAfterPinFailures(")
-        self.assertIn("switchAfterPlaylistRemoved(name,previous)",deletion)
+        self.assertIn("removePlaylistSource(name,true)",deletion)
+
+    def test_delete_stops_correct_vod_before_channel_indices_change(self):
+        block=between("private fun removePlaylistSource(", "private fun clearPlaylistLocalHistory(")
+        self.assertLess(block.index("if(wasPlaying)stopPlayback()"),block.index("channels=channels.filter"))
+        self.assertLess(block.index("clearPlaylistLocalHistory(name)"),block.index("channels=channels.filter"))
+    def test_unrelated_playlist_disable_preserves_active_decoder_and_index(self):
+        transition=between("private fun switchAfterPlaylistRemoved(", "private fun disablePlaylistSource(")
+        self.assertIn("if(keepWatching)",transition)
+        self.assertIn("return",transition)
+        delete=between("private fun removePlaylistSource(", "private fun clearPlaylistLocalHistory(")
+        self.assertIn("if(active !in channels.indices)",delete)
+    def test_skip_entirely_hidden_locked_replacements(self):
+        select=between("private fun nextAvailablePlaylistChannel(", "private fun clearRemovedPreviousChannel(")
+        self.assertIn("PlaylistTransitionPolicy.nextEligiblePlaylist(",select)
+        self.assertIn("eligible(name).isNotEmpty()",select)
+        self.assertIn("!isManuallyHidden(c)",select)
+        self.assertIn("!isLocked(c)",select)
+    def test_confirmed_last_channel_is_preferred_over_failed_attempt(self):
+        select=between("private fun nextAvailablePlaylistChannel(", "private fun clearRemovedPreviousChannel(")
+        self.assertLess(select.index("channels[it].url==confirmed"),select.index("channels[it].url==attempted"))
+        self.assertIn('putString("last_working_url_"+c.source,c.url)',MAIN)
+    def test_removed_previous_channel_is_cleared_by_identity(self):
+        clear=between("private fun clearRemovedPreviousChannel(", "private fun switchAfterPlaylistRemoved(")
+        self.assertIn("identity==null || id(c)==identity",clear)
+        self.assertIn("c.source in enabled",clear)
 
 if __name__=="__main__":unittest.main()

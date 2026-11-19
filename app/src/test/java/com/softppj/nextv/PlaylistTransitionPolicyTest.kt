@@ -18,6 +18,21 @@ class PlaylistTransitionPolicyTest {
         assertNull(PlaylistTransitionPolicy.nextEnabledPlaylist(
             listOf("Only"),listOf(true),"Only"))
     }
+    @Test fun skipsHiddenOrLockedPlaylistsUntilPlayableSource() {
+        assertEquals("D",PlaylistTransitionPolicy.nextEligiblePlaylist(
+            listOf("A","B","C","D"),listOf(true,true,true,true),"A"
+        ){it=="D"})
+    }
+    @Test fun noPlayableReplacementReturnsNull() {
+        assertNull(PlaylistTransitionPolicy.nextEligiblePlaylist(
+            listOf("A","B","C"),listOf(true,true,true),"A"
+        ){false})
+    }
+    @Test fun replacementWrapsAndSkipsDisabledSource() {
+        assertEquals("A",PlaylistTransitionPolicy.nextEligiblePlaylist(
+            listOf("A","B","C"),listOf(true,false,true),"C"
+        ){it=="A"})
+    }
     @Test fun ignoresMissingOrInvalidSourceLists() {
         assertNull(PlaylistTransitionPolicy.nextEnabledPlaylist(
             listOf("A","B"),listOf(true),"A"))
