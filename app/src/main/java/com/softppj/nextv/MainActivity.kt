@@ -2715,7 +2715,7 @@ class MainActivity: Activity() {
             setPadding(10,8,10,12)
         }
         layout.addView(header)
-        val list=ListView(this).apply{
+        val list=styledMenuList().apply{
             dividerHeight=1
             isFocusable=true
         }
@@ -3419,7 +3419,7 @@ class MainActivity: Activity() {
     private fun channelCollection(title:String,indices:List<Int>){
         val indices=orderedChannelIndices(title,indices)
         reset(title+" ("+indices.size+")")
-        val list=ListView(this).apply{
+        val list=styledMenuList().apply{
             dividerHeight=1
             isFocusable=true
             isFocusableInTouchMode=true
@@ -4246,7 +4246,7 @@ class MainActivity: Activity() {
     private fun mediaRows(title:String,indices:List<Int>){
         reset("My Home TV  •  "+title)
         root.addView(label(indices.size.toString()+" items"))
-        val list=ListView(this).apply{
+        val list=styledMenuList().apply{
             dividerHeight=2
             isFocusable=true
             setBackgroundColor(0xFF101E31.toInt())
@@ -5722,7 +5722,7 @@ class MainActivity: Activity() {
         root.addView(button("Refresh channel groups"){refresh({showChannels()},true)})
         val groups=playlistIndicesIncludingLocked().map{channels[it].group}.distinct().sortedWith(String.CASE_INSENSITIVE_ORDER)
         // Virtualize groups too: do not create a Button for every playlist group.
-        val list=ListView(this).apply{
+        val list=styledMenuList().apply{
             dividerHeight=1
             isFocusable=true
             isFocusableInTouchMode=true
@@ -5762,7 +5762,7 @@ class MainActivity: Activity() {
         root.addView(button("Protect group"){toggleLock(group,true)})
         // Virtualized rows: never create thousands of Buttons on the UI thread.
         val indices=visibleIndices().filter{channels[it].group==group}
-        val list=ListView(this).apply{
+        val list=styledMenuList().apply{
             dividerHeight=1
             isFocusable=true
             isFocusableInTouchMode=true
@@ -8092,7 +8092,7 @@ class MainActivity: Activity() {
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
         })
-        val list=ListView(this)
+        val list=styledMenuList()
         list.adapter=android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,
             groups.mapIndexed{index,group->"%02d   ▸  %s".format(java.util.Locale.ROOT,index+1,group)})
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
