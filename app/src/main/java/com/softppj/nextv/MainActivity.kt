@@ -6963,7 +6963,16 @@ class MainActivity: Activity() {
             .setItems(opts){_,choice->
                 when(choice){
                     0->favorite(c)
-                    1->{toggleManualHide(c);showBanner(if(isManuallyHidden(c))"Channel hidden until manually restored" else "Channel restored")}
+                    1->{
+                        val oldIndex=active
+                        val screen=videoScreen
+                        val previousSequence=surfingIndices()
+                        val hiding=!isManuallyHidden(c)
+                        toggleManualHide(c)
+                        if(hiding && screen!=null && active==oldIndex && videoScreen===screen){
+                            moveAfterFailedChannelHidden(oldIndex,screen,previousSequence)
+                        }else showBanner(if(hiding)"Channel hidden until manually restored" else "Channel restored")
+                    }
                     2->toggleLock(id(c),false)
                     3->selectAlternative(active)
                     4->selectScreenMode(active)
