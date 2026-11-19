@@ -86,11 +86,15 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn('prefs.getString("last_working_url_"+source,null)',MAIN)
     def test_last_channel_and_startup_reject_disabled_sources(self):
         last=between("private fun returnToPreviousChannel()", "private fun routeHttpChannel(")
-        self.assertIn("candidate.source in enabled",last)
+        self.assertIn("LastChannelPolicy.findEligibleSavedChannel(",last)
+        self.assertIn("::canAutoRestoreChannel",last)
+        eligibility=between("private fun canAutoRestoreChannel(", "private fun clearRemovedPreviousChannel(")
+        self.assertIn("it.enabled && it.name==source",eligibility)
+        self.assertIn("!isManuallyHidden(c)",eligibility)
         self.assertIn('showBanner("Previous channel is unavailable")',last)
         self.assertIn('showBanner("This playlist is disabled or deleted",true)',MAIN)
         startup=between("private fun resumeLast()", "private fun liveSettings(")
-        self.assertIn("it.enabled && it.name==source",startup)
+        self.assertIn("::canAutoRestoreChannel",startup)
     def test_pin_failure_delete_uses_same_next_playlist_handoff(self):
         deletion=between("private fun deletePlaylistAfterPinFailures(", "private fun deleteGroupAfterPinFailures(")
         self.assertIn("removePlaylistSource(name,true)",deletion)
@@ -113,7 +117,8 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("!isLocked(c)",select)
     def test_confirmed_last_channel_is_preferred_over_failed_attempt(self):
         select=between("private fun nextAvailablePlaylistChannel(", "private fun clearRemovedPreviousChannel(")
-        self.assertLess(select.index("channels[it].url==confirmed"),select.index("channels[it].url==attempted"))
+        self.assertLess(select.index('prefs.getString("last_working_identity_"+source,null)'),
+                        select.index('prefs.getString("last_identity_"+source,null)'))
         self.assertIn('putString("last_working_url_"+c.source,c.url)',MAIN)
     def test_removed_previous_channel_is_cleared_by_identity(self):
         clear=between("private fun clearRemovedPreviousChannel(", "private fun switchAfterPlaylistRemoved(")

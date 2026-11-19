@@ -4303,18 +4303,34 @@ class MainActivity: Activity() {
             posterLoading.remove(url)
         }
     }
-    private fun youtubeLibrary(){
-        val items=channels.indices.filter{isYoutubeChannel(it)}
-        if(items.isEmpty()){
-            channelCollection("YouTube",emptyList())
-            return
+    private fun searchableMediaIndices():List<Int> =
+        visibleMediaIndices().filter{index->
+            val c=channels[index]
+            !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
+                !isSkipped(c) && channelKey(c) !in unavailableChannels
         }
-        mediaRows("YouTube",items)
+
+    private fun mediaMatches(type:String,query:String):List<Int> =
+        searchableMediaIndices().filter{index->
+            val c=channels[index]
+            (if(type=="youtube")isYoutubeChannel(index)
+             else c.mediaType==type && !isYoutubeChannel(index)) &&
+                MediaSearchPolicy.matches(c,query)
+        }
+
+    private fun youtubeLibrary(){
+        val items=searchableMediaIndices().filter{isYoutubeChannel(it)}
+        reset("MyView  •  YouTube")
+        root.addView(label("YouTube  |  "+items.size+" saved entries"))
+        root.addView(button("⌕  Search YouTube entries"){mediaSearch("youtube")})
+        root.addView(button("▶  All YouTube entries"){mediaRows("YouTube",items)})
+        root.addView(button("←  Home"){showHome()})
     }
     private fun mediaSeries(){
         val items=mediaItems("series")
         reset("MyView  •  Series")
         root.addView(label("Series  |  "+items.size+" episodes"))
+        root.addView(button("⌕  Search Series"){mediaSearch("series")})
         items.groupBy{channels[it].group}.toSortedMap().forEach{(name,episodes)->
             root.addView(button("▣  "+name+"  •  "+episodes.size+" episodes"){
                 val ordered=episodes.sortedWith(compareBy<Int>(
@@ -4331,6 +4347,7 @@ class MainActivity: Activity() {
         val items=mediaItems("music")
         reset("MyView  •  Music")
         root.addView(label("Music  |  "+items.size+" songs"))
+        root.addView(button("⌕  Search Songs / Artists / Albums"){mediaSearch("music")})
         root.addView(button("♫  All Songs"){mediaRows("All Songs",items)})
         items.groupBy{channels[it].artist.ifBlank{"Unknown Artist"}}.toSortedMap().forEach{(artist,songs)->
             root.addView(button("♫  "+artist+"  ("+songs.size+")"){mediaRows(artist,songs)})
@@ -4415,15 +4432,63 @@ class MainActivity: Activity() {
         root.addView(button("←  Home"){showHome()})
     }
     private fun mediaSearch(type:String){
-        val input=EditText(this).apply{hint="Search title, artist, album or group"}
-        AlertDialog.Builder(this).setTitle("Search media").setView(input).setPositiveButton("Search"){_,_->
-            val q=input.text.toString()
-            mediaRows("Search: "+q,mediaItems(type).filter{
-                val c=channels[it]
-                c.name.contains(q,true)||c.group.contains(q,true)||
-                c.artist.contains(q,true)||c.album.contains(q,true)
+        val input=EditText(this).apply{
+            hint="Title, artist, album, group or Malayalam name"
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this).setTitle("Search "+type).setView(input)
+            .setPositiveButton("Search"){_,_->
+                val q=input.text.toString().trim()
+                if(q.isBlank()){
+                    if(type=="youtube")youtubeLibrary() else mediaLibrary(type)
+                }else mediaRows("Search: "+q,mediaMatches(type,q))
+            }.setNegativeButton("Cancel",null).show()
+    }
+    private fun universalSearch(){
+        val input=EditText(this).apply{
+            hint="Channels, movies, series, songs, artist or album"
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this).setTitle("Search MyView").setView(input)
+            .setPositiveButton("Search"){_,_->
+                val q=input.text.toString().trim()
+                if(q.isNotBlank())showUniversalSearchResults(q) else showHome()
+            }.setNegativeButton("Cancel",null).show()
+    }
+    private fun showUniversalSearchResults(query:String){
+        reset("MyView  •  Search")
+        root.addView(label("Search: "+query))
+        root.addView(button("⌕  New search"){universalSearch()})
+        val searchable=searchableMediaIndices()
+        val live=visibleIndices().filter{index->
+            val c=channels[index]
+            c.mediaType=="live" && !isYoutubeChannel(index) &&
+                !isLocked(c) && !isManuallyHidden(c) && !isGroupHidden(c.group) &&
+                !isSkipped(c) && MediaSearchPolicy.matches(c,query)
+        }
+        val categories=listOf(
+            Triple("Live TV",live,true),
+            Triple("Movies",searchable.filter{channels[it].mediaType=="movie" &&
+                MediaSearchPolicy.matches(channels[it],query)},false),
+            Triple("Series",searchable.filter{channels[it].mediaType=="series" &&
+                MediaSearchPolicy.matches(channels[it],query)},false),
+            Triple("Music",searchable.filter{channels[it].mediaType=="music" &&
+                MediaSearchPolicy.matches(channels[it],query)},false),
+            Triple("Web TV",searchable.filter{channels[it].mediaType=="web" &&
+                !isYoutubeChannel(it) && MediaSearchPolicy.matches(channels[it],query)},false),
+            Triple("YouTube",searchable.filter{isYoutubeChannel(it) &&
+                MediaSearchPolicy.matches(channels[it],query)},false)
+        )
+        val count=categories.sumOf{it.second.size}
+        root.addView(label("$count matching entries across saved playlists"))
+        if(count==0)root.addView(label("No matching items in enabled and unlocked playlists."))
+        categories.filter{it.second.isNotEmpty()}.forEach{(title,indices,isLive)->
+            root.addView(button("▸  "+title+"  ("+indices.size+")"){
+                if(isLive)channelCollection("Search: "+query,indices)
+                else mediaRows("Search: "+query+"  •  "+title,indices)
             })
-        }.setNegativeButton("Cancel",null).show()
+        }
+        root.addView(button("←  Home"){showHome()})
     }
     private fun mediaRows(title:String,indices:List<Int>){
         reset("MyView  •  "+title)
@@ -4729,7 +4794,7 @@ class MainActivity: Activity() {
         ))
         homeContent.addView(tvSection("DISCOVER"))
         homeContent.addView(tvRow(
-            tvCard("⌕","Search","Find channels"){searchChannels()},
+            tvCard("⌕","Search","Channels, movies, music and more"){universalSearch()},
             tvCard("☷","Categories","Channel groups"){showChannels()},
             tvCard("◷","History","Recently watched"){recentlyWatched()},
             tvCard("◉",if(prefs.getBoolean("nextv_profiles_enabled",true))"Profile: "+profileLabel() else "Viewer profiles",if(prefs.getBoolean("nextv_profiles_enabled",true))"Switch household viewer" else "Enable in Settings"){if(prefs.getBoolean("nextv_profiles_enabled",true))switchViewerFromHome() else settings()},
