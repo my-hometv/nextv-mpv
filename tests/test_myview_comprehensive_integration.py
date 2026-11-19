@@ -13,6 +13,26 @@ def section(start,end):
     return MAIN.split(start,1)[1].split(end,1)[0]
 
 class CrossFeatureSearchIntegrationTest(unittest.TestCase):
+    def test_pin_callbacks_resolve_original_identity(self):
+        body=section("private fun resumeAuthorizedChannel(","private fun playIndex(")
+        self.assertIn("resolveListedChannel(identity,false,hint)",body)
+        self.assertIn("playIndex(current)",body)
+        player=section("private fun playIndex(","private fun playIndexResolved(") if "private fun playIndexResolved(" in MAIN.split("private fun playIndex(",1)[1] else MAIN.split("private fun playIndex(",1)[1]
+        self.assertIn("resumeAuthorizedChannel(requestedIdentity,index)",player)
+        self.assertIn("resumeAuthorizedChannel(requestedIdentity,index,true)",player)
+        self.assertNotIn("openLockedPlaylist(c.source){playIndex(index)}",player)
+    def test_media_buttons_re_resolve_saved_identity_before_display(self):
+        series=section("private fun mediaSeries(","private fun mediaMusic(")
+        music=section("private fun mediaMusic(","private fun mediaPlaybackControls(")
+        library=section("private fun mediaLibrary(","private fun mediaSearch(")
+        for body in (series,music,library):
+            self.assertIn("currentMediaSelection(",body)
+            self.assertIn("map{ id(channels[it]) }",body)
+    def test_progress_migration_is_identity_specific(self):
+        body=section("private fun legacyMediaKey(","private fun saveCurrentMediaProgress(")
+        self.assertIn("MediaProgressPolicy.identityHash(c)",body)
+        self.assertIn("MediaProgressPolicy.canMigrateLegacy(channels,c)",body)
+        self.assertIn(".remove(oldKey)",body)
     def test_details_buttons_revalidate_identity_after_playlist_mutation(self):
         body=section("private fun mediaDetails(","// V6 cinematic Android TV components")
         self.assertIn("val identity=id(c)",body)
