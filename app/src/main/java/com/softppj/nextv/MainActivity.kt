@@ -8397,8 +8397,17 @@ class MainActivity: Activity() {
         val screen=videoScreen ?:return
         screen.findViewWithTag<View>("channel_drawer")?.let{screen.removeView(it)}
         screen.findViewWithTag<View>("left_navigation")?.let{screen.removeView(it)}
-        val groups=(if(browsingAllPlaylists())enabledChannelIndices() else playlistIndicesIncludingLocked())
-            .map{channels[it].group}.distinct()
+        // Group navigation includes PIN-locked groups (to offer their PIN
+        // prompt), but never lists disabled or still-locked playlist sources.
+        // The channel drawer itself remains subject to visibility checks.
+        val groups=(if(browsingAllPlaylists())
+            GroupNavigationPolicy.visibleGroups(
+                channels,channelNumbers(),
+                playlists().filter{it.enabled}.map{it.name}.toSet(),
+                lockedPlaylistNames(),unlockedPlaylistsThisSession,
+                hiddenGroupNames()
+            )
+            else playlistIndicesIncludingLocked().map{channels[it].group}.distinct())
         val drawer=LinearLayout(this).apply{
             tag="left_navigation"
             orientation=LinearLayout.VERTICAL
@@ -8553,9 +8562,14 @@ class MainActivity: Activity() {
         focusRemoteList(list,initial)
     }
     private fun showGroupDrawer(group:String){
-        if(browsingAllPlaylists()){showGroupDrawerContents(group);return}
-        val source=selectedPlaylistSource() ?: channels.firstOrNull{it.group==group}?.source
         val open={openLockedGroup(group){showGroupDrawerContents(group)}}
+        if(browsingAllPlaylists()){
+            // Always request the group PIN before exposing its channels.
+            // Locked playlists within this group remain separately protected.
+            open()
+            return
+        }
+        val source=selectedPlaylistSource() ?: channels.firstOrNull{it.group==group}?.source
         if(source!=null)openLockedPlaylist(source,open) else open()
     }
     private fun showGroupDrawerContents(group:String){
@@ -9517,8 +9531,9 @@ class MainActivity: Activity() {
         val obj=JSONObject().put("name",name).put("url",url)
         array.put(obj)
         prefs.edit().putString("myhometv_saved_web",array.toString()).apply()
-        if(channels.none{it.url==url}){
-            channels.add(Channel(name,url,"Web TV",webChannel="auto",mediaType="web"))
+        if(channels.none{SavedWebTvPolicy.isIndependentCopy(it,url)}){
+            val added=Channel(name,url,"Web TV",webChannel="auto",mediaType="web")
+            publishChannelsKeepingPlayback((channels+added).toMutableList())
         }
         showBanner("Saved web channel: "+name)
     }
@@ -9527,7 +9542,8 @@ class MainActivity: Activity() {
         for(i in 0 until array.length()){
             val obj=array.optJSONObject(i)?:continue
             val url=obj.optString("url")
-            if((url.startsWith("https://")||url.startsWith("http://")) && out.none{it.url==url})
+            if((url.startsWith("https://")||url.startsWith("http://")) &&
+                out.none{SavedWebTvPolicy.isIndependentCopy(it,url)})
                 out.add(Channel(obj.optString("name","Web TV"),url,"Web TV",webChannel="auto",mediaType="web"))
         }
     }

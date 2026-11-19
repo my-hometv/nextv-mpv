@@ -55,7 +55,7 @@ class HumanJourneyTest(unittest.TestCase):
 
     def test_disabled_playlist_browse_and_surfing_filters(self):
         self.assertIn("enabledChannelIndices()",between("private fun showOverlayList(", "private fun showLeftNavigation("))
-        self.assertIn("enabledChannelIndices()",between("private fun showLeftNavigation(", "private fun showLeftActions("))
+        self.assertIn("GroupNavigationPolicy.visibleGroups(",between("private fun showLeftNavigation(", "private fun showLeftActions("))
         self.assertIn("enabledChannelIndices()",between("private fun showGroupDrawerContents(", "private fun channelVolumeKey("))
         self.assertIn("enabledChannelIndices() else playlistIndices()",MAIN)
         visible=between("private fun visibleIndices()", "private fun channelLabel(")
@@ -200,5 +200,22 @@ class HumanJourneyTest(unittest.TestCase):
         saved=between("private fun saveWebTvChannel(", "private fun playIndex(")
         self.assertIn('webChannel="auto",mediaType="web"',saved)
         self.assertNotIn('Channel(name,url,"Web TV",webChannel="auto")',saved)
+
+    def test_all_playlists_locked_group_opens_pin_before_channel_drawer(self):
+        nav=between("private fun showLeftNavigation(", "private fun showLeftActions(")
+        self.assertIn("GroupNavigationPolicy.visibleGroups(",nav)
+        drawer=between("private fun showGroupDrawer(group:String)", "private fun showGroupDrawerContents(")
+        self.assertIn("openLockedGroup(group)",drawer)
+        self.assertIn("if(browsingAllPlaylists())",drawer)
+        self.assertNotIn("if(browsingAllPlaylists()){showGroupDrawerContents(group);return}",drawer)
+    def test_saved_web_duplicate_provider_url_does_not_block_independent_copy(self):
+        saved=between("private fun saveWebTvChannel(", "private fun playIndex(")
+        self.assertIn("SavedWebTvPolicy.isIndependentCopy(it,url)",saved)
+        self.assertNotIn("out.none{it.url==url}",saved)
+        self.assertNotIn("channels.none{it.url==url}",saved)
+    def test_web_tv_append_uses_identity_safe_channel_publication(self):
+        saved=between("private fun saveWebTvChannel(", "private fun addSavedWebTv(")
+        self.assertIn("publishChannelsKeepingPlayback((channels+added).toMutableList())",saved)
+        self.assertNotIn("channels.add(",saved)
 
 if __name__=="__main__":unittest.main()
