@@ -6068,7 +6068,7 @@ class MainActivity: Activity() {
         val next=nextAvailablePlaylistChannel(name,previous)
         prefs.edit().apply{
             putBoolean("myview_browse_all_playlists",false)
-            putBoolean(viewerKey("favorites_surfing",false)
+            putBoolean(viewerKey("favorites_surfing"),false)
             if(next==null)remove("selected_playlist_source")
             else putString("selected_playlist_source",next.first)
         }.apply()
