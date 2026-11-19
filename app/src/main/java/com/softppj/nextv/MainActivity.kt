@@ -2295,7 +2295,6 @@ class MainActivity: Activity() {
             "Move down (lower priority)","Delete source")
         showSideDialog(AlertDialog.Builder(this)
             .setTitle("EPG source "+(index+1)+" of "+sources.size)
-            .setMessage(sources[index].take(220))
             .setItems(actions.toTypedArray()){_,choice->
                 when(choice){
                     0->editSingleEpgSource(index)
@@ -2329,8 +2328,7 @@ class MainActivity: Activity() {
                 (index+1).toString()+".  "+host+"\n"+suffix
             }
         showSideDialog(AlertDialog.Builder(this)
-            .setTitle("EPG sources • priority order")
-            .setMessage("Select a source to edit, move or delete. Each change saves immediately. Playlist-provided EPG sources are included automatically after manual sources.")
+            .setTitle("EPG sources • edit / reorder")
             .setItems(entries.toTypedArray()){_,position->
                 if(position==0)editSingleEpgSource(null)
                 else epgSourceActions(position-1)
