@@ -6106,6 +6106,18 @@ class MainActivity: Activity() {
             handler.postDelayed(task,2500)
         }
     }
+    private fun styledMenuList():ListView=ListView(this).apply{
+        dividerHeight=tvDp(1)
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        isFocusable=true
+        isFocusableInTouchMode=true
+        selector=android.graphics.drawable.GradientDrawable().apply{
+            setColor(0xFF23628D.toInt())
+            cornerRadius=tvDp(9).toFloat()
+            setStroke(tvDp(2),0xFFB7EAFF.toInt())
+        }
+        isDrawSelectorOnTop=false
+    }
     private fun showSideDialog(dialog:AlertDialog,side:Int=Gravity.RIGHT,
         onNavigation:((Int)->Boolean)?=null){
         // Some TV remotes report OK as BUTTON_A/BUTTON_SELECT rather than DPAD_CENTER.
@@ -7949,7 +7961,7 @@ class MainActivity: Activity() {
         val drawer=LinearLayout(this).apply{
             tag="channel_drawer"
             orientation=LinearLayout.VERTICAL
-            setBackgroundColor(informationColor(0x15283C))
+            background=infoPanelBackground()
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
@@ -8072,7 +8084,7 @@ class MainActivity: Activity() {
         val drawer=LinearLayout(this).apply{
             tag="left_navigation"
             orientation=LinearLayout.VERTICAL
-            setBackgroundColor(0xF015283C.toInt())
+            background=infoPanelBackground()
         }
         drawer.addView(TextView(this).apply{
             text="MYVIEW  •  CHANNEL GROUPS  •  LEFT for menu"
@@ -8113,7 +8125,7 @@ class MainActivity: Activity() {
         val drawer=LinearLayout(this).apply{
             tag="left_navigation"
             orientation=LinearLayout.VERTICAL
-            setBackgroundColor(0xF015283C.toInt())
+            background=infoPanelBackground()
         }
         drawer.addView(TextView(this).apply{
             text="MYVIEW  •  MENU  •  RIGHT for groups"
@@ -8124,7 +8136,7 @@ class MainActivity: Activity() {
         val actions=listOf("⚙  All Settings","⌂  Home","🙈  Hidden channels",
             "✓  Check hidden channels","▤  EPG / TV Guide",
             "↻  Refresh from source","▦  Playlists")
-        val list=ListView(this)
+        val list=styledMenuList()
         list.adapter=android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,
             actions.mapIndexed{index,label->"%02d   %s".format(java.util.Locale.ROOT,index+1,label)})
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
@@ -8165,7 +8177,7 @@ class MainActivity: Activity() {
         val drawer=LinearLayout(this).apply{
             tag="left_navigation"
             orientation=LinearLayout.VERTICAL
-            setBackgroundColor(0xF015283C.toInt())
+            background=infoPanelBackground()
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
@@ -8174,7 +8186,7 @@ class MainActivity: Activity() {
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
         })
-        val list=ListView(this)
+        val list=styledMenuList()
         list.adapter=android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,names)
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         screen.addView(drawer,FrameLayout.LayoutParams(
@@ -8233,7 +8245,7 @@ class MainActivity: Activity() {
         val drawer=LinearLayout(this).apply{
             tag="channel_drawer"
             orientation=LinearLayout.VERTICAL
-            setBackgroundColor(0xF015283C.toInt())
+            background=infoPanelBackground()
         }
         drawer.addView(TextView(this).apply{
             text=group+"  •  LEFT for groups"
@@ -8241,7 +8253,7 @@ class MainActivity: Activity() {
             setTextColor(android.graphics.Color.WHITE)
             setPadding(16,16,8,12)
         })
-        val list=ListView(this)
+        val list=styledMenuList()
         // Virtualize channel labels: do not allocate one string/view per channel.
         list.adapter=object:android.widget.BaseAdapter(){
             override fun getCount()=indices.size
@@ -8437,7 +8449,7 @@ class MainActivity: Activity() {
         val drawer=LinearLayout(this).apply{
             tag="settings_drawer"
             orientation=LinearLayout.VERTICAL
-            setBackgroundColor(0xF015283C.toInt())
+            background=infoPanelBackground()
             isFocusableInTouchMode=true
         }
         drawer.addView(TextView(this).apply{
@@ -8446,7 +8458,7 @@ class MainActivity: Activity() {
             setTextColor(android.graphics.Color.WHITE)
             setPadding(20,18,12,16)
         })
-        val list=ListView(this)
+        val list=styledMenuList()
         list.adapter=android.widget.ArrayAdapter<String>(this,android.R.layout.simple_list_item_1,options)
         drawer.addView(list,LinearLayout.LayoutParams(-1,0,1f))
         val width=(resources.displayMetrics.widthPixels*0.43f).toInt().coerceAtLeast(260)
