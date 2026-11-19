@@ -7689,28 +7689,12 @@ class MainActivity: Activity() {
             ellipsize=android.text.TextUtils.TruncateAt.END
             setPadding(0,tvDp(3),0,tvDp(5))
         })
-        details.addView(TextView(this).apply{
-            text=buildString{
-                if(current!=null)append("NOW   ").append(current.title)
-                    .append("  ·  ").append(programmeTime(current.start))
-                    .append("–").append(programmeTime(current.end))
-                if(next!=null){
-                    if(isNotEmpty())append("\n")
-                    append("NEXT   ").append(next.title)
-                        .append("  ·  ").append(programmeTime(next.start))
-                }
-                if(showEpg && current==null && next==null)
-                    append("\nEPG: ").append(if(epgLoadingGeneration!=null) "Loading…" else "No programme matched")
-                if(extra.isNotBlank()){
-                    if(isNotEmpty())append("\n")
-                    append(extra)
-                }
-            }
-            textSize=14f
-            setTextColor(0xFFD8E8F4.toInt())
-            maxLines=3
+        if(extra.isNotBlank())details.addView(TextView(this).apply{
+            text=extra
+            textSize=13f
+            maxLines=2
             ellipsize=android.text.TextUtils.TruncateAt.END
-            setLineSpacing(tvDp(2).toFloat(),1f)
+            setTextColor(0xFFB7DDEE.toInt())
         })
         content.addView(details,LinearLayout.LayoutParams(0,-2,1f))
 
@@ -7723,8 +7707,64 @@ class MainActivity: Activity() {
             marginStart=tvDp(8)
         })
         panel.addView(content,LinearLayout.LayoutParams(-1,-2))
-        banner=panel
+
+        // The premium NOW/NEXT strip is purely informational. It does not
+        // download or refresh EPG, interfere with remote focus, or own playback.
+        if(showEpg){
+            val guideRow=LinearLayout(this).apply{
+                orientation=LinearLayout.HORIZONTAL
+                setPadding(tvDp(16),tvDp(8),tvDp(16),tvDp(8))
+            }
+            fun programmeColumn(label:String,title:String,time:String):LinearLayout =
+                LinearLayout(this).apply{
+                    orientation=LinearLayout.VERTICAL
+                    setPadding(tvDp(4),0,tvDp(12),0)
+                    addView(TextView(this@MainActivity).apply{
+                        text=label
+                        textSize=11f
+                        setTypeface(null,android.graphics.Typeface.BOLD)
+                        setTextColor(0xFF5FE6CC.toInt())
+                    })
+                    addView(TextView(this@MainActivity).apply{
+                        text=title
+                        textSize=15f
+                        maxLines=1
+                        ellipsize=android.text.TextUtils.TruncateAt.END
+                        setTextColor(android.graphics.Color.WHITE)
+                    })
+                    addView(TextView(this@MainActivity).apply{
+                        text=time
+                        textSize=12f
+                        setTextColor(0xFFB3D0E5.toInt())
+                    })
+                }
+            val currentTitle=current?.title ?:if(epgLoadingGeneration!=null)"Loading guide…" else "No current programme"
+            val currentTime=current?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
+            val nextTitle=next?.title ?: "No upcoming programme"
+            val nextTime=next?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
+            guideRow.addView(programmeColumn("NOW",currentTitle,currentTime),
+                LinearLayout.LayoutParams(0,-2,1f))
+            guideRow.addView(View(this).apply{
+                setBackgroundColor(0x665F91B5)
+            },LinearLayout.LayoutParams(tvDp(1),tvDp(53)))
+            guideRow.addView(programmeColumn("NEXT",nextTitle,nextTime),
+                LinearLayout.LayoutParams(0,-2,1f))
+            panel.addView(View(this).apply{setBackgroundColor(0x665F91B5)},
+                LinearLayout.LayoutParams(-1,tvDp(1)))
+            panel.addView(guideRow,LinearLayout.LayoutParams(-1,-2))
+        }
         val isPreview=previewIndex==index && index!=active
+        panel.addView(TextView(this).apply{
+            text=if(isPreview)"OK  Select channel    •    BACK  Close preview"
+                else "OK  Channel actions    •    EPG  Programme guide"
+            textSize=12f
+            maxLines=1
+            ellipsize=android.text.TextUtils.TruncateAt.END
+            gravity=Gravity.CENTER_VERTICAL
+            setTextColor(0xFFA9CADF.toInt())
+            setPadding(tvDp(19),tvDp(8),tvDp(8),tvDp(9))
+        })
+        banner=panel
         previewInfoPanel=if(isPreview)panel else null
         screen.addView(panel,FrameLayout.LayoutParams(
             (resources.displayMetrics.widthPixels*0.86f).toInt(),-2,
