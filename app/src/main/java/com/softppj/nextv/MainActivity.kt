@@ -3585,7 +3585,9 @@ class MainActivity: Activity() {
     }
     private fun channelCollection(title:String,indices:List<Int>){
         val indices=orderedChannelIndices(title,indices)
-        reset(title+" ("+indices.size+")")
+        val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
+        val search=title.startsWith("Search:")
+        reset(title+" ("+identities.size+")")
         val list=styledMenuList().apply{
             dividerHeight=1
             isFocusable=true
@@ -3604,9 +3606,9 @@ class MainActivity: Activity() {
         list.setSelector(android.graphics.drawable.ColorDrawable(0x9918628C.toInt()))
         list.setDrawSelectorOnTop(true)
         list.adapter=object:android.widget.BaseAdapter(){
-            override fun getCount()=indices.size
-            override fun getItem(position:Int):Any=channels[indices[position]]
-            override fun getItemId(position:Int)=indices[position].toLong()
+            override fun getCount()=identities.size
+            override fun getItem(position:Int):Any=identities[position]
+            override fun getItemId(position:Int)=position.toLong()
             override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View{
                 val view=(convertView as? TextView) ?: TextView(this@MainActivity).apply{
                     textSize=18f
@@ -3621,8 +3623,13 @@ class MainActivity: Activity() {
                     isSingleLine=true
                     ellipsize=android.text.TextUtils.TruncateAt.END
                 }
-                val index=indices[position]
-                val channel=channels[index]
+                val index=resolveListedChannel(identities[position],search)
+                val channel=channels.getOrNull(index)
+                if(channel==null){
+                    view.text="Unavailable — playlist changed"
+                    view.tag=false
+                    return view
+                }
                 val isPlaying=(selectedIdentity!=null && id(channel)==selectedIdentity) ||
                     (selectedIdentity==null && channel.url==selectedUrl)
                 view.text=(if(isPlaying)"▶  " else "")+channelLabel(index)+"  ·  "+channel.group
@@ -3636,19 +3643,27 @@ class MainActivity: Activity() {
         }
         list.setOnItemClickListener{_,_,position,_->
             list.setItemChecked(position,true)
-            val selected=indices[position]
-            // Explicit selection may play a hidden or locked channel.
-            // Locked channels still require their PIN in playIndex().
-            playIndex(preferredChannel(selected))
+            val selected=resolveListedChannel(identities[position],search)
+            if(selected>=0){
+                // Manual lists may select hidden channels; PIN checks stay in playIndex().
+                val preferred=preferredChannel(selected)
+                if(preferred in channels.indices)playIndex(preferred)
+            }else Toast.makeText(this,"Channel unavailable — refresh list",Toast.LENGTH_SHORT).show()
         }
         list.setOnItemLongClickListener{_,_,position,_->
-            val selected=indices[position]
+            val selected=resolveListedChannel(identities[position],search)
+            if(selected<0){
+                Toast.makeText(this,"Channel unavailable — refresh list",Toast.LENGTH_SHORT).show()
+                return@setOnItemLongClickListener true
+            }
             showChannelListQuickActions(selected,{
                 (list.adapter as android.widget.BaseAdapter).notifyDataSetChanged()
                 list.setSelection(position)
                 list.requestFocus()
             },{
-                channelCollection(title,indices)
+                channelCollection(title,identities.mapNotNull{identity->
+                    resolveListedChannel(identity,search).takeIf{it>=0}
+                })
             })
             true
         }
@@ -3658,7 +3673,12 @@ class MainActivity: Activity() {
             val previous=indices.firstOrNull{identity!=null && id(channels[it])==identity}
                 ?:indices.firstOrNull{channels[it].url==last}
             if(previous!=null){
-                root.addView(button("▶ Resume last channel: "+channels[previous].name){playIndex(previous)})
+                val previousIdentity=id(channels[previous])
+                root.addView(button("▶ Resume last channel: "+channels[previous].name){
+                    val resolved=resolveListedChannel(previousIdentity,false)
+                    if(resolved>=0)playIndex(resolved)
+                    else Toast.makeText(this,"Previous channel unavailable",Toast.LENGTH_SHORT).show()
+                }
                 val position=indices.indexOf(previous)
                 list.setSelection(position)
                 list.post{list.setSelection(position)}
