@@ -4391,20 +4391,34 @@ class MainActivity: Activity() {
         reset("MyView  •  YouTube")
         root.addView(label("YouTube  |  "+items.size+" saved entries"))
         root.addView(button("⌕  Search YouTube entries"){mediaSearch("youtube")})
-        root.addView(button("▶  All YouTube entries"){mediaRows("YouTube",items){youtubeLibrary()}})
+        val identities=items.map{ id(channels[it]) }
+        root.addView(button("▶  All YouTube entries"){
+            val current=identities.mapNotNull{key->
+                resolveListedChannel(key,true).takeIf{it>=0 && isYoutubeChannel(it)}
+            }.distinct()
+            mediaRows("YouTube",current){youtubeLibrary()}
+        })
         root.addView(button("←  Home"){showHome()})
     }
+    private fun currentMediaSelection(identities:List<String>,type:String):List<Int> =
+        identities.mapNotNull{identity->
+            resolveListedChannel(identity,false).takeIf{it>=0 && channels[it].mediaType==type}
+        }.distinct()
+
     private fun mediaSeries(){
         val items=mediaItems("series")
         reset("MyView  •  Series")
         root.addView(label("Series  |  "+items.size+" episodes"))
         root.addView(button("⌕  Search Series"){mediaSearch("series")})
         items.groupBy{channels[it].group}.toSortedMap().forEach{(name,episodes)->
+            val identities=episodes.map{ id(channels[it]) }
             root.addView(button("▣  "+name+"  •  "+episodes.size+" episodes"){
-                val ordered=episodes.sortedWith(compareBy<Int>(
-                    {channels[it].season.toIntOrNull()?:0},
-                    {channels[it].episode.toIntOrNull()?:0}
-                ))
+                val ordered=currentMediaSelection(identities,"series")
+                    .filter{channels[it].group==name}
+                    .sortedWith(compareBy<Int>(
+                        {channels[it].season.toIntOrNull()?:0},
+                        {channels[it].episode.toIntOrNull()?:0}
+                    ))
                 mediaRows(name,ordered){mediaSeries()}
             })
         }
@@ -4416,9 +4430,17 @@ class MainActivity: Activity() {
         reset("MyView  •  Music")
         root.addView(label("Music  |  "+items.size+" songs"))
         root.addView(button("⌕  Search Songs / Artists / Albums"){mediaSearch("music")})
-        root.addView(button("♫  All Songs"){mediaRows("All Songs",items){mediaMusic()}})
+        val allSongIdentities=items.map{ id(channels[it]) }
+        root.addView(button("♫  All Songs"){
+            mediaRows("All Songs",currentMediaSelection(allSongIdentities,"music")){mediaMusic()}
+        })
         items.groupBy{channels[it].artist.ifBlank{"Unknown Artist"}}.toSortedMap().forEach{(artist,songs)->
-            root.addView(button("♫  "+artist+"  ("+songs.size+")"){mediaRows(artist,songs){mediaMusic()}})
+            val identities=songs.map{ id(channels[it]) }
+            root.addView(button("♫  "+artist+"  ("+songs.size+")"){
+                val current=currentMediaSelection(identities,"music")
+                    .filter{channels[it].artist.ifBlank{"Unknown Artist"}==artist}
+                mediaRows(artist,current){mediaMusic()}
+            })
         }
         root.addView(button("←  Home"){showHome()})
     }
@@ -4490,12 +4512,17 @@ class MainActivity: Activity() {
         root.addView(button("⌕  Search "+title){mediaSearch(type)})
         if(type=="movie"||type=="series")root.addView(button("▶  Continue Watching"){continueMedia()})
         if(indices.isEmpty())root.addView(label("No items yet. Add media-type=\""+type+"\" to an EXTINF playlist entry."))
-        indices.map{channels[it].group}.distinct().sorted().forEach{group->
-            root.addView(button("▸  "+group+"  ("+indices.count{channels[it].group==group}+")"){
-                mediaRows(group,indices.filter{channels[it].group==group}){mediaLibrary(type)}
+        val allIdentities=indices.map{ id(channels[it]) }
+        indices.groupBy{channels[it].group}.toSortedMap().forEach{(group,groupIndices)->
+            val identities=groupIndices.map{ id(channels[it]) }
+            root.addView(button("▸  "+group+"  ("+groupIndices.size+")"){
+                val current=currentMediaSelection(identities,type).filter{channels[it].group==group}
+                mediaRows(group,current){mediaLibrary(type)}
             })
         }
-        root.addView(button("▦  All "+title){mediaRows(title,indices){mediaLibrary(type)}})
+        root.addView(button("▦  All "+title){
+            mediaRows(title,currentMediaSelection(allIdentities,type)){mediaLibrary(type)}
+        })
         root.addView(button("＋  Manage playlists"){managePlaylists()})
         root.addView(button("←  Home"){showHome()})
     }
@@ -9760,6 +9787,16 @@ class MainActivity: Activity() {
         }
     }
 
+    private fun resumeAuthorizedChannel(identity:String,hint:Int,unlockExactChannel:Boolean=false){
+        val current=resolveListedChannel(identity,false,hint)
+        val channel=channels.getOrNull(current)
+        if(channel==null){
+            showBanner("Channel changed or playlist unavailable",true)
+            return
+        }
+        if(unlockExactChannel)unlockedChannel=identity
+        playIndex(current)
+    }
     private fun playIndex(index:Int){
         val tuneRequestTime=android.os.SystemClock.elapsedRealtime()
         // Explicit tune, numeric input and menu selection supersede any
@@ -9769,6 +9806,7 @@ class MainActivity: Activity() {
         if(!licenseReady)return
         if(index !in channels.indices)return
         val c=channels[index]
+        val requestedIdentity=id(c)
         if(c.source.isNotBlank() && playlists().none{it.enabled && it.name==c.source}){
             showBanner("This playlist is disabled or deleted",true)
             return
@@ -9783,16 +9821,16 @@ class MainActivity: Activity() {
             youtubeResolveTimeout=null
         }
         if(c.source in lockedPlaylistNames() && c.source !in unlockedPlaylistsThisSession){
-            openLockedPlaylist(c.source){playIndex(index)}
+            openLockedPlaylist(c.source){resumeAuthorizedChannel(requestedIdentity,index)}
             return
         }
         if(c.group in lockedGroupNames() && c.group !in unlockedGroupsThisSession){
-            openLockedGroup(c.group){playIndex(index)}
+            openLockedGroup(c.group){resumeAuthorizedChannel(requestedIdentity,index)}
             return
         }
         // Do not contact or classify a locked channel before PIN approval.
         if(unlockedChannel!=id(c) && isLocked(c)){
-            requirePin {unlockedChannel=id(c);playIndex(index)}
+            requirePin {resumeAuthorizedChannel(requestedIdentity,index,true)}
             return
         }
         // Combined browser tunes a source explicitly; remote surfing stays scoped.
