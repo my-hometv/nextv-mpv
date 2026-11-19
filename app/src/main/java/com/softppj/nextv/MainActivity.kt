@@ -3588,6 +3588,7 @@ class MainActivity: Activity() {
         val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
         val search=title.startsWith("Search:")
         reset(title+" ("+identities.size+")")
+        if(search)searchResultBack=onBack
         val list=styledMenuList().apply{
             dividerHeight=1
             isFocusable=true
@@ -4218,9 +4219,12 @@ class MainActivity: Activity() {
         setOnClickListener{action()}
     }
     private val navigationHistory=mutableListOf<()->Unit>()
+    // Hardware BACK uses the same return destination as the visible Back action.
+    private var searchResultBack:(()->Unit)?=null
     private var navigatingBack=false
     private var currentMenu:(()->Unit)?=null
     private fun reset(title:String) {
+        searchResultBack=null
         homeScreenVisible=false
         val destination:(()->Unit)?=when{
             title=="MyView  •  HOME"->({showHome()})
@@ -4554,6 +4558,7 @@ class MainActivity: Activity() {
         val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
         val search=title.startsWith("Search:")
         reset("MyView  •  "+title)
+        if(search)searchResultBack=onBack
         root.addView(label(identities.size.toString()+" items"))
         val list=styledMenuList().apply{
             dividerHeight=2
@@ -12080,8 +12085,14 @@ class MainActivity: Activity() {
             // Open navigation drawers are closed by the branch above.
             confirmExit()
         }else{
-            // BACK from Home offers exit; nested menus still return Home.
-            if(homeScreenVisible)confirmExit() else showHome()
+            // A physical BACK press follows the same search/category route
+            // as the on-screen Back button instead of discarding context.
+            val destination=searchResultBack
+            if(destination!=null){
+                searchResultBack=null
+                destination()
+            }else if(homeScreenVisible)confirmExit()
+            else showHome()
         }
     }
     private fun stopPlayback(){
