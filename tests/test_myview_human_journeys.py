@@ -153,5 +153,8 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertNotIn("channels=channels.filter{it.group!=group}",group)
         self.assertLess(group.index("if(wasPlaying)stopPlayback()"),
                         group.index("publishChannelsKeepingPlayback("))
+        self.assertIn('c.source in enabled',group)
+        self.assertIn('!isManuallyHidden(c)',group)
+        self.assertIn('!isLocked(c)',group)
 
 if __name__=="__main__":unittest.main()

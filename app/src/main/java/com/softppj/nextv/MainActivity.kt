@@ -6152,8 +6152,17 @@ class MainActivity: Activity() {
         val locks=lockedGroupNames().toMutableSet();locks.remove(group)
         prefs.edit().putStringSet("locked_groups",locks).apply()
         if(wasPlaying){
-            active=-1
-            val next=channels.indexOfFirst{it.mediaType=="live"}
+            val enabled=playlists().filter{it.enabled}.map{it.name}.toHashSet()
+            val protectedSources=lockedPlaylistNames()
+            val protectedGroups=lockedGroupNames()
+            val next=channels.indexOfFirst{c->
+                c.mediaType=="live" &&
+                    (c.source.isBlank() || c.source in enabled) &&
+                    !isManuallyHidden(c) && !isGroupHidden(c.group) &&
+                    !isLocked(c) &&
+                    (c.source !in protectedSources || c.source in unlockedPlaylistsThisSession) &&
+                    (c.group !in protectedGroups || c.group in unlockedGroupsThisSession)
+            }
             if(next>=0)playIndex(next) else showHome()
         }else{
             Toast.makeText(this,"Group deleted after 3 incorrect PIN attempts",Toast.LENGTH_LONG).show()
