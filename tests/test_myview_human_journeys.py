@@ -147,4 +147,11 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn('name.startsWith("last_working_url_")',safety)
         self.assertIn('putString("last_working_url_"+c.source,c.url)',MAIN)
 
+    def test_pin_failure_group_deletion_cannot_rebase_foreground_index_unsafely(self):
+        group=between("private fun deleteGroupAfterPinFailures(", "private fun toggleLock(")
+        self.assertIn("publishChannelsKeepingPlayback(channels.filter{it.group!=group}",group)
+        self.assertNotIn("channels=channels.filter{it.group!=group}",group)
+        self.assertLess(group.index("if(wasPlaying)stopPlayback()"),
+                        group.index("publishChannelsKeepingPlayback("))
+
 if __name__=="__main__":unittest.main()

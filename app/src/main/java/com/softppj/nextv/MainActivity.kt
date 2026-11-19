@@ -6146,8 +6146,9 @@ class MainActivity: Activity() {
             .remove("pin_failures_group:"+group).apply()
         val wasPlaying=channels.getOrNull(active)?.group==group
         if(wasPlaying)stopPlayback()
-        channels=channels.filter{it.group!=group}.toMutableList()
-        channelIndexOwner=null;channelIndexSize=-1
+        // Use the shared playback-identity transition: group deletion can
+        // shift the index of a channel belonging to another group.
+        publishChannelsKeepingPlayback(channels.filter{it.group!=group}.toMutableList())
         val locks=lockedGroupNames().toMutableSet();locks.remove(group)
         prefs.edit().putStringSet("locked_groups",locks).apply()
         if(wasPlaying){
