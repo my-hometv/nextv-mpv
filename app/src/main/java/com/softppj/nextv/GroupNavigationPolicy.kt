@@ -4,12 +4,10 @@ package com.softppj.nextv
 internal object GroupNavigationPolicy {
     fun visibleGroups(
         channels:List<Channel>, liveIndices:List<Int>, enabledSources:Set<String>,
-        lockedSources:Set<String>, unlockedSources:Set<String>,
-        hiddenGroups:Set<String>
+        lockedSources:Set<String>, unlockedSources:Set<String>
     ):List<String> = liveIndices.asSequence().mapNotNull { i ->
         val c=channels.getOrNull(i) ?:return@mapNotNull null
         if((c.source.isNotBlank() && c.source !in enabledSources) ||
-            (c.source in lockedSources && c.source !in unlockedSources) ||
-            c.group in hiddenGroups) null else c.group
+            (c.source in lockedSources && c.source !in unlockedSources)) null else c.group
     }.distinct().toList()
 }

@@ -13,17 +13,18 @@ class GroupNavigationPolicyTest {
     @Test fun lockedGroupRemainsDiscoverableForPinEntry() {
         assertEquals(listOf("News","PIN Group"),GroupNavigationPolicy.visibleGroups(
             channels,channels.indices.toList(),setOf("Enabled","Locked"),
-            setOf("Locked"),emptySet(),emptySet()))
+            setOf("Locked"),emptySet()))
     }
-    @Test fun disabledSourceAndHiddenGroupDoNotLeakIntoNavigation() {
-        assertEquals(listOf("News"),GroupNavigationPolicy.visibleGroups(
+    @Test fun hiddenGroupRemainsReachableForManualRestore() {
+        // Hidden groups need to remain selectable for the group options menu.
+        assertEquals(listOf("News","PIN Group"),GroupNavigationPolicy.visibleGroups(
             channels,channels.indices.toList(),setOf("Enabled","Locked"),
-            setOf("Locked"),emptySet(),setOf("PIN Group")))
+            setOf("Locked"),emptySet()))
     }
     @Test fun playlistUnlockAllowsItsGroupButNotDisabledSource() {
         assertEquals(listOf("News","PIN Group","Secret Group"),
             GroupNavigationPolicy.visibleGroups(
                 channels,channels.indices.toList(),setOf("Enabled","Locked"),
-                setOf("Locked"),setOf("Locked"),emptySet()))
+                setOf("Locked"),setOf("Locked")))
     }
 }

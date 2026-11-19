@@ -8404,8 +8404,7 @@ class MainActivity: Activity() {
             GroupNavigationPolicy.visibleGroups(
                 channels,channelNumbers(),
                 playlists().filter{it.enabled}.map{it.name}.toSet(),
-                lockedPlaylistNames(),unlockedPlaylistsThisSession,
-                manuallyHiddenGroups
+                lockedPlaylistNames(),unlockedPlaylistsThisSession
             )
             else playlistIndicesIncludingLocked().map{channels[it].group}.distinct())
         val drawer=LinearLayout(this).apply{
