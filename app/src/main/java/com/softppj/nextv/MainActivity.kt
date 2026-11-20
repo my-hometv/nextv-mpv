@@ -3121,12 +3121,25 @@ class MainActivity: Activity() {
             return
         }
         val i=active
-        if(i !in channels.indices)return
-        loadEpg(done={success->if(success)showChannelEpg(i) else
-            showSideDialog(AlertDialog.Builder(this).setTitle("EPG unavailable")
+        val channel=channels.getOrNull(i) ?:return
+        val originalScreen=videoScreen ?:return
+        val originalGeneration=playbackGeneration
+        val originalIdentity=id(channel)
+        loadEpg(done={success->
+            // A guide response can arrive after BACK, a channel switch, playlist
+            // replacement or EPG OFF. Never open a stale guide or error dialog.
+            if(!licenseReady || isFinishing || isDestroyed ||
+                !prefs.getBoolean("nextv_epg_enabled",true) ||
+                !prefs.getBoolean("show_channel_epg",true) ||
+                playbackGeneration!=originalGeneration ||
+                videoScreen!==originalScreen || active!=i ||
+                channels.getOrNull(i)?.let(::id)!=originalIdentity)return@loadEpg
+            if(success)showChannelEpg(i)
+            else showSideDialog(AlertDialog.Builder(this).setTitle("EPG unavailable")
                 .setMessage("Could not load your EPG sources.")
                 .setPositiveButton("EPG sources"){_,_->configureEpg()}
-                .setNegativeButton("Close",null).create())})
+                .setNegativeButton("Close",null).create())
+        })
     }
     // Half-hour programme grid: the same guide can be browsed while live TV
     // continues playing. A virtualized ListView avoids creating thousands of rows.
@@ -8334,7 +8347,17 @@ class MainActivity: Activity() {
         handler.postDelayed(dismiss,prefs.getInt("channel_preview_seconds",5).coerceIn(1,30)*1000L)
     }
     private fun screenInfoOnStart(index:Int){
-        handler.postDelayed({if(active==index)showChannelInfo(index)},500)
+        val originalScreen=videoScreen ?:return
+        val originalGeneration=playbackGeneration
+        val originalIdentity=channels.getOrNull(index)?.let(::id) ?:return
+        handler.postDelayed({
+            // Re-entering a different playback session with the same channel
+            // index must never resurrect an older Channel Info panel.
+            if(licenseReady && !isFinishing && !isDestroyed &&
+                videoScreen===originalScreen && playbackGeneration==originalGeneration &&
+                active==index && channels.getOrNull(index)?.let(::id)==originalIdentity)
+                showChannelInfo(index)
+        },500)
         if(prefs.getBoolean("nextv_epg_enabled",true) && epgUrls().isNotEmpty()){
             if(EpgGuidePolicy.needsRefresh(epgLoadedAt,System.currentTimeMillis())){
                 loadEpg(done={scheduleEpgFreshnessCheck()})
