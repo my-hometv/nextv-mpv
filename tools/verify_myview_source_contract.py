@@ -53,8 +53,10 @@ def check(root: Path = ROOT) -> list[str]:
             "Crash loop recovery must attempt the first permitted channel only once")
     require('last_working_url' in resume and 'last_working_channel_identity' in resume,
             "Resume must prioritize the last confirmed working channel")
-    require("continueBanner.post{" in home and "continueBanner.requestFocus()" in home,
-            "Home initial DPAD focus must target the focusable Continue TV banner")
+    require("primaryCategories.post{" in home and
+            "primaryCategories.getChildAt(0)?.requestFocus()" in home and
+            'tvCard("▦","TV","Live channels")' in home,
+            "Home initial DPAD focus must target the first TV category tile")
     require("homeContent.getChildAt(2)" not in home,
             "Do not regress to focusing an unselectable Home section heading")
     require("R.drawable.tv_banner" in home and
