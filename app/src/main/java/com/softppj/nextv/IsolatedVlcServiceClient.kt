@@ -147,6 +147,13 @@ internal class IsolatedVlcServiceClient(context: Context) {
         catch (_: RemoteException) { endpoint = null; -1L }
     }
 
+    fun seek(requestGeneration: Long, positionMs: Long): Boolean = synchronized(lock) {
+        if (closed || requestGeneration != generation || positionMs <= 0L)
+            return@synchronized false
+        try { endpoint?.seek(requestGeneration, positionMs) == true }
+        catch (_: RemoteException) { endpoint = null; false }
+    }
+
     fun stop(requestGeneration: Long) = synchronized(lock) {
         if (closed || requestGeneration != generation) return@synchronized
         try { endpoint?.stop(requestGeneration) }
