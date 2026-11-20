@@ -55,6 +55,21 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("EpgGuidePolicy.matchNames(c.name)",matcher)
         self.assertIn("epg_offset_minutes",matcher)
 
+    def test_epg_guide_actions_revalidate_identity_after_playlist_reordering(self):
+        body=between("private fun showChannelEpg(i:Int){", "private fun openCurrentChannelEpg(){")
+        self.assertIn("val originalIdentity=id(c)",body)
+        self.assertIn("EpgGuidePolicy.resolveDialogChannel(channels,originalIdentity,::id)",body)
+        self.assertIn("fun resolveGuideAction():Int",body)
+        self.assertIn("fun watchGuideChannel()",body)
+        self.assertIn("if(current>=0)playIndex(preferredChannel(current))",body)
+        self.assertIn('scheduleEpgTune(channels[current],programme,"auto")',body)
+        self.assertIn('scheduleEpgTune(channels[current],programme,"reminder")',body)
+        self.assertIn("else showChannelEpg(current)",body)
+        self.assertIn("candidate.source in unlockedPlaylistsThisSession",body)
+        self.assertIn("candidate.group in unlockedGroupsThisSession",body)
+        self.assertNotIn("playIndex(preferredChannel(i))",body)
+        self.assertNotIn("scheduleEpgTune(c,programme",body)
+
     def test_stale_epg_result_cannot_open_guide_or_error_after_channel_change(self):
         callback=between("private fun openCurrentChannelEpg(){", "// Half-hour programme grid:")
         self.assertIn("val originalScreen=videoScreen ?:return",callback)
