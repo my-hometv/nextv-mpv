@@ -2203,10 +2203,12 @@ class MainActivity: Activity() {
             return
         }
         val channel=channels[index]
-        if(channel.mediaType in setOf("movie","series","music")){
-            // The media detail screen owns authorization and resume choices.
-            mediaDetails(index)
-        }else playIndex(index)
+        // Enter the existing authorized playback route directly. The saved
+        // seek position is applied using the same path as "Resume" in media
+        // details; Live TV and Web TV start normally.
+        requestedMediaResumeSeconds=if(channel.mediaType in setOf("movie","series","music"))
+            mediaResumeSeconds(channel) else 0L
+        playIndex(index)
     }
     private fun recentlyWatched(){
         val saved=savedJsonArray(viewerKey("recent_channels"))
