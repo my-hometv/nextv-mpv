@@ -15,6 +15,12 @@ class EpgLoadBudgetTest {
         assertEquals(0L,EpgLoadBudget.remainingMs(2000L,62000L))
         assertEquals(0L,EpgLoadBudget.remainingMs(2000L,62500L))
     }
+    @Test fun individualSlowFeedCannotUseWholeRefreshBudget() {
+        assertEquals(20000L,EpgLoadBudget.sourceRemainingMs(1000L,1000L))
+        assertEquals(5000L,EpgLoadBudget.sourceRemainingMs(1000L,16000L))
+        assertEquals(0L,EpgLoadBudget.sourceRemainingMs(1000L,21000L))
+        assertEquals(0L,EpgLoadBudget.sourceRemainingMs(1000L,30000L))
+    }
     @Test fun networkTimeoutsRespectRemainingTime() {
         assertEquals(8000,EpgLoadBudget.connectionTimeoutMs(60000))
         assertEquals(20000,EpgLoadBudget.readTimeoutMs(60000))
