@@ -16,6 +16,7 @@ interface IIsolatedVlcPlayback {
     int playbackState(long generation);
     // Monotonic count of native time/position advancement callbacks.
     long playbackProgressCount(long generation);
+    long playbackPositionMs(long generation);
     // Generation-bound VOD resume; never seek a newer playback session.
     boolean seek(long generation, long positionMs);
     void stop(long generation);
