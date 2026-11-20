@@ -47,8 +47,10 @@ class HumanJourneyTest(unittest.TestCase):
     def test_epg_budget_and_failing_feed_backoff(self):
         loader=between("private fun loadEpg(", "private fun showChannelEpg(")
         self.assertIn("EpgLoadBudget.remainingMs(",loader)
-        self.assertIn("EpgLoadBudget.connectionTimeoutMs(remaining)",loader)
-        self.assertIn("EpgLoadBudget.readTimeoutMs(remaining)",loader)
+        self.assertIn("EpgLoadBudget.connectionTimeoutMs(",loader)
+        self.assertIn("EpgLoadBudget.readTimeoutMs(",loader)
+        self.assertIn("EpgLoadBudget.sourceRemainingMs(sourceStart,",loader)
+        self.assertIn("feed exceeded 20-second limit",loader)
         self.assertIn("temporarily skipped after recent failure",loader)
         self.assertIn("showProgress:Boolean=false",loader)
         self.assertIn("epgFailedUntil.clear()",MAIN)
