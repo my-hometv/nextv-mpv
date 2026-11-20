@@ -851,6 +851,7 @@ class MainActivity: Activity() {
     private var bannerTask:Runnable?=null
     // One timer at the next programme boundary, only while Channel Info is visible.
     private var channelInfoEpgBoundaryTask:Runnable?=null
+    private var channelInfoEpgRefresh:(()->Unit)?=null
     private fun cancelChannelInfoEpgBoundaryRefresh(){
         channelInfoEpgBoundaryTask?.let{handler.removeCallbacks(it)}
         channelInfoEpgBoundaryTask=null
@@ -6875,6 +6876,7 @@ class MainActivity: Activity() {
     private fun showBanner(message:String, error:Boolean=false, dismissAfterMs:Long=if(error)4000L else 2500L){
         val screen=videoScreen ?:return
         cancelChannelInfoEpgBoundaryRefresh()
+        channelInfoEpgRefresh=null
         bannerTask?.let{handler.removeCallbacks(it)}
         banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
         val panel=LinearLayout(this).apply{
@@ -8375,13 +8377,10 @@ class MainActivity: Activity() {
     // background EPG completion must not reopen expired panels or steal focus.
     private fun refreshVisibleChannelInfoEpg(){
         val screen=videoScreen ?:return
-        // Update whichever Channel Info is actually visible, including
-        // a channel being previewed with Up/Down; never reopen a closed panel.
-        val displayed=if(previewInfoPanel===banner && previewIndex in channels.indices)
-            previewIndex else active
-        if(displayed in channels.indices &&
-            banner?.parent===screen && banner?.tag=="myview_channel_info")
-            showChannelInfo(displayed)
+        // Keep the original panel and its dismissal deadline, including
+        // when EPG finishes loading during a channel preview.
+        if(banner?.parent===screen && banner?.tag=="myview_channel_info")
+            channelInfoEpgRefresh?.invoke()
     }
     private fun showChannelInfo(index:Int,extra:String=""){
         val screen=videoScreen ?:return
@@ -8390,6 +8389,7 @@ class MainActivity: Activity() {
         bannerTask?.let{handler.removeCallbacks(it)}
         banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
         if(previewInfoPanel===banner)previewInfoPanel=null
+        channelInfoEpgRefresh=null
 
         // A compact TV-safe glass card: no extra artwork downloads, decoders,
         // animation loops or expensive work on every remote press.
@@ -8427,8 +8427,7 @@ class MainActivity: Activity() {
             prefs.getBoolean("show_channel_epg",true)
         // Query the guide once; repeated EPG lookups here can stall rapid surfing.
         val programmes=if(showEpg)programmeList(channel) else emptyList()
-        val current=programmes.firstOrNull{it.start<=now && it.end>now}
-        val next=programmes.asSequence().filter{it.start>now}.minByOrNull{it.start}
+        val (current,next)=EpgGuidePolicy.nowNext(programmes,now,{it.start},{it.end})
         val playing=if(index==active)when{
             player!=null->"Media3"
             vlcPlayer!=null->"LibVLC"
@@ -8522,32 +8521,40 @@ class MainActivity: Activity() {
             val nowTimeView=nowColumn.getChildAt(2) as TextView
             val nextTitleView=nextColumn.getChildAt(1) as TextView
             val nextTimeView=nextColumn.getChildAt(2) as TextView
-            fun armProgrammeBoundary(rows:List<EpgProgramme>){
-                val moment=System.currentTimeMillis()
-                val boundary=rows.asSequence()
-                    .flatMap{sequenceOf(it.start,it.end)}
-                    .filter{it>moment}
-                    .minOrNull() ?:return
+            fun updateVisibleEpg(){
+                if(banner!==panel || panel.parent!==screen ||
+                    !prefs.getBoolean("nextv_epg_enabled",true) ||
+                    !prefs.getBoolean("show_channel_epg",true))return
+                cancelChannelInfoEpgBoundaryRefresh()
+                val updated=programmeList(channel)
+                val timestamp=System.currentTimeMillis()
+                val (onNow,onNext)=EpgGuidePolicy.nowNext(updated,timestamp,{it.start},{it.end})
+                nowTitleView.text=onNow?.title ?: "No current programme"
+                nowTimeView.text=onNow?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
+                nextTitleView.text=onNext?.title ?: "No upcoming programme"
+                nextTimeView.text=onNext?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
+                val delay=EpgGuidePolicy.nextBoundaryDelayMs(updated,timestamp,{it.start},{it.end})
+                if(delay!=null){
+                    val task=Runnable{
+                        channelInfoEpgBoundaryTask=null
+                        updateVisibleEpg()
+                    }
+                    channelInfoEpgBoundaryTask=task
+                    handler.postDelayed(task,delay)
+                }
+            }
+            // Source reloads refresh the current panel, including previews,
+            // without resetting its existing four-second dismissal callback.
+            channelInfoEpgRefresh={updateVisibleEpg()}
+            val delay=EpgGuidePolicy.nextBoundaryDelayMs(programmes,now,{it.start},{it.end})
+            if(delay!=null){
                 val task=Runnable{
                     channelInfoEpgBoundaryTask=null
-                    if(banner!==panel || panel.parent!==screen ||
-                        !prefs.getBoolean("nextv_epg_enabled",true) ||
-                        !prefs.getBoolean("show_channel_epg",true))return@Runnable
-                    val updated=programmeList(channel)
-                    val timestamp=System.currentTimeMillis()
-                    val onNow=updated.firstOrNull{it.start<=timestamp && it.end>timestamp}
-                    val onNext=updated.asSequence().filter{it.start>timestamp}
-                        .minByOrNull{it.start}
-                    nowTitleView.text=onNow?.title ?: "No current programme"
-                    nowTimeView.text=onNow?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
-                    nextTitleView.text=onNext?.title ?: "No upcoming programme"
-                    nextTimeView.text=onNext?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
-                    armProgrammeBoundary(updated)
+                    updateVisibleEpg()
                 }
                 channelInfoEpgBoundaryTask=task
-                handler.postDelayed(task,(boundary-moment).coerceAtLeast(1L))
+                handler.postDelayed(task,delay)
             }
-            armProgrammeBoundary(programmes)
             panel.addView(View(this).apply{setBackgroundColor(0x665F91B5)},
                 LinearLayout.LayoutParams(-1,tvDp(1)))
             panel.addView(guideRow,LinearLayout.LayoutParams(-1,-2))
@@ -8576,6 +8583,7 @@ class MainActivity: Activity() {
         val task=Runnable{
             if(banner===panel && previewInfoPanel!==panel){
                 cancelChannelInfoEpgBoundaryRefresh()
+                channelInfoEpgRefresh=null
                 (panel.parent as? android.view.ViewGroup)?.removeView(panel)
                 banner=null
             }
@@ -8592,6 +8600,7 @@ class MainActivity: Activity() {
         closeVideoPreview()
         if(hadPreview){
             cancelChannelInfoEpgBoundaryRefresh()
+            channelInfoEpgRefresh=null
             previewInfoPanel?.let{panel->
                 (panel.parent as? android.view.ViewGroup)?.removeView(panel)
                 if(banner===panel)banner=null
@@ -12599,6 +12608,7 @@ class MainActivity: Activity() {
     }
     private fun stopPlayback(){
         cancelChannelInfoEpgBoundaryRefresh()
+        channelInfoEpgRefresh=null
         cancelRapidSurf()
         // MultiView owns its own Media3 sessions, separate from the foreground
         // player. Revocation must stop those decoders immediately.
@@ -12766,6 +12776,7 @@ class MainActivity: Activity() {
     }
     override fun onDestroy(){
         cancelChannelInfoEpgBoundaryRefresh()
+        channelInfoEpgRefresh=null
         // Never keep external artwork HTTP requests or bitmap workers running
         // after the viewer leaves the Activity.
         ExternalLogoCatalog.cancel()
