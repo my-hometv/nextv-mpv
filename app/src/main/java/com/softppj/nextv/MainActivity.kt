@@ -6811,7 +6811,7 @@ class MainActivity: Activity() {
             setStroke(tvDp(1),if(error)0x99E59A9A.toInt() else 0x6689B5D4)
         }
 
-    private fun showBanner(message:String, error:Boolean=false){
+    private fun showBanner(message:String, error:Boolean=false, dismissAfterMs:Long=if(error)0L else 2500L){
         val screen=videoScreen ?:return
         bannerTask?.let{handler.removeCallbacks(it)}
         banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
@@ -6840,7 +6840,7 @@ class MainActivity: Activity() {
         screen.addView(panel,FrameLayout.LayoutParams(
             (resources.displayMetrics.widthPixels*0.50f).toInt(),-2,Gravity.TOP or Gravity.RIGHT
         ).apply{topMargin=tvDp(18);rightMargin=tvDp(18)})
-        if(!error){
+        if(dismissAfterMs>0L){
             val task=Runnable{
                 if(banner===panel){
                     (panel.parent as? android.view.ViewGroup)?.removeView(panel)
@@ -6848,7 +6848,7 @@ class MainActivity: Activity() {
                 }
             }
             bannerTask=task
-            handler.postDelayed(task,2500)
+            handler.postDelayed(task,dismissAfterMs)
         }
     }
     private fun styledMenuList():ListView=ListView(this).apply{
@@ -8018,7 +8018,7 @@ class MainActivity: Activity() {
         clearNumericOverlay()
         if(number==null)return
         if(number in 1..numericChannelIndices().size)playIndex(preferredChannel(numericChannelIndices()[number-1]))
-        else showBanner("Channel "+number+" is not available",true)
+        else showBanner("Channel "+number+" is not available",true,2500L)
     }
     private var previewIndex=-1
     private var previewTask:Runnable?=null
