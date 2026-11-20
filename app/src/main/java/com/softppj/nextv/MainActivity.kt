@@ -2311,8 +2311,16 @@ class MainActivity: Activity() {
         epgLoadedAt=0L
         epgIncompleteRetryAt=0L
         epgFailedUntil.clear()
+        if(epgUrls().isEmpty()){
+            // A removed final source must not leave programmes from the old
+            // selection visible indefinitely.
+            epgGuide=emptyMap()
+            cancelEpgFreshnessCheck()
+            refreshVisibleChannelInfoEpg()
+            return
+        }
         if(appInForeground && licenseReady && videoScreen!=null &&
-            prefs.getBoolean("nextv_epg_enabled",true) && epgUrls().isNotEmpty()){
+            prefs.getBoolean("nextv_epg_enabled",true)){
             handler.post{
                 if(appInForeground && licenseReady && videoScreen!=null &&
                     prefs.getBoolean("nextv_epg_enabled",true))
