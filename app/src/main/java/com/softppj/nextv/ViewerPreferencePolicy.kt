@@ -14,5 +14,15 @@ internal object ViewerPreferencePolicy {
             requested in knownProfiles)requested else "default"
 
     // Never match a raw viewer-name prefix: "Ann" must not delete "Ann_Sue".
-    fun profileKeys(name:String):List<String> = keys.map { "viewer_"+name+"_"+it }
+    fun profileKeys(name:String, existingKeys:Collection<String> = emptyList()):List<String> {
+        val prefix="viewer_"+name+"_"
+        // Progress identities are dynamically generated; match this exact
+        // viewer prefix rather than a raw username (Ann != Ann_Sue).
+        val progress=existingKeys.filter{key->
+            key.startsWith(prefix+"myhometv_progress_") ||
+                key.startsWith(prefix+"myhometv_progress_v2_") ||
+                key.startsWith(prefix+"myhometv_progress_ambiguous_")
+        }
+        return (keys.map{prefix+it}+progress).distinct()
+    }
 }
