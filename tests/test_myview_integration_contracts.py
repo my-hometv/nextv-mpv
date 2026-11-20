@@ -84,6 +84,28 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('invalidateEpgSourceSelection()', editor)
         self.assertIn('epgLoadedAt=0L', invalidation)
 
+    def test_each_epg_source_has_isolated_load_and_diagnostics(self):
+        editor = self.activity.split("private fun checkIndividualEpgSource(", 1)[1].split(
+            "private fun chooseEpgSourceMode(", 1
+        )[0]
+        panel = self.activity.split("private fun configureEpg(){", 1)[1].split(
+            "private var epgTuneTask:", 1
+        )[0]
+        loader = self.activity.split("private fun loadEpg(done:", 1)[1].split(
+            "private fun showChannelEpg(", 1
+        )[0]
+        self.assertIn('invalidateEpgSourceSelection()', editor)
+        self.assertIn('sourceOverride=url', editor)
+        self.assertIn('checkIndividualEpgSource(sources[index]', editor)
+        self.assertIn('"▶  Load / Check this EPG"', editor)
+        self.assertIn('checkIndividualEpgSource(selected.second', panel)
+        self.assertIn('val urls=if(sourceOverride!=null', loader)
+        self.assertIn('listOf(sourceOverride) else epgUrls()', loader)
+        self.assertIn('if(sourceOverride==null && epgLoadedAt>0L', loader)
+        self.assertIn('if(sourceOverride!=null)loaded>0', loader)
+        self.assertIn('The saved EPG source mode has not changed.', editor)
+        self.assertNotIn('putString("epg_source_mode"', editor)
+
     def test_epg_off_and_source_change_cancel_the_active_download(self):
         editor = self.activity.split("private fun savedManualEpgSources():", 1)[1].split(
             "private var epgTuneTask:", 1
