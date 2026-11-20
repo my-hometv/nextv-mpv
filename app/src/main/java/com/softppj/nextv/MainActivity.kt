@@ -3175,7 +3175,13 @@ class MainActivity: Activity() {
     private fun showEpgGrid(startTime:Long=System.currentTimeMillis()){
         if(!prefs.getBoolean("nextv_epg_enabled",true))return
         val selectedTime=(startTime/1800000L)*1800000L
-        val indices=EpgGuidePolicy.rows(visibleIndices(),channels.size)
+        // Freeze row identities and labels, not mutable channel-list indices.
+        // Playback refresh may reorder the underlying list while this grid is open.
+        val guideRows=EpgGuidePolicy.rows(visibleIndices(),channels.size).map{index->
+            val channel=channels[index]
+            Triple(id(channel),numberFor(index).toString()+". "+channel.name,
+                programmeList(channel))
+        }
         val dialog=AlertDialog.Builder(this).create()
         val layout=LinearLayout(this).apply{
             orientation=LinearLayout.VERTICAL
@@ -3197,11 +3203,10 @@ class MainActivity: Activity() {
         }
         // Snapshot programmes once per grid opening. Avoid repeated EPG matching,
         // sorting and offset mapping on every ListView row bind/scroll.
-        val programmesByIndex=indices.associateWith{programmeList(channels[it])}
         val adapter=object:android.widget.BaseAdapter(){
-            override fun getCount()=indices.size
-            override fun getItem(position:Int):Any=indices[position]
-            override fun getItemId(position:Int)=indices[position].toLong()
+            override fun getCount()=guideRows.size
+            override fun getItem(position:Int):Any=guideRows[position].first
+            override fun getItemId(position:Int)=position.toLong()
             override fun getView(position:Int,convertView:View?,parent:android.view.ViewGroup):View{
                 val row=(convertView as? TextView) ?:TextView(this@MainActivity).apply{
                     textSize=17f
@@ -3210,12 +3215,10 @@ class MainActivity: Activity() {
                     maxLines=3
                     ellipsize=android.text.TextUtils.TruncateAt.END
                 }
-                val i=indices[position]
-                val c=channels[i]
-                val entries=programmesByIndex[i].orEmpty()
+                val (_,label,entries)=guideRows[position]
                 val programme=entries.firstOrNull{it.start<=selectedTime && it.end>selectedTime}
                 val next=entries.firstOrNull{it.start>selectedTime}
-                row.text=numberFor(i).toString()+". "+c.name+"\n"+
+                row.text=label+"\n"+
                     (programme?.let{programmeTime(it.start)+"–"+programmeTime(it.end)+"  "+it.title}
                         ?:next?.let{"Next "+programmeTime(it.start)+"  "+it.title}
                         ?:"No EPG data at this time")
@@ -3225,16 +3228,29 @@ class MainActivity: Activity() {
         list.adapter=adapter
         // Ensure remote DPAD starts on a programme row rather than an
         // unpredictable header/footer control when the guide opens.
-        if(indices.isNotEmpty()){
+        if(guideRows.isNotEmpty()){
             list.setSelection(0)
             list.requestFocus()
         }
         layout.addView(list,LinearLayout.LayoutParams(-1,
             (resources.displayMetrics.heightPixels*0.55f).toInt().coerceAtLeast(260)))
         list.setOnItemClickListener{_,_,position,_->
-            val i=indices[position]
+            val identity=guideRows.getOrNull(position)?.first ?:return@setOnItemClickListener
             dialog.dismiss()
-            showChannelEpg(i)
+            val current=if(licenseReady && prefs.getBoolean("nextv_epg_enabled",true))
+                EpgGuidePolicy.resolveDialogChannel(channels,identity,::id){candidate->
+                    (candidate.source.isBlank() ||
+                        playlists().any{it.enabled && it.name==candidate.source}) &&
+                    (candidate.source !in lockedPlaylistNames() ||
+                        candidate.source in unlockedPlaylistsThisSession) &&
+                    (candidate.group !in lockedGroupNames() ||
+                        candidate.group in unlockedGroupsThisSession) &&
+                    (unlockedChannel==id(candidate) || !isLocked(candidate))
+                } else -1
+            if(current>=0)showChannelEpg(current)
+            else Toast.makeText(this,
+                "Channel no longer available or permitted — reopen the guide",
+                Toast.LENGTH_SHORT).show()
         }
         val nav=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL}
         fun navButton(title:String,weight:Float=1f,action:()->Unit){
@@ -3249,7 +3265,7 @@ class MainActivity: Activity() {
         footer.addView(button("Sources"){dialog.dismiss();configureEpg()},LinearLayout.LayoutParams(0,-2,1f))
         footer.addView(button("Close"){dialog.dismiss()},LinearLayout.LayoutParams(0,-2,1f))
         layout.addView(footer)
-        if(indices.isEmpty()){
+        if(guideRows.isEmpty()){
             header.text="No visible channels in the selected playlist"
         }
         dialog.setView(layout)
@@ -3258,8 +3274,21 @@ class MainActivity: Activity() {
     private fun showEpg(){
         if(!prefs.getBoolean("nextv_epg_enabled",true))return
         if(epgUrls().isEmpty()){configureEpg();return}
+        val originalScreen=videoScreen
+        val originalGeneration=playbackGeneration
+        val originalContent=findViewById<android.view.ViewGroup>(android.R.id.content)
+            .getChildAt(0)
+        val originalActive=active
         Toast.makeText(this,"Loading TV guide (up to 60 seconds)…",Toast.LENGTH_SHORT).show()
         loadEpg({success->
+            // Do not open a guide (or its failure dialog) after navigating away.
+            val content=findViewById<android.view.ViewGroup>(android.R.id.content)
+                .getChildAt(0)
+            if(!licenseReady || isFinishing || isDestroyed ||
+                !prefs.getBoolean("nextv_epg_enabled",true) ||
+                content!==originalContent || videoScreen!==originalScreen ||
+                playbackGeneration!=originalGeneration || active!=originalActive)
+                return@loadEpg
             if(!success){
                 showSideDialog(AlertDialog.Builder(this).setTitle("EPG unavailable")
                     .setMessage("Unable to load XMLTV guide.")
