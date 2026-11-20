@@ -56,6 +56,10 @@ internal object EpgGuidePolicy {
         return current to upcoming
     }
 
+    /** Stale guides are refreshed while watching, without polling XMLTV continuously. */
+    fun needsRefresh(loadedAtMs:Long,nowMs:Long):Boolean =
+        loadedAtMs<=0L || nowMs<loadedAtMs || nowMs-loadedAtMs>=60*60*1000L
+
     /** Returns null when there is no future EPG change to schedule. */
     fun <T> nextBoundaryDelayMs(
         rows:List<T>,nowMs:Long,start:(T)->Long,end:(T)->Long
