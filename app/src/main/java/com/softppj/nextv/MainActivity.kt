@@ -11586,9 +11586,11 @@ class MainActivity: Activity() {
                                     FavoriteGroupBackupMergePolicy.merge(
                                         prefs.getString(key,"{}") ?: "{}",incoming)
                                 mode==0 && incoming is String && (key=="viewer_profiles" ||
-                                    key=="recent_channels" || key=="favorite_group_order" ||
+                                    key=="recent_channels" || key=="continue_watching_ids" ||
+                                    key=="favorite_group_order" ||
                                     (key.startsWith("viewer_") &&
                                         (key.endsWith("_recent_channels") ||
+                                            key.endsWith("_continue_watching_ids") ||
                                             key.endsWith("_favorite_group_order"))))->
                                     mergeStringArrayBackup(key,incoming)
                                 mode==0 && incoming is Set<*>->
