@@ -852,6 +852,26 @@ class MainActivity: Activity() {
     // One timer at the next programme boundary, only while Channel Info is visible.
     private var channelInfoEpgBoundaryTask:Runnable?=null
     private var channelInfoEpgRefresh:(()->Unit)?=null
+    private var epgFreshnessTask:Runnable?=null
+    private fun cancelEpgFreshnessCheck(){
+        epgFreshnessTask?.let{handler.removeCallbacks(it)}
+        epgFreshnessTask=null
+    }
+    private fun scheduleEpgFreshnessCheck(){
+        cancelEpgFreshnessCheck()
+        if(!appInForeground || !licenseReady || videoScreen==null ||
+            !prefs.getBoolean("nextv_epg_enabled",true) || epgUrls().isEmpty())return
+        val task=Runnable{
+            epgFreshnessTask=null
+            if(!appInForeground || videoScreen==null ||
+                !prefs.getBoolean("nextv_epg_enabled",true))return@Runnable
+            if(EpgGuidePolicy.needsRefresh(epgLoadedAt,System.currentTimeMillis())){
+                loadEpg(done={scheduleEpgFreshnessCheck()})
+            }else scheduleEpgFreshnessCheck()
+        }
+        epgFreshnessTask=task
+        handler.postDelayed(task,15*60*1000L)
+    }
     private fun cancelChannelInfoEpgBoundaryRefresh(){
         channelInfoEpgBoundaryTask?.let{handler.removeCallbacks(it)}
         channelInfoEpgBoundaryTask=null
@@ -2291,6 +2311,14 @@ class MainActivity: Activity() {
         epgLoadedAt=0L
         epgIncompleteRetryAt=0L
         epgFailedUntil.clear()
+        if(appInForeground && licenseReady && videoScreen!=null &&
+            prefs.getBoolean("nextv_epg_enabled",true) && epgUrls().isNotEmpty()){
+            handler.post{
+                if(appInForeground && licenseReady && videoScreen!=null &&
+                    prefs.getBoolean("nextv_epg_enabled",true))
+                    loadEpg(done={scheduleEpgFreshnessCheck()})
+            }
+        }
     }
     private fun epgUrls():List<String> = epgCandidates().take(maxActiveEpgFeeds)
     private fun showEpgSourceDiagnostics(){
@@ -4374,8 +4402,10 @@ class MainActivity: Activity() {
         // Resume the suspended channel first. Otherwise an EPG auto-tune
         // can be immediately overwritten by the old channel on return.
         if(licenseReady)checkEpgTune() else armEpgTune()
+        scheduleEpgFreshnessCheck()
     }
     override fun onPause(){
+        cancelEpgFreshnessCheck()
         val wasPlaying=active in channels.indices && !isFinishing
         appInForeground=false
         multiViewDialog?.dismiss()
@@ -8297,17 +8327,10 @@ class MainActivity: Activity() {
     }
     private fun screenInfoOnStart(index:Int){
         handler.postDelayed({if(active==index)showChannelInfo(index)},500)
-        // Use configured multi-source XMLTV URLs or the default source. The
-        // legacy epg_xmltv_url pref may be absent, even for a valid EPG setup.
-        if(prefs.getBoolean("nextv_epg_enabled",true) &&
-            prefs.getBoolean("show_channel_epg",true) &&
-            (epgGuide.isEmpty() || epgLoadedAt==0L) && epgUrls().isNotEmpty()){
-            val originalScreen=videoScreen
-            loadEpg(done={success->
-                // Do not reopen an expired banner or interfere with playback.
-                if(success && active==index && videoScreen===originalScreen)
-                    refreshVisibleChannelInfoEpg()
-            })
+        if(prefs.getBoolean("nextv_epg_enabled",true) && epgUrls().isNotEmpty()){
+            if(EpgGuidePolicy.needsRefresh(epgLoadedAt,System.currentTimeMillis())){
+                loadEpg(done={scheduleEpgFreshnessCheck()})
+            }else scheduleEpgFreshnessCheck()
         }
     }
     private fun informationAlpha():Int=prefs.getInt("information_opacity",65).coerceIn(20,100)*255/100
@@ -11890,7 +11913,13 @@ class MainActivity: Activity() {
     private fun onFeatureToggleChanged(key:String,enabled:Boolean){
         if(enabled){
             // Re-enable saved reminders that were suspended by EPG OFF.
-            if(key=="nextv_epg_enabled")armEpgTune()
+            if(key=="nextv_epg_enabled"){
+                armEpgTune()
+                if(appInForeground && licenseReady && videoScreen!=null){
+                    epgLoadedAt=0L
+                    loadEpg(done={scheduleEpgFreshnessCheck()})
+                }
+            }
             if(key=="nextv_profiles_enabled")invalidateSurfingCache()
             return
         }
@@ -11941,6 +11970,9 @@ class MainActivity: Activity() {
                 networkRecoveryTask=null
             }
             "nextv_epg_enabled"->{
+                cancelEpgFreshnessCheck()
+                cancelChannelInfoEpgBoundaryRefresh()
+                channelInfoEpgRefresh=null
                 epgLoadGeneration++
                 epgDownloadCancellation?.cancel()
                 epgDownloadCancellation=null
@@ -12607,6 +12639,7 @@ class MainActivity: Activity() {
         }
     }
     private fun stopPlayback(){
+        cancelEpgFreshnessCheck()
         cancelChannelInfoEpgBoundaryRefresh()
         channelInfoEpgRefresh=null
         cancelRapidSurf()
@@ -12775,6 +12808,7 @@ class MainActivity: Activity() {
         }
     }
     override fun onDestroy(){
+        cancelEpgFreshnessCheck()
         cancelChannelInfoEpgBoundaryRefresh()
         channelInfoEpgRefresh=null
         // Never keep external artwork HTTP requests or bitmap workers running
