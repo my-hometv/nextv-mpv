@@ -81,7 +81,8 @@ class CrossFeatureSearchIntegrationTest(unittest.TestCase):
         self.assertIn("val destination=searchResultBack",actions)
         self.assertIn("destination()",actions)
         rows=section("private fun mediaRows(","private fun youtubeThumbnail(")
-        self.assertIn("if(search)searchResultBack=onBack",rows)
+        self.assertIn("searchResultBack=onBack",rows)
+        self.assertIn('root.addView(button("←  Back"){onBack()})',rows)
         collection=section("private fun channelCollection(","private val bufferProfiles")
         self.assertIn("if(search)searchResultBack=onBack",collection)
     def test_epg_schedules_do_not_fall_back_across_playlist_by_url(self):
