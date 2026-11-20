@@ -54,7 +54,7 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('sourceResult?.invoke(replacement,sourceStatuses.toList())',loader)
         self.assertIn('prefs.getBoolean("nextv_epg_enabled",true)', self.activity)
         self.assertIn('prefs.getBoolean("show_channel_epg",true)', self.activity)
-        self.assertIn('banner?.parent===originalScreen', self.activity)
+        self.assertIn('if(success && active==index && videoScreen===originalScreen)', self.activity)
         self.assertLess(
             self.activity.index("setContentView(screen)", self.activity.index("private fun playIndex(index:Int)")),
             self.activity.index("screenInfoOnStart(index)", self.activity.index("private fun playIndex(index:Int)")),
