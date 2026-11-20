@@ -52,6 +52,52 @@ class EpgGuidePolicyTest {
             EpgGuidePolicy.action(500L,1000L))
     }
 
+    private data class Timed(val start:Long,val end:Long,val title:String)
+
+    @Test fun exactBoundaryChangesNowAndNextWithoutDisplayingExpiredProgramme() {
+        val rows=listOf(Timed(0,1000,"A"),Timed(1000,2000,"B"),Timed(2000,3000,"C"))
+        fun labels(time:Long):Pair<String?,String?> {
+            val (now,next)=EpgGuidePolicy.nowNext(rows,time,{it.start},{it.end})
+            return now?.title to next?.title
+        }
+        assertEquals("A" to "B",labels(999))
+        assertEquals("B" to "C",labels(1000))
+        assertEquals("B" to "C",labels(1999))
+        assertEquals("C" to null,labels(2000))
+        assertEquals(null to null,labels(3000))
+    }
+
+    @Test fun programmeGapAndOverlapsKeepCorrectNowNext() {
+        val gap=listOf(Timed(100,200,"A"),Timed(300,400,"B"))
+        val (duringGap,upcoming)=EpgGuidePolicy.nowNext(gap,250,{it.start},{it.end})
+        assertNull(duringGap)
+        assertEquals("B",upcoming?.title)
+        val overlapping=listOf(Timed(0,500,"Long"),Timed(200,300,"Short"),Timed(600,700,"Later"))
+        val (current,next)=EpgGuidePolicy.nowNext(overlapping,250,{it.start},{it.end})
+        assertEquals("Long",current?.title)
+        assertEquals("Later",next?.title)
+    }
+
+    @Test fun nextBoundarySchedulingUsesRealStartsAndEnds() {
+        val rows=listOf(Timed(0,1000,"A"),Timed(1000,2000,"B"),Timed(2000,3000,"C"))
+        assertEquals(1L,EpgGuidePolicy.nextBoundaryDelayMs(rows,999,{it.start},{it.end}))
+        assertEquals(1000L,EpgGuidePolicy.nextBoundaryDelayMs(rows,1000,{it.start},{it.end}))
+        assertEquals(1L,EpgGuidePolicy.nextBoundaryDelayMs(rows,1999,{it.start},{it.end}))
+        assertNull(EpgGuidePolicy.nextBoundaryDelayMs(rows,3000,{it.start},{it.end}))
+    }
+
+    @Test fun guideReplacementUsesNewTimingsInsteadOfStaleGuide() {
+        val original=listOf(Timed(0,1000,"Old"),Timed(1000,2000,"Old next"))
+        val replacement=listOf(Timed(0,1500,"Replacement"),Timed(1500,3000,"New next"))
+        val (oldNow,oldNext)=EpgGuidePolicy.nowNext(original,1200,{it.start},{it.end})
+        val (newNow,newNext)=EpgGuidePolicy.nowNext(replacement,1200,{it.start},{it.end})
+        assertEquals("Old next",oldNow?.title)
+        assertNull(oldNext)
+        assertEquals("Replacement",newNow?.title)
+        assertEquals("New next",newNext?.title)
+        assertEquals(300L,EpgGuidePolicy.nextBoundaryDelayMs(replacement,1200,{it.start},{it.end}))
+    }
+
     @Test fun futureProgrammeMustUseSchedulingInstead() {
         assertEquals(EpgGuidePolicy.ProgrammeAction.SCHEDULE,
             EpgGuidePolicy.action(1001L,1000L))
