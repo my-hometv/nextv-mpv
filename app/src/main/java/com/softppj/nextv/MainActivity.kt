@@ -2166,6 +2166,48 @@ class MainActivity: Activity() {
         }
         prefs.edit().putString(viewerKey("recent_channels"),updated.toString()).apply()
     }
+    // Exact media identities keep different items sharing a URL distinct.
+    // Recents are stored per viewer and newest first, across all five types.
+    private fun rememberContinueWatching(channel:Channel){
+        val identity=id(channel)
+        val old=savedJsonArray(viewerKey("continue_watching_ids"))
+        val updated=JSONArray().put(identity)
+        for(i in 0 until old.length()){
+            val entry=old.optString(i)
+            if(entry.isNotBlank() && entry!=identity && updated.length()<30)updated.put(entry)
+        }
+        prefs.edit().putString(viewerKey("continue_watching_ids"),updated.toString()).apply()
+    }
+    private fun continueWatchingIndices(limit:Int=5):List<Int>{
+        val allowed=(visibleIndices()+visibleMediaIndices()).distinct().toSet()
+        val identities=savedJsonArray(viewerKey("continue_watching_ids"))
+        val recent=(0 until identities.length()).map{identities.optString(it)}
+        // Older versions saved only channel keys. Include their Live TV
+        // history after new exact-identity entries, without duplicates.
+        val legacy=savedJsonArray(viewerKey("recent_channels"))
+        val older=(0 until legacy.length()).map{legacy.optString(it)}
+        val current=recent.mapNotNull{identity->
+            allowed.firstOrNull{ id(channels[it])==identity }
+        }
+        val fallback=older.mapNotNull{key->
+            allowed.firstOrNull{channels[it].mediaType=="live" && channelKey(channels[it])==key}
+        }
+        return (current+fallback).distinctBy{ id(channels[it]) }.take(limit)
+    }
+    private fun openContinueWatching(identity:String){
+        // Recheck current playlist, PIN and group access at selection time.
+        val allowed=(visibleIndices()+visibleMediaIndices()).distinct()
+        val index=allowed.firstOrNull{id(channels[it])==identity} ?:run{
+            Toast.makeText(this,"Item is no longer available",Toast.LENGTH_SHORT).show()
+            showHome()
+            return
+        }
+        val channel=channels[index]
+        if(channel.mediaType in setOf("movie","series","music")){
+            // The media detail screen owns authorization and resume choices.
+            mediaDetails(index)
+        }else playIndex(index)
+    }
     private fun recentlyWatched(){
         val saved=savedJsonArray(viewerKey("recent_channels"))
         val keys=(0 until saved.length()).map{saved.optString(it)}
@@ -4946,6 +4988,34 @@ class MainActivity: Activity() {
         )
         homeContent.addView(primaryCategories)
         homeContent.addView(tvSection("CONTINUE WATCHING"))
+        val continueItems=continueWatchingIndices(5)
+        if(continueItems.isEmpty()){
+            homeContent.addView(tvText("Start watching TV, a movie, music, a series or Web TV to see it here.",14f,0xFFB0C6D9.toInt()))
+        }else{
+            homeContent.addView(tvRow(*continueItems.map{index->
+                val channel=channels[index]
+                val identity=id(channel)
+                val category=when(channel.mediaType){
+                    "movie"->"Movie"
+                    "music"->"Music"
+                    "series"->"Series"
+                    "web"->"Web TV"
+                    else->"Live TV"
+                }
+                val marker=when(channel.mediaType){
+                    "movie"->"▣"
+                    "music"->"♫"
+                    "series"->"▤"
+                    "web"->"◉"
+                    else->"▦"
+                }
+                val resume=if(channel.mediaType in setOf("movie","series","music"))
+                    mediaResumeSeconds(channel) else 0L
+                val detail=if(resume>0L)category+" • Resume at "+(resume/60)+"m"
+                    else category+" • Watch"
+                tvCard(marker,channel.name,detail){openContinueWatching(identity)}
+            }.toTypedArray()))
+        }
 
         val continueBanner=LinearLayout(this).apply{
             orientation=LinearLayout.HORIZONTAL
@@ -5027,7 +5097,15 @@ class MainActivity: Activity() {
             tvCard("☷","Categories","Channel groups"){showChannels()},
             tvCard("◷","History","Recently watched"){recentlyWatched()},
             tvCard("◉",if(prefs.getBoolean("nextv_profiles_enabled",true))"Profile: "+profileLabel() else "Viewer profiles",if(prefs.getBoolean("nextv_profiles_enabled",true))"Switch household viewer" else "Enable in Settings"){if(prefs.getBoolean("nextv_profiles_enabled",true))switchViewerFromHome() else settings()},
-            tvCard("▶","Continue media","Resume films and series"){continueMedia()}
+            tvCard("▶","Continue Watching","TV, movies, music, series and Web TV"){
+                val recent=continueWatchingIndices(20)
+                if(recent.isEmpty())showHome()
+                else showSideDialog(AlertDialog.Builder(this)
+                    .setTitle("Continue Watching")
+                    .setItems(recent.map{channels[it].name+" • "+channels[it].mediaType}.toTypedArray()){_,selected->
+                        openContinueWatching(id(channels[recent[selected]]))
+                    }.setNegativeButton("Close",null).create())
+            }
         ))
         homeContent.addView(tvSection("TOOLS"))
         homeContent.addView(tvRow(
@@ -10028,6 +10106,7 @@ class MainActivity: Activity() {
         prefs.edit().putString("last_url",c.url).putString("last_channel_identity",id(c))
             .putString("last_url_"+c.source,c.url).putString("last_identity_"+c.source,id(c)).apply()
         rememberRecentChannel(c)
+        rememberContinueWatching(c)
         window.decorView.systemUiVisibility=(View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
         val screen=FrameLayout(this).apply{setBackgroundColor(android.graphics.Color.BLACK);isFocusableInTouchMode=true}
         videoScreen=screen
