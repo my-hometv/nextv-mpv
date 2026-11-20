@@ -72,6 +72,9 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("EpgGuidePolicy.needsRefresh(epgLoadedAt,System.currentTimeMillis())",self.activity)
         selection=self.activity.split("private fun invalidateEpgSourceSelection(){",1)[1].split("private fun epgUrls()",1)[0]
         self.assertIn("loadEpg(done={scheduleEpgFreshnessCheck()})",selection)
+        self.assertIn("if(epgUrls().isEmpty())",selection)
+        self.assertIn("epgGuide=emptyMap()",selection)
+        self.assertIn("refreshVisibleChannelInfoEpg()",selection)
         toggle=self.activity.split('"nextv_epg_enabled"->{',1)[1].split('"auto_playlist_check"->{',1)[0]
         self.assertIn("cancelEpgFreshnessCheck()",toggle)
         self.assertIn("cancelChannelInfoEpgBoundaryRefresh()",toggle)
