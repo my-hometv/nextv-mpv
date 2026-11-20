@@ -2235,26 +2235,48 @@ class MainActivity: Activity() {
     private val maxActiveEpgFeeds=32
     // Monotonic time-based temporary retry limit for unreachable feeds.
     private val epgFailedUntil=java.util.concurrent.ConcurrentHashMap<String,Long>()
-    private fun epgCandidates():List<String>{
-        // Explicitly configured XMLTV URLs have priority. Each enabled M3U
-        // playlist may also announce url-tvg / x-tvg-url in its #EXTM3U header.
-        // Never overwrite a manually saved guide or force a network request
-        // while parsing a playlist; loadEpg remains asynchronous and on demand.
-        val manual=prefs.getString("epg_xmltv_urls",null)
-            ?:prefs.getString("epg_xmltv_url",null).orEmpty()
-        val announced=playlists().filter{it.enabled}.flatMap{playlist->
+    private fun playlistEpgSources():List<Pair<String,String>> =
+        playlists().filter{it.enabled}.flatMap{playlist->
             prefs.getString("playlist_xmltv_urls_"+hash(playlist.name),"").orEmpty()
-                .lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()
+                .lineSequence().map{it.trim()}
+                .filter{EpgSourceEditorPolicy.valid(it)}
+                .map{playlist.name to it}.toList()
         }
-        // A manually selected guide is an explicit override. Previously the
-        // app also loaded every playlist-announced feed, so testing a single
-        // source still triggered the global timeout on unrelated slow feeds.
-        // Multiple manual sources continue to merge in their saved priority.
-        val selected=manual.lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()
-            .ifEmpty { announced.ifEmpty {
-                if(!prefs.contains("epg_xmltv_urls"))listOf(defaultEpgUrl) else emptyList()
-            } }
-        return selected.filter{EpgSourceEditorPolicy.valid(it)}.distinct()
+    private fun epgSourceMode():String =
+        prefs.getString("epg_source_mode","manual").orEmpty()
+            .takeIf{it in setOf("manual","playlist","both")} ?: "manual"
+    private fun epgCandidates():List<String>{
+        // Manual remains the default override; the viewer may explicitly
+        // choose M3U-only or manual-first merged mode in EPG Sources.
+        val manual=savedManualEpgSources().filter{EpgSourceEditorPolicy.valid(it)}
+        val announced=playlistEpgSources().map{it.second}.distinct()
+        val selected=when(epgSourceMode()){
+            "playlist"->announced
+            "both"->manual+announced
+            else->manual.ifEmpty{announced}
+        }
+        return selected.ifEmpty{
+            // Keep legacy default only when no sources exist anywhere and
+            // manual sources were never explicitly configured.
+            if(manual.isEmpty() && announced.isEmpty() &&
+                !prefs.contains("epg_xmltv_urls"))listOf(defaultEpgUrl) else emptyList()
+        }.distinct()
+    }
+    private fun saveEpgSourceMode(mode:String){
+        if(mode !in setOf("manual","playlist","both") || mode==epgSourceMode())return
+        prefs.edit().putString("epg_source_mode",mode).apply()
+        invalidateEpgSourceSelection()
+    }
+    private fun invalidateEpgSourceSelection(){
+        epgLoadGeneration++
+        epgDownloadCancellation?.cancel()
+        epgDownloadCancellation=null
+        epgLoadingGeneration=null
+        epgWaitingCallbacks.clear()
+        // Preserve the last complete guide until replacement succeeds.
+        epgLoadedAt=0L
+        epgIncompleteRetryAt=0L
+        epgFailedUntil.clear()
     }
     private fun epgUrls():List<String> = epgCandidates().take(maxActiveEpgFeeds)
     private fun showEpgSourceDiagnostics(){
@@ -2287,7 +2309,9 @@ class MainActivity: Activity() {
                 append("XMLTV feeds configured: ").append(allCandidates.size)
                 append("\nActive feeds: ").append(configured.size)
                 append("\nOmitted by ").append(maxActiveEpgFeeds).append("-feed limit: ").append(omitted)
+                append("\nMode: ").append(epgSourceMode())
                 append("\nManual EPG entries: ").append(savedManualEpgSources().size)
+                append("\nM3U EPG entries: ").append(playlistEpgSources().size)
                 append("\nChannel matches use tvg-id first, then aliases")
                 append("\nCheck source status and programme times below")
                 append("\nProgramme IDs / alias entries: ").append(epgGuide.size)
@@ -2311,15 +2335,7 @@ class MainActivity: Activity() {
         // Existing newline-backed preferences and backups stay compatible.
         // Never edit provider-announced EPG URLs when saving manual sources.
         prefs.edit().putString("epg_xmltv_urls",updated.joinToString("\n")).apply()
-        epgLoadGeneration++
-        epgDownloadCancellation?.cancel()
-        epgDownloadCancellation=null
-        epgLoadingGeneration=null
-        epgWaitingCallbacks.clear()
-        // Keep the last working guide visible until a replacement downloads.
-        epgLoadedAt=0L
-        epgIncompleteRetryAt=0L
-        epgFailedUntil.clear()
+        invalidateEpgSourceSelection()
     }
 
     private fun editSingleEpgSource(index:Int?){
@@ -2394,25 +2410,65 @@ class MainActivity: Activity() {
             .create())
     }
 
+    private fun chooseEpgSourceMode(){
+        val modes=arrayOf("Manual EPG (override M3U)","M3U playlist EPG only",
+            "Manual + M3U (merge, manual first)")
+        val keys=arrayOf("manual","playlist","both")
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("Choose EPG source mode")
+            .setSingleChoiceItems(modes,keys.indexOf(epgSourceMode())){dialog,position->
+                saveEpgSourceMode(keys[position])
+                dialog.dismiss()
+                configureEpg()
+            }
+            .setNegativeButton("Back"){_,_->configureEpg()}.create())
+    }
     private fun configureEpg(){
         val sources=savedManualEpgSources()
+        val embedded=playlistEpgSources()
         val excess=(sources.size-EpgSourceEditorPolicy.MAX_MANUAL_SOURCES).coerceAtLeast(0)
-        val entries=listOf(if(excess>0)"⚠ $excess legacy sources beyond the new limit (preserved)" else "＋ Add EPG source")+
+        val modeLabel=when(epgSourceMode()){
+            "playlist"->"M3U playlist only"
+            "both"->"Manual + M3U"
+            else->"Manual overrides M3U"
+        }
+        val entries=listOf("⚙  EPG source mode: "+modeLabel,
+            if(excess>0)"⚠ $excess legacy sources beyond the new limit (preserved)" else "＋ Add manual EPG source")+
             sources.mapIndexed{index,url->
-                val host=try{java.net.URI(url).host ?:url}catch(_:Exception){url}
-                val suffix=if(url.length>75)url.take(72)+"…" else url
-                (index+1).toString()+".  "+host+"\n"+suffix
+                val host=runCatching{java.net.URI(url).host ?: "Unknown"}.getOrDefault("Unknown")
+                (index+1).toString()+".  Manual • "+host
+            }+listOf("— M3U playlist EPG sources ("+embedded.size+") • read-only —")+
+            embedded.map{(playlist,url)->
+                val host=runCatching{java.net.URI(url).host ?: "Unknown"}.getOrDefault("Unknown")
+                "M3U • "+playlist+" • "+host
             }
+        val embeddedStart=3+sources.size
         showSideDialog(AlertDialog.Builder(this)
-            .setTitle("EPG sources • edit / reorder")
+            .setTitle("EPG sources • manual / M3U")
             .setItems(entries.toTypedArray()){_,position->
-                if(position==0){
-                    if(excess>0)showSideDialog(AlertDialog.Builder(this)
-                        .setTitle("Legacy XMLTV sources preserved")
-                        .setMessage("Existing sources are preserved. To add a new source, first reduce the manual list below 16; editing and reordering remain available.")
-                        .setPositiveButton("OK"){_,_->configureEpg()}.create())
-                    else editSingleEpgSource(null)
-                }else epgSourceActions(position-1)
+                when{
+                    position==0->chooseEpgSourceMode()
+                    position==1->{
+                        if(excess>0)showSideDialog(AlertDialog.Builder(this)
+                            .setTitle("Legacy XMLTV sources preserved")
+                            .setMessage("Reduce manual EPG sources below 16 before adding more.")
+                            .setPositiveButton("OK"){_,_->configureEpg()}.create())
+                        else editSingleEpgSource(null)
+                    }
+                    position<2+sources.size->epgSourceActions(position-2)
+                    position==embeddedStart-1->configureEpg()
+                    else->{
+                        val selected=embedded.getOrNull(position-embeddedStart)
+                        if(selected!=null){
+                            val host=runCatching{java.net.URI(selected.second).host ?: "Unknown"}.getOrDefault("Unknown")
+                            showSideDialog(AlertDialog.Builder(this)
+                                .setTitle("M3U EPG • "+selected.first)
+                                .setMessage("Source host: "+host+"\nThis source is embedded in the playlist and is read-only. Choose M3U only or Manual + M3U to use it.")
+                                .setPositiveButton("Source mode"){_,_->chooseEpgSourceMode()}
+                                .setNegativeButton("Back"){_,_->configureEpg()}.create())
+                        }
+                    }
+                }
             }
             .setPositiveButton("Load / Check EPG"){_,_->showEpgSourceDiagnostics()}
             .setNegativeButton("Close",null)
