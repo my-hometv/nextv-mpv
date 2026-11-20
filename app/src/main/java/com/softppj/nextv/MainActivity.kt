@@ -2379,22 +2379,60 @@ class MainActivity: Activity() {
         dialog.show()
     }
 
+    // A single-source check bypasses the selected automatic source mode and
+    // tests just this feed. It does not edit any manual or M3U source setting.
+    private fun checkIndividualEpgSource(url:String,label:String){
+        if(!EpgSourceEditorPolicy.valid(url)){
+            Toast.makeText(this,"Invalid EPG source",Toast.LENGTH_LONG).show()
+            return
+        }
+        if(!prefs.getBoolean("nextv_epg_enabled",true)){
+            Toast.makeText(this,"Enable EPG in Settings first",Toast.LENGTH_LONG).show()
+            return
+        }
+        invalidateEpgSourceSelection()
+        Toast.makeText(this,"Checking "+label,Toast.LENGTH_SHORT).show()
+        loadEpg(done={sourceLoaded->
+            val now=System.currentTimeMillis()
+            val live=channelNumbers().filter{channels[it].mediaType=="live"}
+            val matched=if(sourceLoaded)live.count{index->
+                programmeList(channels[index]).any{it.end>now}
+            } else 0
+            val statuses=epgSourceStatuses.ifEmpty{listOf("No download result available")}
+            val message=buildString{
+                append("Source: ").append(label)
+                append("\nResult: ").append(if(sourceLoaded)"Loaded" else "Failed / no usable programmes")
+                append("\nMatched Live TV channels: ").append(matched).append(" / ").append(live.size)
+                append("\n\n").append(statuses.joinToString("\n"))
+                if(!sourceLoaded)append("\n\nPreviously loaded EPG is preserved.")
+                else if(matched==0)append("\n\nProgramme data loaded, but no Live TV channel matched. Check tvg-id and aliases.")
+                append("\n\nThe saved EPG source mode has not changed.")
+            }
+            showSideDialog(AlertDialog.Builder(this)
+                .setTitle("Individual EPG result")
+                .setMessage(message)
+                .setPositiveButton("EPG sources"){_,_->configureEpg()}
+                .setNegativeButton("Close",null).create())
+        },showProgress=true,sourceOverride=url)
+    }
+
     private fun epgSourceActions(index:Int){
         val sources=savedManualEpgSources()
         if(index !in sources.indices){configureEpg();return}
-        val actions=listOf("Edit URL","Move up (higher priority)",
-            "Move down (lower priority)","Delete source")
+        val actions=listOf("▶  Load / Check this EPG","Edit URL",
+            "Move up (higher priority)","Move down (lower priority)","Delete source")
         showSideDialog(AlertDialog.Builder(this)
             .setTitle("EPG source "+(index+1)+" of "+sources.size)
             .setItems(actions.toTypedArray()){_,choice->
                 when(choice){
-                    0->editSingleEpgSource(index)
-                    1,2->{
-                        val reordered=EpgSourceEditorPolicy.move(sources,index,if(choice==1)-1 else 1)
+                    0->checkIndividualEpgSource(sources[index],"Manual EPG "+(index+1))
+                    1->editSingleEpgSource(index)
+                    2,3->{
+                        val reordered=EpgSourceEditorPolicy.move(sources,index,if(choice==2)-1 else 1)
                         if(reordered!=null)saveManualEpgSources(reordered)
                         configureEpg()
                     }
-                    3->showSideDialog(AlertDialog.Builder(this)
+                    4->showSideDialog(AlertDialog.Builder(this)
                         .setTitle("Delete EPG source?")
                         .setMessage("Remove this XMLTV URL? Other sources and playlists are unchanged.")
                         .setPositiveButton("Delete"){_,_->
@@ -2464,7 +2502,10 @@ class MainActivity: Activity() {
                             showSideDialog(AlertDialog.Builder(this)
                                 .setTitle("M3U EPG • "+selected.first)
                                 .setMessage("Source host: "+host+"\nThis source is embedded in the playlist and is read-only. Choose M3U only or Manual + M3U to use it.")
-                                .setPositiveButton("Source mode"){_,_->chooseEpgSourceMode()}
+                                .setPositiveButton("Load / Check this EPG"){_,_->
+                                    checkIndividualEpgSource(selected.second,"M3U • "+selected.first+" • "+host)
+                                }
+                                .setNeutralButton("Source mode"){_,_->chooseEpgSourceMode()}
                                 .setNegativeButton("Back"){_,_->configureEpg()}.create())
                         }
                     }
@@ -2724,13 +2765,14 @@ class MainActivity: Activity() {
             if(next!=null)append("\nNEXT  ").append(programmeTime(next.start)).append("  ").append(next.title)
         }
     }
-    private fun loadEpg(done:(Boolean)->Unit,showProgress:Boolean=false){
+    private fun loadEpg(done:(Boolean)->Unit,showProgress:Boolean=false,sourceOverride:String?=null){
         if(!prefs.getBoolean("nextv_epg_enabled",true)){done(false);return}
         val generation=epgLoadGeneration
-        val urls=epgUrls()
+        val urls=if(sourceOverride!=null && EpgSourceEditorPolicy.valid(sourceOverride))
+            listOf(sourceOverride) else epgUrls()
         if(urls.isEmpty()){done(false);return}
         val nextIncompleteRetry=epgIncompleteRetryAt
-        if(epgLoadedAt>0L && System.currentTimeMillis()-epgLoadedAt<60*60*1000L &&
+        if(sourceOverride==null && epgLoadedAt>0L && System.currentTimeMillis()-epgLoadedAt<60*60*1000L &&
             (nextIncompleteRetry==0L || android.os.SystemClock.elapsedRealtime()<nextIncompleteRetry)){
             done(epgGuide.isNotEmpty());return
         }
@@ -2938,7 +2980,9 @@ class MainActivity: Activity() {
                             epgGuide=replacement
                             epgLoadedAt=System.currentTimeMillis()
                         }
-                        callbacks.forEach{callback->callback(epgGuide.isNotEmpty())}
+                        callbacks.forEach{callback->
+                            callback(if(sourceOverride!=null)loaded>0 else epgGuide.isNotEmpty())
+                        }
                     }
                 }
             }
