@@ -2202,10 +2202,15 @@ class MainActivity: Activity() {
             prefs.getString("playlist_xmltv_urls_"+hash(playlist.name),"").orEmpty()
                 .lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()
         }
-        val candidates=manual.lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()+
-            announced+if(manual.isBlank() && announced.isEmpty() &&
-                !prefs.contains("epg_xmltv_urls"))listOf(defaultEpgUrl) else emptyList()
-        return candidates.filter{EpgSourceEditorPolicy.valid(it)}.distinct()
+        // A manually selected guide is an explicit override. Previously the
+        // app also loaded every playlist-announced feed, so testing a single
+        // source still triggered the global timeout on unrelated slow feeds.
+        // Multiple manual sources continue to merge in their saved priority.
+        val selected=manual.lineSequence().map{it.trim()}.filter{it.isNotBlank()}.toList()
+            .ifEmpty { announced.ifEmpty {
+                if(!prefs.contains("epg_xmltv_urls"))listOf(defaultEpgUrl) else emptyList()
+            } }
+        return selected.filter{EpgSourceEditorPolicy.valid(it)}.distinct()
     }
     private fun epgUrls():List<String> = epgCandidates().take(maxActiveEpgFeeds)
     private fun showEpgSourceDiagnostics(){
@@ -4916,6 +4921,19 @@ class MainActivity: Activity() {
         }
         hero.addView(brand,android.widget.FrameLayout.LayoutParams(-1,-2,Gravity.CENTER_VERTICAL))
         homeContent.addView(hero,LinearLayout.LayoutParams(-1,tvDp(196)))
+
+        // Primary IPTV-style Home destinations: large, remote-focusable columns.
+        // Reuse the existing media libraries and Live TV entry point so
+        // saved Web TV, profiles, licensing and player behavior stay unchanged.
+        homeContent.addView(tvSection("EXPLORE MYVIEW"))
+        homeContent.addView(tvRow(
+            tvCard("▦","TV","Live channels"){allChannels()},
+            tvCard("▣","Movies","Web TV movies"){mediaLibrary("movie")},
+            tvCard("♫","Music","Web TV music"){mediaMusic()},
+            tvCard("▤","Series","Episodes and shows"){mediaSeries()},
+            tvCard("◉","Web TV","Saved web channels"){mediaLibrary("web")}
+        ))
+        homeContent.addView(tvSection("CONTINUE WATCHING"))
 
         val continueBanner=LinearLayout(this).apply{
             orientation=LinearLayout.HORIZONTAL
