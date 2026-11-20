@@ -42,6 +42,28 @@ internal object EpgGuidePolicy {
         return (startTimeMs - nowMs).coerceAtLeast(0L).coerceAtMost(60_000L)
     }
 
+    /**
+     * Select the visible programme and next future programme using half-open
+     * [start, end) intervals. Exact end/start transitions must never retain
+     * the previous programme.
+     */
+    fun <T> nowNext(
+        rows:List<T>,nowMs:Long,start:(T)->Long,end:(T)->Long
+    ):Pair<T?,T?> {
+        val current=rows.firstOrNull{start(it)<=nowMs && end(it)>nowMs}
+        val upcoming=rows.asSequence().filter{start(it)>nowMs}
+            .minByOrNull{start(it)}
+        return current to upcoming
+    }
+
+    /** Returns null when there is no future EPG change to schedule. */
+    fun <T> nextBoundaryDelayMs(
+        rows:List<T>,nowMs:Long,start:(T)->Long,end:(T)->Long
+    ):Long? = rows.asSequence()
+        .flatMap{sequenceOf(start(it),end(it))}
+        .filter{it>nowMs}
+        .minOrNull()?.let{(it-nowMs).coerceAtLeast(1L)}
+
     enum class ProgrammeAction { WATCH_NOW, SCHEDULE }
 
     fun action(startTimeMs:Long, nowMs:Long):ProgrammeAction =
