@@ -3073,12 +3073,35 @@ class MainActivity: Activity() {
     private fun showChannelEpg(i:Int){
         if(!prefs.getBoolean("nextv_epg_enabled",true))return
         val c=channels.getOrNull(i) ?:return
+        val originalIdentity=id(c)
+        // A playlist refresh may reorder or remove the channel while its
+        // programme dialog is open. Never use the stale captured index.
+        fun resolveGuideAction():Int {
+            val found=if(licenseReady && prefs.getBoolean("nextv_epg_enabled",true))
+                EpgGuidePolicy.resolveDialogChannel(channels,originalIdentity,::id){candidate->
+                    (candidate.source.isBlank() ||
+                        playlists().any{it.enabled && it.name==candidate.source}) &&
+                    (candidate.source !in lockedPlaylistNames() ||
+                        candidate.source in unlockedPlaylistsThisSession) &&
+                    (candidate.group !in lockedGroupNames() ||
+                        candidate.group in unlockedGroupsThisSession) &&
+                    (unlockedChannel==id(candidate) || !isLocked(candidate))
+                } else -1
+            if(found<0)Toast.makeText(this,
+                "Channel no longer available or permitted — reopen the guide",
+                Toast.LENGTH_SHORT).show()
+            return found
+        }
+        fun watchGuideChannel(){
+            val current=resolveGuideAction()
+            if(current>=0)playIndex(preferredChannel(current))
+        }
         val now=System.currentTimeMillis()
         val entries=programmeList(c).filter{it.end>now-3600000L}.take(80)
         if(entries.isEmpty()){
             showSideDialog(AlertDialog.Builder(this).setTitle(c.name+" • TV Guide")
                 .setMessage("No matching EPG programmes. You can still watch this channel. Check its tvg-id and your EPG sources.")
-                .setPositiveButton("Watch channel"){_,_->playIndex(preferredChannel(i))}
+                .setPositiveButton("Watch channel"){_,_->watchGuideChannel()}
                 .setNegativeButton("Close",null).create())
             return
         }
@@ -3097,17 +3120,23 @@ class MainActivity: Activity() {
                             EpgGuidePolicy.ProgrammeAction.WATCH_NOW)"Watch now" else "Auto-switch"){_,_->
                         if(EpgGuidePolicy.action(programme.start,System.currentTimeMillis())==
                             EpgGuidePolicy.ProgrammeAction.WATCH_NOW){
-                            playIndex(preferredChannel(i))
-                        }else scheduleEpgTune(c,programme,"auto")
+                            watchGuideChannel()
+                        }else{
+                            val current=resolveGuideAction()
+                            if(current>=0)scheduleEpgTune(channels[current],programme,"auto")
+                        }
                     }
                     .setNeutralButton(if(programme.start<=System.currentTimeMillis())"Guide" else "Remind only"){_,_->
-                        if(programme.start>System.currentTimeMillis())
-                            scheduleEpgTune(c,programme,"reminder")
-                        else showChannelEpg(i)
+                        val current=resolveGuideAction()
+                        if(current>=0){
+                            if(programme.start>System.currentTimeMillis())
+                                scheduleEpgTune(channels[current],programme,"reminder")
+                            else showChannelEpg(current)
+                        }
                     }
                     .setNegativeButton("Cancel",null).create())
             }
-            .setPositiveButton("Watch channel"){_,_->playIndex(preferredChannel(i))}
+            .setPositiveButton("Watch channel"){_,_->watchGuideChannel()}
             .setNegativeButton("Close",null).create())
     }
     private fun openCurrentChannelEpg(){
