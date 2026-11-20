@@ -78,7 +78,7 @@ class HumanJourneyTest(unittest.TestCase):
             "videoScreen!==originalScreen",
             "playbackGeneration!=originalGeneration",
             "active!=originalActive",
-            "!prefs.getBoolean(\\"nextv_epg_enabled\\",true)",
+            '!prefs.getBoolean("nextv_epg_enabled",true)',
             "return@loadEpg",
         ):
             self.assertIn(marker,guide)
