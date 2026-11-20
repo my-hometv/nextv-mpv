@@ -10260,7 +10260,9 @@ class MainActivity: Activity() {
         if(resumeSeconds>0L){
             startupResumeChannelKey=channelKey(c)
             startupResumeSeconds=resumeSeconds
-        }else if(startupResumeChannelKey!=channelKey(c)){
+        }else{
+            // An explicit Play from Beginning or a different tune must not
+            // resurrect an older resume request on a later failure.
             startupResumeChannelKey=null
             startupResumeSeconds=0L
         }
