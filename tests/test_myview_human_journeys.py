@@ -23,6 +23,37 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertNotIn('if(!error){',banner)
         self.assertIn('clearNumericOverlay()',numeric)
 
+    def test_vod_resume_survives_engine_fallback_but_not_explicit_restart(self):
+        body=between("private var requestedMediaResumeSeconds=", "private fun mediaDetails(")
+        tune=between("private fun playIndex(", "private fun routeHttpChannel(") if False else MAIN
+        failure=between("private fun handleEngineFailure(", "private fun isLocked(")
+        self.assertIn("private fun playRecoveryIndex(index:Int)",body)
+        self.assertIn("startupResumeChannelKey==channelKey(channel)",body)
+        self.assertIn("requestedMediaResumeSeconds=startupResumeSeconds",body)
+        self.assertIn("playRecoveryIndex(next.first)",failure)
+        self.assertIn("try{playRecoveryIndex(index)}finally{preservingRecoveryScan=false}",failure)
+        self.assertIn("if(resumeSeconds>0L)",MAIN)
+        self.assertIn("startupResumeChannelKey=null",MAIN)
+        self.assertIn("if(startupResumeChannelKey==channelKey(c))",MAIN)
+
+    def test_web_tv_back_returns_to_library_and_closes_directory_dialog(self):
+        back=between("override fun onBackPressed(){", "private fun stopPlayback(){")
+        self.assertNotIn("showWebTvDirectory(web!!,active,screen)",back)
+        self.assertIn("returnToMediaLibrary()",back)
+        self.assertIn('setNegativeButton("Back to Web TV"){_,_->mediaLibrary("web")}',MAIN)
+        self.assertIn("webTvDirectoryEntries=emptyList()",MAIN)
+
+    def test_epg_matching_populates_visible_channel_info(self):
+        info=between("private fun showChannelInfo(", "private fun clearChannelPreview(")
+        self.assertIn("val programmes=if(showEpg)programmeList(channel)",info)
+        self.assertIn('programmeColumn("NOW",currentTitle,currentTime)',info)
+        self.assertIn('programmeColumn("NEXT",nextTitle,nextTime)',info)
+        self.assertIn('tag="myview_channel_info"',info)
+        matcher=between("private fun programmeList(", "private fun runNetworkDiagnostics(")
+        self.assertIn("HomeTvPolicies.matchEpg(epgGuide,id,name)",matcher)
+        self.assertIn("EpgGuidePolicy.matchNames(c.name)",matcher)
+        self.assertIn("epg_offset_minutes",matcher)
+
     def test_combined_browsing_preserves_surfing_scope(self):
         self.assertIn("PlaylistBrowsePolicy.displayedIndices(",between("private fun showOverlayList(", "private fun showLeftNavigation("))
         self.assertIn('putBoolean("myview_browse_all_playlists",selected==null)',MAIN)
