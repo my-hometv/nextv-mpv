@@ -849,6 +849,12 @@ class MainActivity: Activity() {
         RemotePreemptionPolicy.isNavigationKey(key)
     private var banner:View?=null
     private var bannerTask:Runnable?=null
+    // One timer at the next programme boundary, only while Channel Info is visible.
+    private var channelInfoEpgBoundaryTask:Runnable?=null
+    private fun cancelChannelInfoEpgBoundaryRefresh(){
+        channelInfoEpgBoundaryTask?.let{handler.removeCallbacks(it)}
+        channelInfoEpgBoundaryTask=null
+    }
     private var clockTask:Runnable?=null
     // Observed starts are historical, not predicted probability. One event per attempt.
     private val observedStartAttempts=mutableSetOf<String>()
@@ -6868,6 +6874,7 @@ class MainActivity: Activity() {
 
     private fun showBanner(message:String, error:Boolean=false, dismissAfterMs:Long=if(error)4000L else 2500L){
         val screen=videoScreen ?:return
+        cancelChannelInfoEpgBoundaryRefresh()
         bannerTask?.let{handler.removeCallbacks(it)}
         banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
         val panel=LinearLayout(this).apply{
@@ -8375,6 +8382,7 @@ class MainActivity: Activity() {
     private fun showChannelInfo(index:Int,extra:String=""){
         val screen=videoScreen ?:return
         val channel=channels.getOrNull(index) ?:return
+        cancelChannelInfoEpgBoundaryRefresh()
         bannerTask?.let{handler.removeCallbacks(it)}
         banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
         if(previewInfoPanel===banner)previewInfoPanel=null
@@ -8497,13 +8505,45 @@ class MainActivity: Activity() {
             val currentTime=current?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
             val nextTitle=next?.title ?: "No upcoming programme"
             val nextTime=next?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
-            guideRow.addView(programmeColumn("NOW",currentTitle,currentTime),
-                LinearLayout.LayoutParams(0,-2,1f))
+            val nowColumn=programmeColumn("NOW",currentTitle,currentTime)
+            guideRow.addView(nowColumn,LinearLayout.LayoutParams(0,-2,1f))
             guideRow.addView(View(this).apply{
                 setBackgroundColor(0x665F91B5)
             },LinearLayout.LayoutParams(tvDp(1),tvDp(53)))
-            guideRow.addView(programmeColumn("NEXT",nextTitle,nextTime),
-                LinearLayout.LayoutParams(0,-2,1f))
+            val nextColumn=programmeColumn("NEXT",nextTitle,nextTime)
+            guideRow.addView(nextColumn,LinearLayout.LayoutParams(0,-2,1f))
+            // Refresh the existing labels in place; do not recreate the panel,
+            // extend its dismissal time or disturb its focus and remote actions.
+            val nowTitleView=nowColumn.getChildAt(1) as TextView
+            val nowTimeView=nowColumn.getChildAt(2) as TextView
+            val nextTitleView=nextColumn.getChildAt(1) as TextView
+            val nextTimeView=nextColumn.getChildAt(2) as TextView
+            fun armProgrammeBoundary(rows:List<EpgProgramme>){
+                val moment=System.currentTimeMillis()
+                val boundary=rows.asSequence()
+                    .flatMap{sequenceOf(it.start,it.end)}
+                    .filter{it>moment}
+                    .minOrNull() ?:return
+                val task=Runnable{
+                    channelInfoEpgBoundaryTask=null
+                    if(banner!==panel || panel.parent!==screen ||
+                        !prefs.getBoolean("nextv_epg_enabled",true) ||
+                        !prefs.getBoolean("show_channel_epg",true))return@Runnable
+                    val updated=programmeList(channel)
+                    val timestamp=System.currentTimeMillis()
+                    val onNow=updated.firstOrNull{it.start<=timestamp && it.end>timestamp}
+                    val onNext=updated.asSequence().filter{it.start>timestamp}
+                        .minByOrNull{it.start}
+                    nowTitleView.text=onNow?.title ?: "No current programme"
+                    nowTimeView.text=onNow?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
+                    nextTitleView.text=onNext?.title ?: "No upcoming programme"
+                    nextTimeView.text=onNext?.let{programmeTime(it.start)+" – "+programmeTime(it.end)} ?: ""
+                    armProgrammeBoundary(updated)
+                }
+                channelInfoEpgBoundaryTask=task
+                handler.postDelayed(task,(boundary-moment).coerceAtLeast(1L))
+            }
+            armProgrammeBoundary(programmes)
             panel.addView(View(this).apply{setBackgroundColor(0x665F91B5)},
                 LinearLayout.LayoutParams(-1,tvDp(1)))
             panel.addView(guideRow,LinearLayout.LayoutParams(-1,-2))
@@ -8531,6 +8571,7 @@ class MainActivity: Activity() {
         // Preserve the existing remote interaction and preview lifetime.
         val task=Runnable{
             if(banner===panel && previewInfoPanel!==panel){
+                cancelChannelInfoEpgBoundaryRefresh()
                 (panel.parent as? android.view.ViewGroup)?.removeView(panel)
                 banner=null
             }
@@ -8546,6 +8587,7 @@ class MainActivity: Activity() {
         previewTask=null
         closeVideoPreview()
         if(hadPreview){
+            cancelChannelInfoEpgBoundaryRefresh()
             previewInfoPanel?.let{panel->
                 (panel.parent as? android.view.ViewGroup)?.removeView(panel)
                 if(banner===panel)banner=null
@@ -12552,6 +12594,7 @@ class MainActivity: Activity() {
         }
     }
     private fun stopPlayback(){
+        cancelChannelInfoEpgBoundaryRefresh()
         cancelRapidSurf()
         // MultiView owns its own Media3 sessions, separate from the foreground
         // player. Revocation must stop those decoders immediately.
@@ -12718,6 +12761,7 @@ class MainActivity: Activity() {
         }
     }
     override fun onDestroy(){
+        cancelChannelInfoEpgBoundaryRefresh()
         // Never keep external artwork HTTP requests or bitmap workers running
         // after the viewer leaves the Activity.
         ExternalLogoCatalog.cancel()
