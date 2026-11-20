@@ -4672,7 +4672,8 @@ class MainActivity: Activity() {
         val identities=indices.mapNotNull{channels.getOrNull(it)?.let(::id)}
         val search=title.startsWith("Search:")
         reset("MyView  •  "+title)
-        if(search)searchResultBack=onBack
+        // Match the visible Back action for all media lists, not just search.
+        searchResultBack=onBack
         root.addView(label(identities.size.toString()+" items"))
         val list=styledMenuList().apply{
             dividerHeight=2
