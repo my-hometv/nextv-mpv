@@ -37,7 +37,21 @@ class MyViewIntegrationContracts(unittest.TestCase):
         # The old guard checked only epg_xmltv_url; new setups use
         # epg_xmltv_urls or the default XMLTV feed.
         self.assertNotIn('epgGuide.isEmpty() && !prefs.getString("epg_xmltv_url","").isNullOrBlank()', self.activity)
-        self.assertIn('epgGuide.isEmpty() && epgUrls().isNotEmpty()', self.activity)
+        self.assertIn('(epgGuide.isEmpty() || epgLoadedAt==0L) && epgUrls().isNotEmpty()', self.activity)
+        self.assertIn('refreshVisibleChannelInfoEpg()', self.activity)
+        self.assertIn('tag="myview_channel_info"', self.activity)
+        guide=self.activity.split("private fun refreshVisibleChannelInfoEpg(){",1)[1].split(
+            "private fun showChannelInfo(",1
+        )[0]
+        self.assertIn('banner?.tag=="myview_channel_info"',guide)
+        self.assertIn('banner?.parent===screen',guide)
+        self.assertIn('showChannelInfo(active)',guide)
+        loader=self.activity.split("private fun loadEpg(done:",1)[1].split(
+            "private fun showChannelEpg(",1
+        )[0]
+        self.assertIn('epgGuide=replacement',loader)
+        self.assertIn('refreshVisibleChannelInfoEpg()',loader)
+        self.assertIn('sourceResult?.invoke(replacement,sourceStatuses.toList())',loader)
         self.assertIn('prefs.getBoolean("nextv_epg_enabled",true)', self.activity)
         self.assertIn('prefs.getBoolean("show_channel_epg",true)', self.activity)
         self.assertIn('banner?.parent===originalScreen', self.activity)
