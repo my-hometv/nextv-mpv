@@ -48,6 +48,7 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("val programmes=if(showEpg)programmeList(channel)",info)
         self.assertIn('programmeColumn("NOW",currentTitle,currentTime)',info)
         self.assertIn('programmeColumn("NEXT",nextTitle,nextTime)',info)
+        self.assertIn("EpgGuidePolicy.nowNext(programmes,now",info)
         self.assertIn('tag="myview_channel_info"',info)
         matcher=between("private fun programmeList(", "private fun runNetworkDiagnostics(")
         self.assertIn("HomeTvPolicies.matchEpg(epgGuide,id,name)",matcher)
@@ -56,27 +57,28 @@ class HumanJourneyTest(unittest.TestCase):
 
     def test_channel_info_epg_refreshes_at_programme_boundaries(self):
         info=between("private fun showChannelInfo(", "private fun clearChannelPreview(")
-        self.assertIn("fun armProgrammeBoundary(rows:List<EpgProgramme>)", info)
-        self.assertIn(".flatMap{sequenceOf(it.start,it.end)}", info)
-        self.assertIn(".filter{it>moment}", info)
-        self.assertIn("handler.postDelayed(task,(boundary-moment).coerceAtLeast(1L))", info)
-        self.assertIn("nowTitleView.text=onNow?.title", info)
-        self.assertIn("nextTitleView.text=onNext?.title", info)
-        self.assertIn("nowTimeView.text=onNow?.let", info)
-        self.assertIn("nextTimeView.text=onNext?.let", info)
-        self.assertIn("armProgrammeBoundary(updated)", info)
-        self.assertIn("if(banner!==panel || panel.parent!==screen ||", info)
-        self.assertIn("cancelChannelInfoEpgBoundaryRefresh()", info)
-        self.assertIn("if(!isPreview)handler.postDelayed(task,4000)", info)
-        self.assertNotIn("showChannelInfo(index)", info.split("val task=Runnable{",1)[1].split("armProgrammeBoundary(programmes)",1)[0])
+        self.assertIn("fun updateVisibleEpg(){",info)
+        self.assertIn("val (onNow,onNext)=EpgGuidePolicy.nowNext(updated,timestamp",info)
+        self.assertIn("EpgGuidePolicy.nextBoundaryDelayMs(updated,timestamp",info)
+        self.assertIn("handler.postDelayed(task,delay)",info)
+        for key in ("nowTitleView.text=onNow?.title","nextTitleView.text=onNext?.title",
+                    "nowTimeView.text=onNow?.let","nextTimeView.text=onNext?.let"):
+            self.assertIn(key,info)
+        self.assertIn("if(banner!==panel || panel.parent!==screen ||",info)
+        self.assertIn("cancelChannelInfoEpgBoundaryRefresh()",info)
+        self.assertIn("if(!isPreview)handler.postDelayed(task,4000)",info)
 
-    def test_epg_reload_refreshes_visible_channel_preview_not_old_channel(self):
+    def test_epg_reload_updates_existing_visible_panel_without_restart(self):
         refresh=between("private fun refreshVisibleChannelInfoEpg(){", "private fun showChannelInfo(")
-        self.assertIn("previewInfoPanel===banner",refresh)
-        self.assertIn("previewIndex in channels.indices",refresh)
         self.assertIn('banner?.tag=="myview_channel_info"',refresh)
-        self.assertIn("showChannelInfo(displayed)",refresh)
-        self.assertNotIn("showChannelInfo(active)",refresh)
+        self.assertIn("channelInfoEpgRefresh?.invoke()",refresh)
+        self.assertNotIn("showChannelInfo(",refresh)
+        info=between("private fun showChannelInfo(", "private fun clearChannelPreview(")
+        self.assertIn("channelInfoEpgRefresh={updateVisibleEpg()}",info)
+        self.assertIn("nowTitleView.text=onNow?.title",info)
+        self.assertIn("nextTitleView.text=onNext?.title",info)
+        self.assertIn("if(!isPreview)handler.postDelayed(task,4000)",info)
+        self.assertNotIn("handler.removeCallbacks(bannerTask",refresh)
 
     def test_channel_info_epg_timer_cleans_up_on_exit(self):
         self.assertIn("channelInfoEpgBoundaryTask?.let{handler.removeCallbacks(it)}", MAIN)
