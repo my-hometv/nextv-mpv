@@ -45,7 +45,9 @@ class MyViewIntegrationContracts(unittest.TestCase):
         )[0]
         self.assertIn('banner?.tag=="myview_channel_info"',guide)
         self.assertIn('banner?.parent===screen',guide)
-        self.assertIn('showChannelInfo(active)',guide)
+        self.assertIn('showChannelInfo(displayed)',guide)
+        self.assertIn('previewInfoPanel===banner',guide)
+        self.assertIn('previewIndex in channels.indices',guide)
         loader=self.activity.split("private fun loadEpg(done:",1)[1].split(
             "private fun showChannelEpg(",1
         )[0]
