@@ -98,6 +98,14 @@ class EpgGuidePolicyTest {
         assertEquals(300L,EpgGuidePolicy.nextBoundaryDelayMs(replacement,1200,{it.start},{it.end}))
     }
 
+    @Test fun longViewingSessionRefreshesOnlyAfterOneHour(){
+        val hour=60*60*1000L
+        assertTrue(EpgGuidePolicy.needsRefresh(0L,1000L))
+        assertFalse(EpgGuidePolicy.needsRefresh(1000L,1000L+hour-1L))
+        assertTrue(EpgGuidePolicy.needsRefresh(1000L,1000L+hour))
+        assertTrue(EpgGuidePolicy.needsRefresh(5000L,1000L))
+    }
+
     @Test fun futureProgrammeMustUseSchedulingInstead() {
         assertEquals(EpgGuidePolicy.ProgrammeAction.SCHEDULE,
             EpgGuidePolicy.action(1001L,1000L))
