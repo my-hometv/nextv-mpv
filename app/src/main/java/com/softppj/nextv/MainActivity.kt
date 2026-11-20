@@ -2659,6 +2659,7 @@ class MainActivity: Activity() {
             val sourceStatuses=mutableListOf<String>()
             for((position,url) in urls.withIndex()){
                 if(generation!=epgLoadGeneration || cancellation.isCancelled())break
+                val sourceStart=android.os.SystemClock.elapsedRealtime()
                 val remaining=EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())
                 if(remaining<=0){
                     sourceStatuses.add("60-second EPG budget reached; "+(total-position)+" sources deferred")
@@ -2683,8 +2684,10 @@ class MainActivity: Activity() {
                     val sourceProgrammes=mutableMapOf<String,MutableList<EpgProgramme>>()
                     val sourceNames=mutableMapOf<String,String>()
                     val connection=(URL(url).openConnection() as java.net.HttpURLConnection).apply{
-                        connectTimeout=EpgLoadBudget.connectionTimeoutMs(remaining)
-                        readTimeout=EpgLoadBudget.readTimeoutMs(remaining)
+                        connectTimeout=EpgLoadBudget.connectionTimeoutMs(
+                            minOf(remaining,EpgLoadBudget.sourceRemainingMs(sourceStart,android.os.SystemClock.elapsedRealtime())))
+                        readTimeout=EpgLoadBudget.readTimeoutMs(
+                            minOf(remaining,EpgLoadBudget.sourceRemainingMs(sourceStart,android.os.SystemClock.elapsedRealtime())))
                         useCaches=false
                     }
                     if(!cancellation.attachConnection(connection))break
@@ -2710,7 +2713,8 @@ class MainActivity: Activity() {
                         var event=parser.eventType
                         while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT){
                             if(generation!=epgLoadGeneration || cancellation.isCancelled() ||
-                                EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())<=0)break
+                                EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())<=0 ||
+                                EpgLoadBudget.sourceRemainingMs(sourceStart,android.os.SystemClock.elapsedRealtime())<=0)break
                             if(event==org.xmlpull.v1.XmlPullParser.START_TAG){
                                 when(parser.name){
                                     "channel"->{
@@ -2749,6 +2753,12 @@ class MainActivity: Activity() {
                         }
                     }
                     if(generation!=epgLoadGeneration || cancellation.isCancelled())break
+                    if(EpgLoadBudget.sourceRemainingMs(sourceStart,android.os.SystemClock.elapsedRealtime())<=0){
+                        val host=runCatching{java.net.URI(url).host ?: "Unknown host"}.getOrDefault("Unknown host")
+                        sourceStatuses.add(host+": feed exceeded 20-second limit; incomplete data discarded")
+                        epgFailedUntil[url]=android.os.SystemClock.elapsedRealtime()+120000L
+                        continue
+                    }
                     if(EpgLoadBudget.remainingMs(loadStart,android.os.SystemClock.elapsedRealtime())<=0){
                         sourceStatuses.add("EPG time budget reached; incomplete source not merged")
                         break
