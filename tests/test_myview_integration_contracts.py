@@ -37,7 +37,7 @@ class MyViewIntegrationContracts(unittest.TestCase):
         # The old guard checked only epg_xmltv_url; new setups use
         # epg_xmltv_urls or the default XMLTV feed.
         self.assertNotIn('epgGuide.isEmpty() && !prefs.getString("epg_xmltv_url","").isNullOrBlank()', self.activity)
-        self.assertIn('(epgGuide.isEmpty() || epgLoadedAt==0L) && epgUrls().isNotEmpty()', self.activity)
+        self.assertIn('EpgGuidePolicy.needsRefresh(epgLoadedAt,System.currentTimeMillis())', self.activity)
         self.assertIn('refreshVisibleChannelInfoEpg()', self.activity)
         self.assertIn('tag="myview_channel_info"', self.activity)
         guide=self.activity.split("private fun refreshVisibleChannelInfoEpg(){",1)[1].split(
@@ -57,7 +57,7 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('sourceResult?.invoke(replacement,sourceStatuses.toList())',loader)
         self.assertIn('prefs.getBoolean("nextv_epg_enabled",true)', self.activity)
         self.assertIn('prefs.getBoolean("show_channel_epg",true)', self.activity)
-        self.assertIn('if(success && active==index && videoScreen===originalScreen)', self.activity)
+        self.assertIn('loadEpg(done={scheduleEpgFreshnessCheck()})', self.activity)
         self.assertLess(
             self.activity.index("setContentView(screen)", self.activity.index("private fun playIndex(index:Int)")),
             self.activity.index("screenInfoOnStart(index)", self.activity.index("private fun playIndex(index:Int)")),
@@ -65,6 +65,20 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('if(epgLoadingGeneration!=null)"Loading guide…"', self.activity)
         self.assertIn('"No current programme"', self.activity)
         self.assertIn('"No upcoming programme"', self.activity)
+
+    def test_epg_long_session_off_toggle_and_source_change_reloads(self):
+        self.assertIn("private fun scheduleEpgFreshnessCheck(){",self.activity)
+        self.assertIn("handler.postDelayed(task,15*60*1000L)",self.activity)
+        self.assertIn("EpgGuidePolicy.needsRefresh(epgLoadedAt,System.currentTimeMillis())",self.activity)
+        selection=self.activity.split("private fun invalidateEpgSourceSelection(){",1)[1].split("private fun epgUrls()",1)[0]
+        self.assertIn("loadEpg(done={scheduleEpgFreshnessCheck()})",selection)
+        toggle=self.activity.split('"nextv_epg_enabled"->{',1)[1].split('"auto_playlist_check"->{',1)[0]
+        self.assertIn("cancelEpgFreshnessCheck()",toggle)
+        self.assertIn("cancelChannelInfoEpgBoundaryRefresh()",toggle)
+        self.assertIn("channelInfoEpgRefresh=null",toggle)
+        self.assertIn("epgDownloadCancellation?.cancel()",toggle)
+        self.assertIn("cancelEpgFreshnessCheck()",self.activity.split("override fun onPause(){",1)[1])
+        self.assertIn("scheduleEpgFreshnessCheck()",self.activity.split("override fun onResume(){",1)[1].split("override fun onPause(){",1)[0])
 
     def test_epg_downloads_are_deduplicated_and_display_names_matched(self):
         self.assertIn('if(epgLoadingGeneration==generation)', self.activity)
