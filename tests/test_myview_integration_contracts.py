@@ -94,8 +94,10 @@ class MyViewIntegrationContracts(unittest.TestCase):
         loader = self.activity.split("private fun loadEpg(done:", 1)[1].split(
             "private fun showChannelEpg(", 1
         )[0]
-        self.assertIn('invalidateEpgSourceSelection()', editor)
+        self.assertIn('cancelInFlightEpgLoad()', editor)
         self.assertIn('sourceOverride=url', editor)
+        self.assertIn('sourceResult={guide,statuses->', editor)
+        self.assertIn('EpgMergePolicy.merge(merged[key].orEmpty()', editor)
         self.assertIn('checkIndividualEpgSource(sources[index]', editor)
         self.assertIn('"▶  Load / Check this EPG"', editor)
         self.assertIn('checkIndividualEpgSource(selected.second', panel)
@@ -103,6 +105,9 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn('listOf(sourceOverride) else epgUrls()', loader)
         self.assertIn('if(sourceOverride==null && epgLoadedAt>0L', loader)
         self.assertIn('if(sourceOverride!=null)loaded>0', loader)
+        self.assertIn('sourceResult?.invoke(replacement,sourceStatuses.toList())', loader)
+        self.assertIn('if(sourceOverride!=null)', loader)
+        self.assertIn('epgGuide=replacement', loader)
         self.assertIn('The saved EPG source mode has not changed.', editor)
         self.assertNotIn('putString("epg_source_mode"', editor)
 
