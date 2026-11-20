@@ -106,6 +106,31 @@ class EpgGuidePolicyTest {
         assertTrue(EpgGuidePolicy.needsRefresh(5000L,1000L))
     }
 
+    private data class GuideChannel(val identity:String,val enabled:Boolean=true)
+
+    @Test fun guideDialogResolvesOriginalChannelAfterPlaylistReorder(){
+        val original=GuideChannel("playlist-a|Movie A|https://a.test")
+        val other=GuideChannel("playlist-b|Movie B|https://b.test")
+        val updated=listOf(other,original)
+        val resolved=EpgGuidePolicy.resolveDialogChannel(
+            updated,original.identity,{it.identity},{it.enabled})
+        assertEquals(1,resolved)
+        assertEquals(original,updated[resolved])
+    }
+
+    @Test fun guideDialogNeverTunesReplacementAtOldIndex(){
+        val removed=GuideChannel("playlist-a|Removed|https://gone.test")
+        val replacement=GuideChannel("playlist-b|Replacement|https://new.test")
+        assertEquals(-1,EpgGuidePolicy.resolveDialogChannel(
+            listOf(replacement),removed.identity,{it.identity},{it.enabled}))
+    }
+
+    @Test fun guideDialogRejectsDisabledSourceEvenWhenIdentityStillMatches(){
+        val original=GuideChannel("playlist-a|Channel|https://a.test",false)
+        assertEquals(-1,EpgGuidePolicy.resolveDialogChannel(
+            listOf(original),original.identity,{it.identity},{it.enabled}))
+    }
+
     @Test fun futureProgrammeMustUseSchedulingInstead() {
         assertEquals(EpgGuidePolicy.ProgrammeAction.SCHEDULE,
             EpgGuidePolicy.action(1001L,1000L))
