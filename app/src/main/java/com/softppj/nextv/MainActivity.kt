@@ -2428,8 +2428,11 @@ class MainActivity: Activity() {
                 append("\nResult: ").append(if(sourceLoaded)"Loaded" else "Failed / no usable programmes")
                 append("\nMatched Live TV channels: ").append(matched).append(" / ").append(live.size)
                 append("\n\n").append(results.joinToString("\n"))
-                append("\n\nExisting guide entries are preserved; successful source programmes fill available gaps.")
-                else if(matched==0)append("\n\nProgramme data loaded, but no Live TV channel matched. Check tvg-id and aliases.")
+                if(sourceLoaded)
+                    append("\n\nExisting guide entries were preserved; this source filled available gaps.")
+                else append("\n\nExisting guide entries remain unchanged.")
+                if(sourceLoaded && matched==0)
+                    append("\n\nProgramme data loaded, but no Live TV channel matched. Check tvg-id and aliases.")
                 append("\n\nThe saved EPG source mode has not changed.")
             }
             showSideDialog(AlertDialog.Builder(this)
