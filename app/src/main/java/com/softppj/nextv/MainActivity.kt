@@ -688,6 +688,10 @@ class MainActivity: Activity() {
                 c.url,channels.getOrNull(active)?.url,
                 videoScreen!=null,playbackTeardownInProgress
             ))return
+        if(startupResumeChannelKey==channelKey(c)){
+            startupResumeChannelKey=null
+            startupResumeSeconds=0L
+        }
         val confirmedEngine=isolatedActiveEngineId ?: if(vlcPlayer!=null)"LibVLC" else "Media3"
         if(HomeTvPolicies.mayCommitAlternative(
                 pendingAlternativeGeneration,playbackGeneration,
@@ -2032,7 +2036,7 @@ class MainActivity: Activity() {
                 if(prefs.getBoolean("auto_reconnect",true)){
                     fallbackEngineOverride=fixedEngine
                     preservingRecoveryScan=true
-                    try{playIndex(index)}finally{preservingRecoveryScan=false}
+                    try{playRecoveryIndex(index)}finally{preservingRecoveryScan=false}
                 }
             }
             return true
@@ -2052,7 +2056,7 @@ class MainActivity: Activity() {
             fallbackEngineOverride=next.second
             val generation=playbackGeneration
             scheduleSettingsSafeRetry(index,screen,generation,1000L){
-                playIndex(next.first)
+                playRecoveryIndex(next.first)
             }
             return true
         }
@@ -4913,6 +4917,17 @@ class MainActivity: Activity() {
             "https://i.ytimg.com/vi/"+id+"/hqdefault.jpg" else ""
     }
     private var requestedMediaResumeSeconds=0L
+    // Keep the one-shot media resume through initial engine/URL fallback
+    // until playback is positively confirmed; never use it for Live TV.
+    private var startupResumeChannelKey:String?=null
+    private var startupResumeSeconds=0L
+    private fun playRecoveryIndex(index:Int){
+        val channel=channels.getOrNull(index) ?:return
+        if(channel.mediaType in setOf("movie","series","music") &&
+            startupResumeChannelKey==channelKey(channel) && startupResumeSeconds>0L)
+            requestedMediaResumeSeconds=startupResumeSeconds
+        playIndex(index)
+    }
     // Last confirmed, generation-scoped timestamp received from the isolated
     // process. Never synchronously query Binder during player teardown.
     private var isolatedMediaPositionMs=0L
@@ -10228,9 +10243,17 @@ class MainActivity: Activity() {
         active=index
         // Consume a one-shot resume request only after permission checks and
         // teardown. Never apply a saved media offset to Live TV.
-        val resumePositionMs=if(c.mediaType in setOf("movie","series","music"))
-            requestedMediaResumeSeconds.coerceAtLeast(0L)*1000L else 0L
+        val resumeSeconds=if(c.mediaType in setOf("movie","series","music"))
+            requestedMediaResumeSeconds.coerceAtLeast(0L) else 0L
+        val resumePositionMs=resumeSeconds*1000L
         requestedMediaResumeSeconds=0L
+        if(resumeSeconds>0L){
+            startupResumeChannelKey=channelKey(c)
+            startupResumeSeconds=resumeSeconds
+        }else if(startupResumeChannelKey!=channelKey(c)){
+            startupResumeChannelKey=null
+            startupResumeSeconds=0L
+        }
         tuneRequestedAtMs=tuneRequestTime
         tuneTimingGeneration=playbackGeneration
         val startupTeardownMs=android.os.SystemClock.elapsedRealtime()-tuneRequestTime
@@ -10825,7 +10848,7 @@ class MainActivity: Activity() {
                                     if(prefs.getBoolean("auto_reconnect",true) && engineEnabled(engine)){
                                         // Keep exactly this URL and engine; do not skip on capacity refusal.
                                         fallbackEngineOverride=engine
-                                        playIndex(index)
+                                        playRecoveryIndex(index)
                                     }
                                 }
                                 return
@@ -10888,7 +10911,7 @@ class MainActivity: Activity() {
                     retryTask=null
                     if(prefs.getBoolean("auto_reconnect",true) &&
                         active==index && videoScreen===screen &&
-                        playbackGeneration==recoveryGeneration)playIndex(index)
+                        playbackGeneration==recoveryGeneration)playRecoveryIndex(index)
                 }
             }
             retryTask=task
