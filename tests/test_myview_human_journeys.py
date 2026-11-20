@@ -70,6 +70,14 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("if(!isPreview)handler.postDelayed(task,4000)", info)
         self.assertNotIn("showChannelInfo(index)", info.split("val task=Runnable{",1)[1].split("armProgrammeBoundary(programmes)",1)[0])
 
+    def test_epg_reload_refreshes_visible_channel_preview_not_old_channel(self):
+        refresh=between("private fun refreshVisibleChannelInfoEpg(){", "private fun showChannelInfo(")
+        self.assertIn("previewInfoPanel===banner",refresh)
+        self.assertIn("previewIndex in channels.indices",refresh)
+        self.assertIn('banner?.tag=="myview_channel_info"',refresh)
+        self.assertIn("showChannelInfo(displayed)",refresh)
+        self.assertNotIn("showChannelInfo(active)",refresh)
+
     def test_channel_info_epg_timer_cleans_up_on_exit(self):
         self.assertIn("channelInfoEpgBoundaryTask?.let{handler.removeCallbacks(it)}", MAIN)
         for start,end in (
