@@ -10208,6 +10208,11 @@ class MainActivity: Activity() {
         }
         stopPlayback()
         active=index
+        // Consume a one-shot resume request only after permission checks and
+        // teardown. Never apply a saved media offset to Live TV.
+        val resumePositionMs=if(c.mediaType in setOf("movie","series","music"))
+            requestedMediaResumeSeconds.coerceAtLeast(0L)*1000L else 0L
+        requestedMediaResumeSeconds=0L
         tuneRequestedAtMs=tuneRequestTime
         tuneTimingGeneration=playbackGeneration
         val startupTeardownMs=android.os.SystemClock.elapsedRealtime()-tuneRequestTime
@@ -10446,17 +10451,16 @@ class MainActivity: Activity() {
             }
             viewer.requestFocus()
             if(c.mediaType in setOf("movie","series","music") && youtubeUri!=null){
-                val seconds=requestedMediaResumeSeconds
-                requestedMediaResumeSeconds=0L
+                val seconds=resumePositionMs/1000L
                 if(seconds>0L){
                     // YouTube watch URLs support a time parameter, but WebView seeking is best-effort.
                     viewer.loadUrl(youtubeUri.buildUpon().appendQueryParameter("t",seconds.toString()+"s").appendQueryParameter("autoplay","1").build().toString())
                 }
             }
         }else if(engineFor(c).startsWith("LibVLC-") && youtubeNativeStreamUrl==null){
-            startIsolatedVlc(c,index,screen,engineFor(c))
+            startIsolatedVlc(c,index,screen,engineFor(c),resumePositionMs)
         }else if(engineFor(c)=="LibVLC" && youtubeNativeStreamUrl==null){
-            startVlc(c,index,screen)
+            startVlc(c,index,screen,resumePositionMs)
         }else{
             val factory=DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
@@ -10818,7 +10822,9 @@ class MainActivity: Activity() {
             try{
                 applyMedia3PicturePreset(exo,c)
                 if(prebuffered==null){
-                    exo.setMediaItem(mediaItemForStream(youtubeNativeStreamUrl ?: c.url))
+                    val item=mediaItemForStream(youtubeNativeStreamUrl ?: c.url)
+                    if(resumePositionMs>0L)exo.setMediaItem(item,resumePositionMs)
+                    else exo.setMediaItem(item)
                     exo.prepare()
                 }
                 exo.play()
@@ -10876,7 +10882,7 @@ class MainActivity: Activity() {
      * LibVLC version. A service accepting a start is not proof of decoded video.
      * Keep the existing direct LibVLC path as a separate, stable fallback.
      */
-    private fun startIsolatedVlc(c:Channel,index:Int,screen:FrameLayout,engineId:String){
+    private fun startIsolatedVlc(c:Channel,index:Int,screen:FrameLayout,engineId:String,resumePositionMs:Long=0L){
         // Check only the build-time packaged engine identity on the UI thread.
         // Registry.verifiedIds() performs a Binder readiness probe and must
         // not run during a remote key or Surface callback. Actual readiness
@@ -10925,6 +10931,12 @@ class MainActivity: Activity() {
                                 if(status==NativePlaybackWatchdog.Result.PLAYING &&
                                     monitor.hasObservedProgress && !confirmed){
                                     confirmed=true
+                                    if(resumePositionMs>0L){
+                                        // Binder seeks must not block the Android remote/UI thread.
+                                        isolatedVlcOps.submit{
+                                            isolatedVlcClient?.seek(generation,resumePositionMs)
+                                        }
+                                    }
                                     logFirstPlaybackProgress(index,screen,"Isolated LibVLC","native progress")
                                     rememberWorking(c)
                                     autoBufferHealthy()
@@ -11066,7 +11078,7 @@ class MainActivity: Activity() {
             }.setNegativeButton("Cancel",null).create()
         showSideDialog(dialog)
     }
-    private fun startVlc(c:Channel,index:Int,screen:FrameLayout){
+    private fun startVlc(c:Channel,index:Int,screen:FrameLayout,resumePositionMs:Long=0L){
         // Direct LibVLC native shutdown happens off the UI thread. Starting
         // another core before that shutdown completes can overlap native
         // decoder and surface ownership on resource-constrained TVs.
@@ -11079,7 +11091,7 @@ class MainActivity: Activity() {
                         videoScreen!==screen || !licenseReady ||
                         isFinishing || isDestroyed)return
                     if(pendingDirectVlcReleases==0){
-                        startVlc(c,index,screen)
+                        startVlc(c,index,screen,resumePositionMs)
                     }else if(android.os.SystemClock.elapsedRealtime()-startedAt<8000L){
                         handler.postDelayed(this,100L)
                     }else{
@@ -11174,6 +11186,13 @@ class MainActivity: Activity() {
                             if(!confirmedProgress){
                                 confirmedProgress=true
                                 started=true
+                                if(resumePositionMs>0L){
+                                    try{
+                                        if(vlc.isSeekable)vlc.time=resumePositionMs
+                                    }catch(e:Exception){
+                                        HomeTvDiagnostics.w("Playback","LibVLC resume seek unavailable",e)
+                                    }
+                                }
                                 handler.removeCallbacks(watchdog)
                                 logFirstPlaybackProgress(index,screen,"LibVLC","media progress")
                                 rememberWorking(c)
