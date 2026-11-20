@@ -54,9 +54,16 @@ jobs:
         run: |
           python3 -m unittest discover -s tools -p 'test_*.py' -v
           python3 -m unittest discover -s tests -p 'test_*.py' -v
+      # Isolate dependency resolution from restored GitHub Actions Gradle caches.
+      # A restored cache can contain metadata for Maven artifacts whose JARs
+      # were never saved, producing misleading "Could not find *.jar" failures.
       - name: Compile Kotlin and run unit tests (never assemble an APK)
-        run: gradle --no-daemon --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/myview-source-gradle-home
+        run: gradle --no-daemon --refresh-dependencies --stacktrace :app:verifySingleLibVlc :app:compileDebugKotlin :app:testDebugUnitTest
       - name: Run Android Lint without assembling an APK
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/myview-source-gradle-home
         run: gradle --no-daemon --stacktrace :app:lintDebug
       - name: Verify no APK was assembled
         shell: bash
