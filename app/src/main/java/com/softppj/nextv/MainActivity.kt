@@ -6811,7 +6811,7 @@ class MainActivity: Activity() {
             setStroke(tvDp(1),if(error)0x99E59A9A.toInt() else 0x6689B5D4)
         }
 
-    private fun showBanner(message:String, error:Boolean=false, dismissAfterMs:Long=if(error)0L else 2500L){
+    private fun showBanner(message:String, error:Boolean=false, dismissAfterMs:Long=if(error)4000L else 2500L){
         val screen=videoScreen ?:return
         bannerTask?.let{handler.removeCallbacks(it)}
         banner?.let{(it.parent as? android.view.ViewGroup)?.removeView(it)}
