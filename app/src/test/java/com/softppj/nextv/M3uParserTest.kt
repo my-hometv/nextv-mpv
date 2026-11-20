@@ -28,6 +28,13 @@ https://stream.example/live.m3u8
       M3uParser.headerEpgUrls(playlist))
   assertTrue(M3uParser.headerEpgUrls("""#EXTINF:-1 url-tvg="https://evil.example/epg.xml",Fake""").isEmpty())
  }
+ @Test fun retainsThirtyTwoHeaderSourcesButCapsUntrustedSourceLists(){
+  val links=(1..40).joinToString(","){"https://epg.example/source$it.xml"}
+  val header="#EXTM3U x-tvg-url=\"$links\""
+  val urls=M3uParser.headerEpgUrls(header)
+  assertEquals(32,urls.size)
+  assertEquals("https://epg.example/source32.xml",urls.last())
+ }
  @Test fun parsesAlternateUrlsAndMetadataHeaders(){
   val body="""#EXTM3U
 #EXTINF:-1 tvg-id="asianet.cinema" tvg-logo="https://logo.example/a.png" group-title="Movies" media-type="movie",Asianet Cinema
