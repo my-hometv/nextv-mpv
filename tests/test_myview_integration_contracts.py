@@ -90,7 +90,12 @@ class MyViewIntegrationContracts(unittest.TestCase):
         loader = self.activity.split("private fun loadEpg(done:", 1)[1].split(
             "private fun showChannelEpg(", 1
         )[0]
-        self.assertIn('epgDownloadCancellation?.cancel()', editor)
+        selection = self.activity.split("private fun saveEpgSourceMode(", 1)[1].split(
+            "private fun epgUrls():", 1
+        )[0]
+        self.assertIn('invalidateEpgSourceSelection()', editor)
+        self.assertIn('invalidateEpgSourceSelection()', selection)
+        self.assertIn('epgDownloadCancellation?.cancel()', selection)
         self.assertIn('epgDownloadCancellation?.cancel()', off)
         self.assertIn('cancellation.attachConnection(connection)', loader)
         self.assertIn('cancellation.attachStream(raw)', loader)
