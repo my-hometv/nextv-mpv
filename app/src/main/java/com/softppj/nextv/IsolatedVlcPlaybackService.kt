@@ -147,6 +147,11 @@ class IsolatedVlcPlaybackService : Service() {
             if (released || activeGeneration != requestGeneration) -1L else playbackTracker.progressCount
         }
 
+        override fun playbackPositionMs(requestGeneration: Long): Long = synchronized(lock) {
+            if (released || activeGeneration != requestGeneration) -1L
+            else try { player?.time ?: -1L } catch (_: Exception) { -1L }
+        }
+
         override fun seek(requestGeneration: Long, positionMs: Long): Boolean = synchronized(lock) {
             val current=player
             if (released || activeGeneration != requestGeneration ||
