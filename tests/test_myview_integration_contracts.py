@@ -78,7 +78,11 @@ class MyViewIntegrationContracts(unittest.TestCase):
         self.assertIn("showEpgSourceDiagnostics()", editor)
         self.assertNotIn('setText(epgUrls().joinToString', editor)
         self.assertNotIn('epgGuide=emptyMap()', editor)
-        self.assertIn('epgLoadedAt=0L', editor)
+        invalidation = self.activity.split("private fun invalidateEpgSourceSelection(){", 1)[1].split(
+            "private fun epgUrls():", 1
+        )[0]
+        self.assertIn('invalidateEpgSourceSelection()', editor)
+        self.assertIn('epgLoadedAt=0L', invalidation)
 
     def test_epg_off_and_source_change_cancel_the_active_download(self):
         editor = self.activity.split("private fun savedManualEpgSources():", 1)[1].split(
