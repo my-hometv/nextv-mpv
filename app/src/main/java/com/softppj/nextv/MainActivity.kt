@@ -4741,6 +4741,7 @@ class MainActivity: Activity() {
             vlcPlayer!=null->try{(vlcPlayer!!.time/1000L).coerceAtLeast(0L)}catch(e:Exception){
                 HomeTvDiagnostics.w("Playback","Unable to save LibVLC position during switch",e);0L
             }
+            isolatedMediaIdentity==id(c)->(isolatedMediaPositionMs/1000L).coerceAtLeast(0L)
             else->0L
         }
         if(seconds>0L)prefs.edit().putLong(mediaKey(c),seconds).apply()
@@ -4909,6 +4910,10 @@ class MainActivity: Activity() {
             "https://i.ytimg.com/vi/"+id+"/hqdefault.jpg" else ""
     }
     private var requestedMediaResumeSeconds=0L
+    // Last confirmed, generation-scoped timestamp received from the isolated
+    // process. Never synchronously query Binder during player teardown.
+    private var isolatedMediaPositionMs=0L
+    private var isolatedMediaIdentity:String?=null
     private fun mediaDetails(index:Int){
         val c=channels.getOrNull(index)?:return
         val identity=id(c)
@@ -10893,6 +10898,8 @@ class MainActivity: Activity() {
      * Keep the existing direct LibVLC path as a separate, stable fallback.
      */
     private fun startIsolatedVlc(c:Channel,index:Int,screen:FrameLayout,engineId:String,resumePositionMs:Long=0L){
+        isolatedMediaIdentity=if(c.mediaType in setOf("movie","series","music"))id(c) else null
+        isolatedMediaPositionMs=0L
         // Check only the build-time packaged engine identity on the UI thread.
         // Registry.verifiedIds() performs a Binder readiness probe and must
         // not run during a remote key or Surface callback. Actual readiness
@@ -10932,9 +10939,13 @@ class MainActivity: Activity() {
                         isolatedVlcOps.submit{
                             val state=isolatedVlcClient?.playbackState(generation) ?: 0
                             val progress=isolatedVlcClient?.playbackProgressCount(generation) ?: -1L
+                            val position=if(isolatedMediaIdentity==id(c))
+                                isolatedVlcClient?.playbackPositionMs(generation) ?: -1L else -1L
                             handler.post{
                                 if(!attached || active!=index || videoScreen!==screen ||
                                     playbackGeneration!=activityGeneration)return@post
+                                if(position>0L && isolatedMediaIdentity==id(c))
+                                    isolatedMediaPositionMs=position
                                 val monitor=watchdog ?:return@post
                                 val status=monitor.check(state,progress,
                                     android.os.SystemClock.elapsedRealtime())
@@ -12553,6 +12564,8 @@ class MainActivity: Activity() {
         try{saveCurrentMediaProgress()}catch(e:Throwable){
             HomeTvDiagnostics.w("Playback","Progress save failed during channel switch",e)
         }
+        isolatedMediaPositionMs=0L
+        isolatedMediaIdentity=null
         closeVideoPreview()
         picturePreviewRestartTask?.let{handler.removeCallbacks(it)}
         picturePreviewRestartTask=null
