@@ -67,6 +67,21 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertNotIn("indices.associateWith",grid)
         self.assertIn("Channel no longer available or permitted",grid)
 
+    def test_full_guide_request_is_cancelled_by_new_dialog_screen_or_background(self):
+        navigation=between("private val navigationHistory=", "private fun playlists()")
+        self.assertIn("private var guideNavigationEpoch=0",navigation)
+        self.assertIn("guideNavigationEpoch++",navigation)
+        dialog=between("private fun showSideDialog(", "private fun ")
+        self.assertIn("guideNavigationEpoch++",dialog)
+        paused=between("override fun onPause(){", "private fun migrateLegacyIJKPreferences()")
+        self.assertIn("guideNavigationEpoch++",paused)
+        guide=between("private fun showEpg(){", "private val manuallyHiddenIds")
+        self.assertIn("val guideRequestEpoch=++guideNavigationEpoch",guide)
+        self.assertIn("!appInForeground",guide)
+        self.assertIn("guideNavigationEpoch!=guideRequestEpoch",guide)
+        self.assertLess(guide.index("return@loadEpg"),guide.index('if(!success){'))
+        self.assertLess(guide.index("return@loadEpg"),guide.index("else showEpgGrid()"))
+
     def test_full_guide_delayed_load_rejects_navigation_or_playback_change(self):
         guide=between("private fun showEpg(){", "private val manuallyHiddenIds")
         for marker in (
@@ -74,6 +89,9 @@ class HumanJourneyTest(unittest.TestCase):
             "val originalGeneration=playbackGeneration",
             "val originalContent=findViewById<android.view.ViewGroup>(android.R.id.content)",
             "val originalActive=active",
+            "val guideRequestEpoch=++guideNavigationEpoch",
+            "!appInForeground",
+            "guideNavigationEpoch!=guideRequestEpoch",
             "content!==originalContent",
             "videoScreen!==originalScreen",
             "playbackGeneration!=originalGeneration",
