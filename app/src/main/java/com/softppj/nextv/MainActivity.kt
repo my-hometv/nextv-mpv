@@ -2267,12 +2267,15 @@ class MainActivity: Activity() {
         prefs.edit().putString("epg_source_mode",mode).apply()
         invalidateEpgSourceSelection()
     }
-    private fun invalidateEpgSourceSelection(){
+    private fun cancelInFlightEpgLoad(){
         epgLoadGeneration++
         epgDownloadCancellation?.cancel()
         epgDownloadCancellation=null
         epgLoadingGeneration=null
         epgWaitingCallbacks.clear()
+    }
+    private fun invalidateEpgSourceSelection(){
+        cancelInFlightEpgLoad()
         // Preserve the last complete guide until replacement succeeds.
         epgLoadedAt=0L
         epgIncompleteRetryAt=0L
@@ -2390,21 +2393,32 @@ class MainActivity: Activity() {
             Toast.makeText(this,"Enable EPG in Settings first",Toast.LENGTH_LONG).show()
             return
         }
-        invalidateEpgSourceSelection()
+        // Keep the active merged guide and its cache timestamp unchanged.
+        cancelInFlightEpgLoad()
+        epgFailedUntil.remove(url)
         Toast.makeText(this,"Checking "+label,Toast.LENGTH_SHORT).show()
-        loadEpg(done={sourceLoaded->
+        loadEpg(done={},showProgress=true,sourceOverride=url,sourceResult={guide,statuses->
             val now=System.currentTimeMillis()
             val live=channelNumbers().filter{channels[it].mediaType=="live"}
-            val matched=if(sourceLoaded)live.count{index->
-                programmeList(channels[index]).any{it.end>now}
+            val sourceLoaded=guide!=null
+            val matched=if(guide!=null)live.count{index->
+                val channel=channels[index]
+                val direct=HomeTvPolicies.matchEpg(
+                    guide,channel.epgId.trim().lowercase(java.util.Locale.ROOT),
+                    EpgGuidePolicy.normalizeDisplayName(channel.name))
+                val entries=if(direct.isNotEmpty())direct else
+                    EpgGuidePolicy.matchNames(channel.name).asSequence()
+                        .mapNotNull{guide[it]?.takeIf{items->items.isNotEmpty()}}
+                        .firstOrNull().orEmpty()
+                entries.any{it.end>now}
             } else 0
-            val statuses=epgSourceStatuses.ifEmpty{listOf("No download result available")}
+            val results=statuses.ifEmpty{listOf("No download result available")}
             val message=buildString{
                 append("Source: ").append(label)
                 append("\nResult: ").append(if(sourceLoaded)"Loaded" else "Failed / no usable programmes")
                 append("\nMatched Live TV channels: ").append(matched).append(" / ").append(live.size)
-                append("\n\n").append(statuses.joinToString("\n"))
-                if(!sourceLoaded)append("\n\nPreviously loaded EPG is preserved.")
+                append("\n\n").append(results.joinToString("\n"))
+                append("\n\nThe currently active EPG guide is unchanged.")
                 else if(matched==0)append("\n\nProgramme data loaded, but no Live TV channel matched. Check tvg-id and aliases.")
                 append("\n\nThe saved EPG source mode has not changed.")
             }
@@ -2413,7 +2427,7 @@ class MainActivity: Activity() {
                 .setMessage(message)
                 .setPositiveButton("EPG sources"){_,_->configureEpg()}
                 .setNegativeButton("Close",null).create())
-        },showProgress=true,sourceOverride=url)
+        })
     }
 
     private fun epgSourceActions(index:Int){
@@ -2765,7 +2779,8 @@ class MainActivity: Activity() {
             if(next!=null)append("\nNEXT  ").append(programmeTime(next.start)).append("  ").append(next.title)
         }
     }
-    private fun loadEpg(done:(Boolean)->Unit,showProgress:Boolean=false,sourceOverride:String?=null){
+    private fun loadEpg(done:(Boolean)->Unit,showProgress:Boolean=false,sourceOverride:String?=null,
+        sourceResult:((Map<String,List<EpgProgramme>>?,List<String>)->Unit)?=null){
         if(!prefs.getBoolean("nextv_epg_enabled",true)){done(false);return}
         val generation=epgLoadGeneration
         val urls=if(sourceOverride!=null && EpgSourceEditorPolicy.valid(sourceOverride))
@@ -2968,6 +2983,10 @@ class MainActivity: Activity() {
                     if(generation==epgLoadGeneration && (!cancellation.isCancelled() || reachedDeadline.get()) &&
                         prefs.getBoolean("nextv_epg_enabled",true) &&
                         !isFinishing && !isDestroyed){
+                        // Single-source diagnostics never replace the active guide.
+                        if(sourceOverride!=null){
+                            sourceResult?.invoke(replacement,sourceStatuses.toList())
+                        }else{
                         epgSourceStatuses=sourceStatuses.toList()
                         if(replacement!=null){
                             val incomplete=sourceStatuses.any{status->
@@ -2979,6 +2998,7 @@ class MainActivity: Activity() {
                                 android.os.SystemClock.elapsedRealtime()+120000L else 0L
                             epgGuide=replacement
                             epgLoadedAt=System.currentTimeMillis()
+                        }
                         }
                         callbacks.forEach{callback->
                             callback(if(sourceOverride!=null)loaded>0 else epgGuide.isNotEmpty())
