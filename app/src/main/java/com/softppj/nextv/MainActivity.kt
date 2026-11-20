@@ -12183,12 +12183,45 @@ class MainActivity: Activity() {
                     KeyEvent.KEYCODE_NUMPAD_ENTER->{if(previewIndex>=0)confirmPreview() else if(active in channels.indices){if(banner!=null)showChannelInfoActions(active) else showChannelInfo(active)};return true}
                     KeyEvent.KEYCODE_DPAD_LEFT->{showOverlayList();return true}
                     KeyEvent.KEYCODE_DPAD_RIGHT->{showChannelOptions();return true}
-                    KeyEvent.KEYCODE_MENU->{showPlaybackSettings();return true}
+                    KeyEvent.KEYCODE_MENU->{showMediaNavigation();return true}
                     KeyEvent.KEYCODE_BACK->{if(previewIndex>=0){clearChannelPreview();return true};onBackPressed();return true}
                 }
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+    // Shared media exit route for BACK and playback navigation actions.
+    // reset() performs the normal player teardown and position persistence.
+    private fun returnToMediaLibrary(){
+        when(channels.getOrNull(active)?.mediaType){
+            "movie"->mediaLibrary("movie")
+            "music"->mediaMusic()
+            "series"->mediaSeries()
+            "web"->mediaLibrary("web")
+            else->showHome()
+        }
+    }
+    private fun showMediaNavigation(){
+        val current=channels.getOrNull(active) ?:return
+        if(current.mediaType !in setOf("movie","music","series","web")){
+            showPlaybackSettings()
+            return
+        }
+        showSideDialog(AlertDialog.Builder(this)
+            .setTitle("MyView • "+current.name)
+            .setItems(arrayOf("Continue watching","Back to "+when(current.mediaType){
+                "movie"->"Movies"
+                "music"->"Music"
+                "series"->"Series"
+                else->"Web TV"
+            },"Home • Choose TV / Movies / Music / Series / Web TV","Playback settings")){_,choice->
+                when(choice){
+                    1->returnToMediaLibrary()
+                    2->showHome()
+                    3->showPlaybackSettings()
+                }
+            }
+            .setNegativeButton("Close",null).create())
     }
     override fun onBackPressed(){
         if(!licenseReady){confirmExit();return}
@@ -12223,9 +12256,11 @@ class MainActivity: Activity() {
                 showWebTvDirectory(web!!,active,screen)
                 return
             }
-            // Full-screen playback Back confirms exiting the app.
-            // Open navigation drawers are closed by the branch above.
-            confirmExit()
+            // Media playback returns to its library. Live TV keeps its
+            // existing exit confirmation. Teardown saves movie/music progress.
+            if(channels.getOrNull(active)?.mediaType in setOf("movie","music","series","web"))
+                returnToMediaLibrary()
+            else confirmExit()
         }else{
             // A physical BACK press follows the same search/category route
             // as the on-screen Back button instead of discarding context.
