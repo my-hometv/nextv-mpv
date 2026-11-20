@@ -14,9 +14,13 @@ class HumanJourneyTest(unittest.TestCase):
         numeric=between("private var channelDigits=", "private var previewIndex=")
         banner=between("private fun showBanner(", "private fun styledMenuList()")
         self.assertIn('showBanner("Channel "+number+" is not available",true,2500L)',numeric)
-        self.assertIn('dismissAfterMs:Long=if(error)0L else 2500L',MAIN)
+        self.assertIn('dismissAfterMs:Long=if(error)4000L else 2500L',MAIN)
         self.assertIn('if(dismissAfterMs>0L)',banner)
         self.assertIn('handler.postDelayed(task,dismissAfterMs)',banner)
+        self.assertIn('if(dismissAfterMs>0L)',banner)
+        # All error notifications now dismiss automatically; numeric errors
+        # retain their shorter explicit timeout.
+        self.assertNotIn('if(!error){',banner)
         self.assertIn('clearNumericOverlay()',numeric)
 
     def test_combined_browsing_preserves_surfing_scope(self):
