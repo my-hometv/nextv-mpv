@@ -1132,7 +1132,7 @@ class MainActivity: Activity() {
                                 for(i in 0 until names.length())if(names.optString(i)!=old)remaining.put(names.optString(i))
                                 val editor=prefs.edit().putString("viewer_profiles",remaining.toString())
                                     .putString("active_viewer","default")
-                                ViewerPreferencePolicy.profileKeys(old).forEach{editor.remove(it)}
+                                ViewerPreferencePolicy.profileKeys(old,prefs.all.keys).forEach{editor.remove(it)}
                                 editor.apply()
                                 invalidateSurfingCache()
                                 settings()
@@ -12498,11 +12498,8 @@ class MainActivity: Activity() {
                 clearChannelPreview()
                 return
             }
-            if(web!=null && webTvDirectoryEntries.isNotEmpty() &&
-                screen!=null && channels.getOrNull(active)?.mediaType=="web"){
-                showWebTvDirectory(web!!,active,screen)
-                return
-            }
+            // An already-dismissed Web TV directory is not a navigation
+            // destination. BACK from playback goes directly to its library.
             // Media playback returns to its library. Live TV keeps its
             // existing exit confirmation. Teardown saves movie/music progress.
             if(channels.getOrNull(active)?.mediaType in setOf("movie","music","series","web"))
