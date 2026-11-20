@@ -54,6 +54,35 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("EpgGuidePolicy.matchNames(c.name)",matcher)
         self.assertIn("epg_offset_minutes",matcher)
 
+    def test_channel_info_epg_refreshes_at_programme_boundaries(self):
+        info=between("private fun showChannelInfo(", "private fun clearChannelPreview(")
+        self.assertIn("fun armProgrammeBoundary(rows:List<EpgProgramme>)", info)
+        self.assertIn(".flatMap{sequenceOf(it.start,it.end)}", info)
+        self.assertIn(".filter{it>moment}", info)
+        self.assertIn("handler.postDelayed(task,(boundary-moment).coerceAtLeast(1L))", info)
+        self.assertIn("nowTitleView.text=onNow?.title", info)
+        self.assertIn("nextTitleView.text=onNext?.title", info)
+        self.assertIn("nowTimeView.text=onNow?.let", info)
+        self.assertIn("nextTimeView.text=onNext?.let", info)
+        self.assertIn("armProgrammeBoundary(updated)", info)
+        self.assertIn("if(banner!==panel || panel.parent!==screen ||", info)
+        self.assertIn("cancelChannelInfoEpgBoundaryRefresh()", info)
+        self.assertIn("if(!isPreview)handler.postDelayed(task,4000)", info)
+        self.assertNotIn("showChannelInfo(index)", info.split("val task=Runnable{",1)[1].split("armProgrammeBoundary(programmes)",1)[0])
+
+    def test_channel_info_epg_timer_cleans_up_on_exit(self):
+        self.assertIn("channelInfoEpgBoundaryTask?.let{handler.removeCallbacks(it)}", MAIN)
+        for start,end in (
+            ("private fun showBanner(", "private fun styledMenuList()"),
+            ("private fun clearChannelPreview()", "private fun confirmPreview()"),
+            ("private fun stopPlayback()", "override fun onDestroy()"),
+            ("override fun onDestroy()", "override fun onBackPressed()")
+        ):
+            body=MAIN.split(start,1)[1]
+            if end in body:
+                body=body.split(end,1)[0]
+            self.assertIn("cancelChannelInfoEpgBoundaryRefresh()",body)
+
     def test_combined_browsing_preserves_surfing_scope(self):
         self.assertIn("PlaylistBrowsePolicy.displayedIndices(",between("private fun showOverlayList(", "private fun showLeftNavigation("))
         self.assertIn('putBoolean("myview_browse_all_playlists",selected==null)',MAIN)
