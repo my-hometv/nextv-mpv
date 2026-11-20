@@ -55,6 +55,31 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("EpgGuidePolicy.matchNames(c.name)",matcher)
         self.assertIn("epg_offset_minutes",matcher)
 
+    def test_stale_epg_result_cannot_open_guide_or_error_after_channel_change(self):
+        callback=between("private fun openCurrentChannelEpg(){", "// Half-hour programme grid:")
+        self.assertIn("val originalScreen=videoScreen ?:return",callback)
+        self.assertIn("val originalGeneration=playbackGeneration",callback)
+        self.assertIn("val originalIdentity=id(channel)",callback)
+        self.assertIn("playbackGeneration!=originalGeneration",callback)
+        self.assertIn("videoScreen!==originalScreen",callback)
+        self.assertIn("active!=i",callback)
+        self.assertIn("channels.getOrNull(i)?.let(::id)!=originalIdentity",callback)
+        self.assertIn("return@loadEpg",callback)
+        self.assertLess(callback.index("return@loadEpg"),callback.index("if(success)showChannelEpg(i)"))
+        self.assertIn("else showSideDialog(",callback)
+
+    def test_delayed_channel_info_rejects_old_screen_and_same_index_retune(self):
+        startup=between("private fun screenInfoOnStart(index:Int){", "private fun informationAlpha()")
+        self.assertIn("val originalScreen=videoScreen ?:return",startup)
+        self.assertIn("val originalGeneration=playbackGeneration",startup)
+        self.assertIn("val originalIdentity=channels.getOrNull(index)?.let(::id)",startup)
+        self.assertIn("videoScreen===originalScreen",startup)
+        self.assertIn("playbackGeneration==originalGeneration",startup)
+        self.assertIn("active==index",startup)
+        self.assertIn("channels.getOrNull(index)?.let(::id)==originalIdentity",startup)
+        self.assertIn("},500)",startup)
+        self.assertIn("showChannelInfo(index)",startup)
+
     def test_channel_info_epg_refreshes_at_programme_boundaries(self):
         info=between("private fun showChannelInfo(", "private fun clearChannelPreview(")
         self.assertIn("fun updateVisibleEpg(){",info)
