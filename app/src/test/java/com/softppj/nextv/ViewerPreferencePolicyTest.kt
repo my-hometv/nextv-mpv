@@ -19,6 +19,7 @@ class ViewerPreferencePolicyTest {
         assertFalse("license_token" in ann)
         assertFalse("playlists" in ann)
         assertFalse("pin" in ann)
-        assertEquals(10,ann.size)
+        assertTrue("viewer_Ann_continue_watching_ids" in ann)
+        assertEquals(11,ann.size)
     }
 }
