@@ -3274,6 +3274,7 @@ class MainActivity: Activity() {
     private fun showEpg(){
         if(!prefs.getBoolean("nextv_epg_enabled",true))return
         if(epgUrls().isEmpty()){configureEpg();return}
+        val guideRequestEpoch=++guideNavigationEpoch
         val originalScreen=videoScreen
         val originalGeneration=playbackGeneration
         val originalContent=findViewById<android.view.ViewGroup>(android.R.id.content)
@@ -3284,8 +3285,9 @@ class MainActivity: Activity() {
             // Do not open a guide (or its failure dialog) after navigating away.
             val content=findViewById<android.view.ViewGroup>(android.R.id.content)
                 .getChildAt(0)
-            if(!licenseReady || isFinishing || isDestroyed ||
+            if(!appInForeground || !licenseReady || isFinishing || isDestroyed ||
                 !prefs.getBoolean("nextv_epg_enabled",true) ||
+                guideNavigationEpoch!=guideRequestEpoch ||
                 content!==originalContent || videoScreen!==originalScreen ||
                 playbackGeneration!=originalGeneration || active!=originalActive)
                 return@loadEpg
@@ -4484,6 +4486,7 @@ class MainActivity: Activity() {
         scheduleEpgFreshnessCheck()
     }
     override fun onPause(){
+        guideNavigationEpoch++
         cancelEpgFreshnessCheck()
         val wasPlaying=active in channels.indices && !isFinishing
         appInForeground=false
@@ -4559,11 +4562,15 @@ class MainActivity: Activity() {
         setOnClickListener{action()}
     }
     private val navigationHistory=mutableListOf<()->Unit>()
+    // Invalidate pending full-guide openings when the viewer chooses another
+    // screen/dialog, leaves the Activity or requests the guide again.
+    private var guideNavigationEpoch=0
     // Hardware BACK uses the same return destination as the visible Back action.
     private var searchResultBack:(()->Unit)?=null
     private var navigatingBack=false
     private var currentMenu:(()->Unit)?=null
     private fun reset(title:String) {
+        guideNavigationEpoch++
         searchResultBack=null
         homeScreenVisible=false
         val destination:(()->Unit)?=when{
@@ -7038,6 +7045,7 @@ class MainActivity: Activity() {
     }
     private fun showSideDialog(dialog:AlertDialog,side:Int=Gravity.RIGHT,
         onNavigation:((Int)->Boolean)?=null){
+        guideNavigationEpoch++
         // Some TV remotes report OK as BUTTON_A/BUTTON_SELECT rather than DPAD_CENTER.
         // Also commit single-choice settings on the first OK press instead of merely
         // previewing the highlighted row and leaving the user on an unfocused OK button.
