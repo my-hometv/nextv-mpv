@@ -16,7 +16,7 @@ internal object M3uParser {
   }.map{it.trim()}.filter{url->
    url.length in 10..2048 && url.none{it.code<32 || it.code==127} &&
     (url.startsWith("https://",true)||url.startsWith("http://",true))
-  }.distinct().take(8).toList()
+  }.distinct().take(32).toList()
  }
  fun parse(body:String,source:String,deletedGroups:Set<String> = emptySet()):MutableList<Channel>{
   val out=mutableListOf<Channel>()
