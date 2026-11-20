@@ -10,6 +10,15 @@ def between(start,end):
     return MAIN.split(start,1)[1].split(end,1)[0]
 
 class HumanJourneyTest(unittest.TestCase):
+    def test_invalid_numeric_channel_message_auto_dismisses(self):
+        numeric=between("private var channelDigits=", "private var previewIndex=")
+        banner=between("private fun showBanner(", "private fun styledMenuList()")
+        self.assertIn('showBanner("Channel "+number+" is not available",true,2500L)',numeric)
+        self.assertIn('dismissAfterMs:Long=if(error)0L else 2500L',MAIN)
+        self.assertIn('if(dismissAfterMs>0L)',banner)
+        self.assertIn('handler.postDelayed(task,dismissAfterMs)',banner)
+        self.assertIn('clearNumericOverlay()',numeric)
+
     def test_combined_browsing_preserves_surfing_scope(self):
         self.assertIn("PlaylistBrowsePolicy.displayedIndices(",between("private fun showOverlayList(", "private fun showLeftNavigation("))
         self.assertIn('putBoolean("myview_browse_all_playlists",selected==null)',MAIN)
