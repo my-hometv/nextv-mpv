@@ -4926,13 +4926,14 @@ class MainActivity: Activity() {
         // Reuse the existing media libraries and Live TV entry point so
         // saved Web TV, profiles, licensing and player behavior stay unchanged.
         homeContent.addView(tvSection("EXPLORE MYVIEW"))
-        homeContent.addView(tvRow(
+        val primaryCategories=tvRow(
             tvCard("▦","TV","Live channels"){allChannels()},
             tvCard("▣","Movies","Web TV movies"){mediaLibrary("movie")},
             tvCard("♫","Music","Web TV music"){mediaMusic()},
             tvCard("▤","Series","Episodes and shows"){mediaSeries()},
             tvCard("◉","Web TV","Saved web channels"){mediaLibrary("web")}
-        ))
+        )
+        homeContent.addView(primaryCategories)
         homeContent.addView(tvSection("CONTINUE WATCHING"))
 
         val continueBanner=LinearLayout(this).apply{
@@ -5026,7 +5027,10 @@ class MainActivity: Activity() {
         ))
         // Continue TV is a real focusable action. The former child-at-2 target
         // pointed to a section TextView and silently failed to request focus.
-        continueBanner.post{if(homeScreenVisible && continueBanner.isAttachedToWindow)continueBanner.requestFocus()}
+        primaryCategories.post{
+            if(homeScreenVisible && primaryCategories.isAttachedToWindow)
+                primaryCategories.getChildAt(0)?.requestFocus()
+        }
     }
     private val importPlaylistRequest=7291
     private fun importLocalPlaylist(){
