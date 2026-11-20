@@ -8375,9 +8375,13 @@ class MainActivity: Activity() {
     // background EPG completion must not reopen expired panels or steal focus.
     private fun refreshVisibleChannelInfoEpg(){
         val screen=videoScreen ?:return
-        if(active in channels.indices && previewIndex<0 &&
+        // Update whichever Channel Info is actually visible, including
+        // a channel being previewed with Up/Down; never reopen a closed panel.
+        val displayed=if(previewInfoPanel===banner && previewIndex in channels.indices)
+            previewIndex else active
+        if(displayed in channels.indices &&
             banner?.parent===screen && banner?.tag=="myview_channel_info")
-            showChannelInfo(active)
+            showChannelInfo(displayed)
     }
     private fun showChannelInfo(index:Int,extra:String=""){
         val screen=videoScreen ?:return
