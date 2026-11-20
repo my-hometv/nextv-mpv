@@ -55,6 +55,35 @@ class HumanJourneyTest(unittest.TestCase):
         self.assertIn("EpgGuidePolicy.matchNames(c.name)",matcher)
         self.assertIn("epg_offset_minutes",matcher)
 
+    def test_full_guide_grid_keeps_stable_channel_identity_during_reorder(self):
+        grid=between("private fun showEpgGrid(", "private fun showEpg(){")
+        self.assertIn("val guideRows=EpgGuidePolicy.rows(visibleIndices(),channels.size).map",grid)
+        self.assertIn("Triple(id(channel),numberFor(index).toString()",grid)
+        self.assertIn("val identity=guideRows.getOrNull(position)?.first",grid)
+        self.assertIn("EpgGuidePolicy.resolveDialogChannel(channels,identity,::id)",grid)
+        self.assertIn("if(current>=0)showChannelEpg(current)",grid)
+        self.assertNotIn("val i=indices[position]",grid)
+        self.assertNotIn("val c=channels[i]",grid)
+        self.assertNotIn("indices.associateWith",grid)
+        self.assertIn("Channel no longer available or permitted",grid)
+
+    def test_full_guide_delayed_load_rejects_navigation_or_playback_change(self):
+        guide=between("private fun showEpg(){", "private val manuallyHiddenIds")
+        for marker in (
+            "val originalScreen=videoScreen",
+            "val originalGeneration=playbackGeneration",
+            "val originalContent=findViewById<android.view.ViewGroup>(android.R.id.content)",
+            "val originalActive=active",
+            "content!==originalContent",
+            "videoScreen!==originalScreen",
+            "playbackGeneration!=originalGeneration",
+            "active!=originalActive",
+            "!prefs.getBoolean(\\"nextv_epg_enabled\\",true)",
+            "return@loadEpg",
+        ):
+            self.assertIn(marker,guide)
+        self.assertLess(guide.index("return@loadEpg"),guide.index("else showEpgGrid()"))
+
     def test_epg_guide_actions_revalidate_identity_after_playlist_reordering(self):
         body=between("private fun showChannelEpg(i:Int){", "private fun openCurrentChannelEpg(){")
         self.assertIn("val originalIdentity=id(c)",body)
