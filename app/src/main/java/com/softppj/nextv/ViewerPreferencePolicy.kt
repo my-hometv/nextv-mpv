@@ -3,7 +3,7 @@ package com.softppj.nextv
 /** A viewer owns favorites/history/order, not licence, playlists or PINs. */
 internal object ViewerPreferencePolicy {
     private val keys = listOf(
-        "favorites", "recent_channels", "favorites_surfing",
+        "favorites", "recent_channels", "continue_watching_ids", "favorites_surfing",
         "favorite_groups", "favorite_group_order", "active_favorite_group",
         "default_favorite_group", "channel_order_favorites",
         "channel_order_all", "channel_sort_mode"
