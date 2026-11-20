@@ -2426,6 +2426,7 @@ class MainActivity: Activity() {
                         programmes,{it.start},{it.end})
                 }
                 epgGuide=merged.toMap()
+                refreshVisibleChannelInfoEpg()
             }
             val message=buildString{
                 append("Source: ").append(label)
@@ -3015,6 +3016,7 @@ class MainActivity: Activity() {
                                 android.os.SystemClock.elapsedRealtime()+120000L else 0L
                             epgGuide=replacement
                             epgLoadedAt=System.currentTimeMillis()
+                            refreshVisibleChannelInfoEpg()
                         }
                         }
                         callbacks.forEach{callback->
@@ -8290,13 +8292,12 @@ class MainActivity: Activity() {
         // legacy epg_xmltv_url pref may be absent, even for a valid EPG setup.
         if(prefs.getBoolean("nextv_epg_enabled",true) &&
             prefs.getBoolean("show_channel_epg",true) &&
-            epgGuide.isEmpty() && epgUrls().isNotEmpty()){
+            (epgGuide.isEmpty() || epgLoadedAt==0L) && epgUrls().isNotEmpty()){
             val originalScreen=videoScreen
             loadEpg(done={success->
                 // Do not reopen an expired banner or interfere with playback.
-                if(success && active==index && videoScreen===originalScreen &&
-                    banner?.parent===originalScreen && previewIndex<0)
-                    showChannelInfo(index)
+                if(success && active==index && videoScreen===originalScreen)
+                    refreshVisibleChannelInfoEpg()
             })
         }
     }
@@ -8363,6 +8364,14 @@ class MainActivity: Activity() {
             }.setNegativeButton("Back",null).create())
     }
 
+    // Update NOW/NEXT only while Channel Info is actually visible. A
+    // background EPG completion must not reopen expired panels or steal focus.
+    private fun refreshVisibleChannelInfoEpg(){
+        val screen=videoScreen ?:return
+        if(active in channels.indices && previewIndex<0 &&
+            banner?.parent===screen && banner?.tag=="myview_channel_info")
+            showChannelInfo(active)
+    }
     private fun showChannelInfo(index:Int,extra:String=""){
         val screen=videoScreen ?:return
         val channel=channels.getOrNull(index) ?:return
@@ -8373,6 +8382,7 @@ class MainActivity: Activity() {
         // A compact TV-safe glass card: no extra artwork downloads, decoders,
         // animation loops or expensive work on every remote press.
         val panel=LinearLayout(this).apply{
+            tag="myview_channel_info"
             orientation=LinearLayout.VERTICAL
             setPadding(tvDp(3),tvDp(3),tvDp(3),tvDp(3))
             background=android.graphics.drawable.GradientDrawable(
