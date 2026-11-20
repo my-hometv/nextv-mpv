@@ -68,6 +68,15 @@ internal object EpgGuidePolicy {
         .filter{it>nowMs}
         .minOrNull()?.let{(it-nowMs).coerceAtLeast(1L)}
 
+    /**
+     * Resolve a guide dialog's original channel after playlist reordering.
+     * Never fall back to its old numeric index, which may now belong to a
+     * different channel. Permission is evaluated against the current list.
+     */
+    fun <T> resolveDialogChannel(
+        channels:List<T>,identity:String,key:(T)->String,allowed:(T)->Boolean
+    ):Int = channels.indexOfFirst{key(it)==identity && allowed(it)}
+
     enum class ProgrammeAction { WATCH_NOW, SCHEDULE }
 
     fun action(startTimeMs:Long, nowMs:Long):ProgrammeAction =
