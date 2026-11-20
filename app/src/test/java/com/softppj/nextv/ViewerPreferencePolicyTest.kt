@@ -10,6 +10,26 @@ class ViewerPreferencePolicyTest {
         assertEquals("default",ViewerPreferencePolicy.activeViewer("../../other",listOf("Parent")))
     }
 
+    @Test fun profileRemovalClearsOnlyOwnedDynamicVODProgress(){
+        val stored=setOf(
+            "viewer_Ann_myhometv_progress_v2_42",
+            "viewer_Ann_myhometv_progress_7",
+            "viewer_Ann_myhometv_progress_ambiguous_7",
+            "viewer_Ann_Sue_myhometv_progress_v2_42",
+            "myhometv_progress_v2_42",
+            "viewer_Ann_continue_watching_ids",
+            "license_token"
+        )
+        val deleted=ViewerPreferencePolicy.profileKeys("Ann",stored).toSet()
+        assertTrue("viewer_Ann_myhometv_progress_v2_42" in deleted)
+        assertTrue("viewer_Ann_myhometv_progress_7" in deleted)
+        assertTrue("viewer_Ann_myhometv_progress_ambiguous_7" in deleted)
+        assertTrue("viewer_Ann_continue_watching_ids" in deleted)
+        assertFalse("viewer_Ann_Sue_myhometv_progress_v2_42" in deleted)
+        assertFalse("myhometv_progress_v2_42" in deleted)
+        assertFalse("license_token" in deleted)
+    }
+
     @Test fun profileRemovalDoesNotTouchSharedSettingsOrSiblingProfiles(){
         val ann=ViewerPreferencePolicy.profileKeys("Ann").toSet()
         val sibling=ViewerPreferencePolicy.profileKeys("Ann_Sue").toSet()
