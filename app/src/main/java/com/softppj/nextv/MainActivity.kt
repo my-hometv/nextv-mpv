@@ -2413,12 +2413,22 @@ class MainActivity: Activity() {
                 entries.any{it.end>now}
             } else 0
             val results=statuses.ifEmpty{listOf("No download result available")}
+            if(guide!=null){
+                // Retain higher-priority programmes already on screen. A
+                // manually loaded feed contributes only free time slots.
+                val merged=epgGuide.toMutableMap()
+                guide.forEach{(key,programmes)->
+                    merged[key]=EpgMergePolicy.merge(merged[key].orEmpty(),
+                        programmes,{it.start},{it.end})
+                }
+                epgGuide=merged.toMap()
+            }
             val message=buildString{
                 append("Source: ").append(label)
                 append("\nResult: ").append(if(sourceLoaded)"Loaded" else "Failed / no usable programmes")
                 append("\nMatched Live TV channels: ").append(matched).append(" / ").append(live.size)
                 append("\n\n").append(results.joinToString("\n"))
-                append("\n\nThe currently active EPG guide is unchanged.")
+                append("\n\nExisting guide entries are preserved; successful source programmes fill available gaps.")
                 else if(matched==0)append("\n\nProgramme data loaded, but no Live TV channel matched. Check tvg-id and aliases.")
                 append("\n\nThe saved EPG source mode has not changed.")
             }
